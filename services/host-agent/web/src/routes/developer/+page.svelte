@@ -5,7 +5,6 @@
 		Background,
 		ControlButton,
 		Controls,
-		MiniMap,
 		Panel,
 		SvelteFlow,
 		type Edge,
@@ -15,7 +14,6 @@
 	import { layoutGraph } from '$lib/timeline/graphLayout';
 	import { syncGraph } from '$lib/timeline/graphSync';
 	import { fetchDeveloperGraph } from '$lib/clients/developerClient';
-	import { statusColor } from '$lib/utils/statusColor';
 	import AppNode from '$lib/graph/AppNode.svelte';
 	import AppBox from '$lib/graph/AppBox.svelte';
 	import ContainerNode from '$lib/graph/ContainerNode.svelte';
@@ -92,11 +90,6 @@
 		fitToken += 1;
 	}
 
-	function minimapColor(node: Node): string {
-		const status = (node.data as { status?: string } | undefined)?.status;
-		return statusColor(status ?? '');
-	}
-
 	onMount(() => {
 		load().then(() => {
 			loading = false;
@@ -157,15 +150,6 @@
 						{/if}
 					</div>
 				</Panel>
-
-				<MiniMap
-					position="bottom-right"
-					class="graph-minimap"
-					nodeBorderRadius={3}
-					nodeColor={minimapColor}
-					maskColor="rgba(28, 25, 23, 0.08)"
-					bgColor="#fafaf9"
-				/>
 
 				<Controls position="bottom-left" showFitView={false} showLock={false}>
 					<ControlButton
@@ -273,17 +257,5 @@
 		color: var(--color-accent, #2563eb);
 		cursor: pointer;
 		text-decoration: underline;
-	}
-
-	.graph-container :global(.graph-minimap) {
-		border: 1px solid var(--color-border, #e5e5e5);
-		border-radius: var(--radius-md, 8px);
-		overflow: hidden;
-	}
-
-	@media (max-width: 768px) {
-		.graph-container :global(.graph-minimap) {
-			display: none;
-		}
 	}
 </style>
