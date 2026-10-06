@@ -13,12 +13,20 @@ import (
 //go:embed loading.html
 var loadingHTML []byte
 
-// gatedAssetPrefixes are the frontend's static brand assets: the self-hosted
-// fonts and the favicon. They are plain files on disk with no dependency on the
-// orchestrator, so they pass through the gate. Without the exception the loading
-// page would get loading page HTML back for its own font requests, and render
-// in a fallback face instead of the Bloud type.
-var gatedAssetPrefixes = []string{"/fonts/", "/favicon."}
+// gatedAssetPrefixes are the paths that pass through the gate while the system
+// apps converge: the frontend's static brand assets, and the per-app waiting
+// page.
+//
+// The fonts and the favicon are plain files on disk with no dependency on the
+// orchestrator, so they pass through. Without the exception the loading page
+// would get loading page HTML back for its own font requests, and render in a
+// fallback face instead of the Bloud type.
+//
+// `/bloud-loading/` passes because it is itself a waiting page. Traefik's
+// error middleware fetches it while an app is down, and during bootstrap an
+// app is down; answering that with the first-boot page would replace a message
+// about the app the visitor asked for with one about the whole system.
+var gatedAssetPrefixes = []string{"/fonts/", "/favicon.", "/bloud-loading/"}
 
 // passesThroughGate reports whether a gated request is a static brand asset the
 // frontend handler can serve straight from disk.

@@ -7,15 +7,41 @@ http:
     actual-budget:
       rule: "HostRegexp(`^actual-budget\\.`)"
       priority: 200
+      middlewares:
+        - actual-budget-loading
       service: actual-budget
     adguard-home:
       rule: "HostRegexp(`^adguard-home\\.`)"
       priority: 200
+      middlewares:
+        - adguard-home-loading
       service: adguard-home
     miniflux:
       rule: "HostRegexp(`^miniflux\\.`)"
       priority: 200
+      middlewares:
+        - miniflux-loading
       service: miniflux
+
+  middlewares:
+    actual-budget-loading:
+      errors:
+        status:
+          - "502-504"
+        service: host-agent
+        query: /bloud-loading/actual-budget
+    adguard-home-loading:
+      errors:
+        status:
+          - "502-504"
+        service: host-agent
+        query: /bloud-loading/adguard-home
+    miniflux-loading:
+      errors:
+        status:
+          - "502-504"
+        service: host-agent
+        query: /bloud-loading/miniflux
 
   services:
     actual-budget:

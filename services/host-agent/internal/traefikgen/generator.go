@@ -119,17 +119,13 @@ func (g *Generator) writeRouters(b *strings.Builder, routableApps []*catalog.App
 	}
 }
 
-// writeMiddlewares emits the http.middlewares section when any app needs
-// one.
+// writeMiddlewares emits the http.middlewares section.
+//
+// Every routable app now carries the waiting-page middleware, so the section
+// exists whenever any app does. The old guard that skipped it for apps with no
+// forward-auth and no custom headers is gone with the reason it existed.
 func (g *Generator) writeMiddlewares(b *strings.Builder, routableApps []*catalog.App) {
-	hasMiddlewares := false
-	for _, app := range routableApps {
-		if g.appNeedsMiddleware(app) {
-			hasMiddlewares = true
-			break
-		}
-	}
-	if !hasMiddlewares {
+	if len(routableApps) == 0 {
 		return
 	}
 	b.WriteString("\n  middlewares:\n")
@@ -163,15 +159,32 @@ func (g *Generator) writeServices(b *strings.Builder, routableApps []*catalog.Ap
 	}
 }
 
-// appNeedsMiddleware returns true if the app requires any middleware definitions
-func (g *Generator) appNeedsMiddleware(app *catalog.App) bool {
-	if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
-		return true
-	}
-	if app.Routing != nil && len(app.Routing.Headers) > 0 {
-		return true
-	}
-	return false
+// writeLoadingMiddleware emits the error middleware that replaces Traefik's
+// raw Bad Gateway with Bloud's per-app waiting page.
+//
+// The range is 502-504 and nothing wider. Those three are "the upstream did
+// not answer", which is what a reconciling, restarting, or crashed container
+// produces. A 500 is the app answering and disliking the request: covering it
+// would hide the app's own error behind a page that promises it is coming
+// back, when it is not.
+//
+// The status a client finally sees is the upstream's own 502/503/504, kept by
+// the error middleware; only the body and the headers are replaced. That is
+// the right split. The status stays an honest "the upstream did not answer",
+// and a cache or a client is never handed a 200 that is really a waiting
+// page. host-agent answers the fallback with 503 and Retry-After so the
+// direct-to-agent case reads the same way.
+//
+// The service is the one base.yml already defines for the dashboard. The file
+// provider merges every file in the dynamic directory into one configuration,
+// so a router here can name a service declared there.
+func (g *Generator) writeLoadingMiddleware(b *strings.Builder, app *catalog.App) {
+	fmt.Fprintf(b, "    %s-loading:\n", app.CatalogID)
+	b.WriteString("      errors:\n")
+	b.WriteString("        status:\n")
+	b.WriteString("          - \"502-504\"\n")
+	b.WriteString("        service: host-agent\n")
+	fmt.Fprintf(b, "        query: /bloud-loading/%s\n", app.CatalogID)
 }
 
 // writeRouter writes the router configuration for an app.
@@ -184,6 +197,12 @@ func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikE
 
 	// Build middleware list
 	var middlewares []string
+
+	// The waiting page, first in the chain. Traefik's error middleware wraps
+	// everything downstream of it, so listing it first means a 502 from the
+	// app is caught before anything else can turn it into a redirect or a raw
+	// Bad Gateway page.
+	middlewares = append(middlewares, fmt.Sprintf("%s-loading", app.CatalogID))
 
 	// Forward auth middleware for apps using forward-auth SSO strategy
 	if app.SSO.Strategy == "forward-auth" && authentikEnabled {
@@ -207,6 +226,8 @@ func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikE
 
 // writeMiddleware writes the middleware configuration for an app
 func (g *Generator) writeMiddleware(b *strings.Builder, app *catalog.App) {
+	g.writeLoadingMiddleware(b, app)
+
 	// ForwardAuth middleware for apps using forward-auth SSO strategy
 	if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
 		fmt.Fprintf(b, "    %s-forwardauth:\n", app.CatalogID)

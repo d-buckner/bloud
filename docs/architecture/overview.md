@@ -189,6 +189,27 @@ health answers on its own merits from `checkSystemHealth`
 (`internal/api/server.go`): database reachable and the intent loop alive, else
 503 `{"status":"unhealthy"}`.
 
+**An app that is down gets its own waiting page.** The bootstrap gate covers
+Bloud's own catch-all. It does not cover an app domain: `<app>.<domain>` has a
+router of its own, and while the app's container is down during a reconcile, a
+restart, or a crash, that router points at nothing and Traefik answers with a
+raw Bad Gateway. Every routable app therefore gets an `errors` middleware
+(`internal/traefikgen/generator.go`) over the 502-504 range that hands the
+request to host-agent's `GET /bloud-loading/{name}`
+(`internal/api/app_loading.go`), which renders the app's icon, names the app,
+and polls its own URL until the app answers for itself.
+
+Two choices in that chain are load-bearing. The middleware covers 502-504 and
+not 500: those three are "the upstream did not answer", which is what a
+reconciling container produces, while a 500 is the app answering and disliking
+the request, and hiding it behind a page that promises a reload would be a
+lie. And the icon is inlined as a data URI rather than linked, because the
+icon's usual route lives under Bloud's API host and on the app's own domain
+the app's router outranks it, so an `<img>` would point at the very container
+that is not answering. The status the visitor sees stays the upstream's own
+5xx; only the body and headers are replaced, so nothing caches a 200 that is
+really a wait.
+
 ### Configurator Framework (`pkg/configurator/`)
 
 Generic interface for app-specific runtime configuration that can't be expressed in
