@@ -34,6 +34,12 @@ const (
 	// host directory above. Reads that go through the container address the
 	// file by its in-container path, not the host path.
 	containerHome = "/opt/data"
+	// agentAPIKeySecret is the name the `agentApi` contract names for its one
+	// credential, and so the key this configurator publishes Hermes' agent
+	// bearer under. It is not chosen here: it is the contract's own secret
+	// name, restated as a constant so the publish call and the contract
+	// registry cannot drift into two different spellings of the same thing.
+	agentAPIKeySecret = "apiKey"
 	// managedScopes is the OIDC scope set written into the self-hosted
 	// provider block. openid/profile/email are what Hermes requests by
 	// default; offline_access is the load-bearing one.
@@ -82,6 +88,12 @@ type Configurator struct {
 	// contexts; readConfig then keeps its hard-error path.
 	containerRunning configurator.ContainerRunningFunc
 
+	// secrets publishes the agent API credential Hermes minted for itself so
+	// consumers of the `agentApi` contract can read it. Nil in CLI/test
+	// contexts, where there is no host store to publish into and the publish
+	// step is skipped rather than failed.
+	secrets configurator.AppSecretsProvider
+
 	// baseURL is a test seam: when set, the API client resolves to it
 	// instead of localhost:port.
 	baseURL string
@@ -106,6 +118,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger:           logger.With("app", "hermes"),
 		exec:             deps.Exec,
 		containerRunning: deps.ContainerRunning,
+		secrets:          deps.Secrets,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -430,7 +443,74 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("verifying self-hosted OIDC provider: %w", err)
 	}
 	c.logger.Info("Hermes dashboard serving under Bloud SSO", "issuer", state.OIDC.IssuerURL)
+	return c.publishAgentAPIKey(ctx)
+}
+
+// agentAPIKeyEnvVar is the name Hermes stores its agent API bearer under in
+// $HERMES_HOME/.env. The image generates one on first boot when none is
+// present, and the gateway treats a usable key as the switch that starts the
+// api_server adapter, so this is both the credential and the enable.
+const agentAPIKeyEnvVar = "API_SERVER_KEY"
+
+// publishAgentAPIKey reads the agent API credential Hermes minted for itself
+// and publishes it under the `agentApi` contract, so a consumer gets the real
+// bearer rather than one Bloud invented and Hermes does not honor.
+//
+// The key is read rather than written. Hermes guards $HERMES_HOME/.env with
+// 0600 owned by the container's mapped uid and re-tightens it on every boot,
+// so a host-side write is EPERM after the first start and would fight the
+// app forever. Reading it back through the container is the same channel
+// config.yaml already uses for the same reason, and it keeps Hermes the
+// authority over its own credential: Bloud relays it, it does not own it.
+//
+// A missing key is not fatal. The gateway simply has no API server, and
+// consumers see no binding, which they treat as "not ready". Failing the
+// node for that would take the dashboard down over an integration nobody is
+// using yet.
+func (c *Configurator) publishAgentAPIKey(ctx context.Context) error {
+	if c.secrets == nil || c.exec == nil {
+		return nil
+	}
+	key, ok := c.readEnvValue(ctx, agentAPIKeyEnvVar)
+	if !ok || key == "" {
+		c.logger.Warn("Hermes has not published an agent API key; the agentApi contract stays empty for consumers",
+			"env", agentAPIKeyEnvVar)
+		return nil
+	}
+	if existing := c.secrets.GetAppSecret(appName, agentAPIKeySecret); existing == key {
+		return nil // steady state: no write, so the resync stays a read-only diff
+	}
+	if err := c.secrets.SetAppSecret(appName, agentAPIKeySecret, key); err != nil {
+		return fmt.Errorf("publishing %s: %w", agentAPIKeySecret, err)
+	}
+	c.logger.Info("published Hermes agent API credential for the agentApi contract", "secret", agentAPIKeySecret)
 	return nil
+}
+
+// readEnvValue pulls one KEY=value entry out of $HERMES_HOME/.env through the
+// container. base64 keeps the exec channel byte-safe for a value that is hex
+// but could carry anything, matching how config.yaml is read.
+func (c *Configurator) readEnvValue(ctx context.Context, want string) (string, bool) {
+	out, err := c.exec(ctx, nodeName, nil, []string{"base64", containerHome + "/.env"})
+	if err != nil {
+		c.logger.Debug("could not read Hermes .env through the container", "error", err)
+		return "", false
+	}
+	decoded, decErr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+	if decErr != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(decoded), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, found := strings.Cut(line, "=")
+		if found && strings.TrimSpace(name) == want {
+			return strings.Trim(strings.TrimSpace(value), "\"'"), true
+		}
+	}
+	return "", false
 }
 
 // permissionHint names the failure this app is prone to. A bare "permission

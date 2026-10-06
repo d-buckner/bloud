@@ -369,6 +369,42 @@ type AppAPIBinding struct {
 	WorkspaceID string
 }
 
+// AgentAPIBinding is an agent endpoint a consumer dials: an OpenAI-compatible
+// API whose far side is an agent rather than a model.
+//
+// It is the consumer-side half of the `agentApi` contract. The binding carries
+// one composed address rather than a base the consumer finishes itself, and
+// that is deliberate. The provider may be reachable from the consumer's network
+// position by one address and not another: a host-networked agent is not
+// resolvable by container name from the app network, so the only origin a
+// consumer can actually dial is the one routed through the proxy. Handing over
+// `BaseURL` and a path and letting the consumer compose would have it build the
+// one address guaranteed not to resolve.
+//
+// Endpoint is therefore the whole thing, path included, exactly as a client
+// passes it to an OpenAI SDK. A consumer that ignores it and composes from
+// ProviderRef is a bug in the consumer, and the field's existence is what
+// makes that checkable.
+type AgentAPIBinding struct {
+	ProviderRef
+	// Endpoint is the agent's OpenAI-compatible base URL, path included:
+	// http://hermes.<base>:8080/v1. Empty while the provider is not wired
+	// or the instance has no address to route it on, which a consumer must
+	// treat as "not ready" and write nothing.
+	Endpoint string
+	// APIKey is the bearer the provider's agent listener expects, published
+	// under the provider's `agentApi` contract. Empty while the provider has
+	// not published it, which a consumer must treat as "not ready" and write
+	// no credential, never as an empty one.
+	APIKey string
+	// ModelName is the model id the provider wants a consumer to request.
+	// An agent answers to a name of its own choosing rather than a model id
+	// the operator picked, so this is what a consumer sends where an OpenAI
+	// client would put `gpt-4`. Empty means the provider has no preference
+	// and the consumer's own default stands.
+	ModelName string
+}
+
 // CalDAVBinding is the DAV server a calendar or contacts client talks to.
 //
 // There is no credential field, and that is the contract, not a gap: a DAV
@@ -435,6 +471,7 @@ type Integrations struct {
 	Inference       []InferenceBinding
 	MCPServers      []MCPBinding
 	AppAPIs         []AppAPIBinding
+	AgentAPIs       []AgentAPIBinding
 	CalDAVServers   []CalDAVBinding
 	ICSFeeds        []ICSFeedBinding
 }

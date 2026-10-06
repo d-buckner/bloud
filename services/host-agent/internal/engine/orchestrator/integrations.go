@@ -264,6 +264,8 @@ func (o *Orchestrator) bindContract(
 			Password:    o.publishedSecret(providerID, contract, offer, requires),
 			WorkspaceID: o.contractValue(providerID, contract, offer, "workspaceId"),
 		})
+	case "agentApi":
+		out.AgentAPIs = append(out.AgentAPIs, o.agentAPIBinding(ref, contract, offer, providerID, requires))
 	case "caldav":
 		// No secret arm: the `caldav` contract publishes none, because the
 		// credential is the person's own password and it never crosses an app
@@ -296,6 +298,62 @@ func (o *Orchestrator) bindContract(
 				"contract", contract, "provider", providerID)
 		}
 	}
+}
+
+// agentAPIBinding builds one agent endpoint binding.
+//
+// The endpoint is composed here rather than left for the consumer to assemble,
+// because the address a consumer can dial is not the one in the provider's own
+// metadata. A host-networked agent does not resolve by container name from the
+// app network, so ProviderRef's container-DNS BaseURL is the one address that
+// cannot work; the routed public origin is the one that can.
+func (o *Orchestrator) agentAPIBinding(
+	ref configurator.ProviderRef,
+	contract string,
+	offer catalog.ContractProvides,
+	providerID string,
+	requires []string,
+) configurator.AgentAPIBinding {
+	return configurator.AgentAPIBinding{
+		ProviderRef: ref,
+		Endpoint:    o.routedEndpoint(providerID, offer),
+		APIKey:      o.publishedSecret(providerID, contract, offer, requires),
+		ModelName:   o.contractValue(providerID, contract, offer, "modelName"),
+	}
+}
+
+// routedEndpoint composes the address a consumer dials for a contract served
+// on one of the provider's ports: the provider's public origin with that
+// port's declared path prefix appended.
+//
+// The public origin rather than the container address is the whole point. A
+// provider on the app network and a provider sharing the host namespace are
+// not equally reachable from a consumer's network position, but the routed
+// origin is reachable from every one of them, because it is the origin the
+// proxy itself serves. Composing here means a consumer never has to know
+// which topology its provider happens to sit in.
+//
+// Returns empty when the provider cannot be routed, which a consumer reads as
+// "not ready" and writes nothing.
+func (o *Orchestrator) routedEndpoint(providerID string, offer catalog.ContractProvides) string {
+	provider, err := o.catalog.Get(providerID)
+	if err != nil || provider == nil {
+		return ""
+	}
+	prefix := ""
+	if offer.Port != "" {
+		ep := provider.ExtraPort(offer.Port)
+		if ep == nil {
+			// The loader rejects an unresolvable port name, so reaching here
+			// means a catalog was mutated after the load. Say so rather than
+			// silently routing to the UI port instead.
+			o.logger.Warn("contract offer names a port the provider does not declare",
+				"provider", providerID, "port", offer.Port)
+			return ""
+		}
+		prefix = ep.PathPrefix
+	}
+	return o.appPublicURL(providerID) + prefix
 }
 
 // publishedSecret returns the secret a single-secret contract carries, or "" when

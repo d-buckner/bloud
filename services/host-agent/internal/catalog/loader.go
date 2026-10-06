@@ -114,6 +114,9 @@ func (l *Loader) validateApp(app *App) error {
 	if err := validateSSO(app); err != nil {
 		return err
 	}
+	if err := validateExtraPorts(app); err != nil {
+		return err
+	}
 	if err := validateProvides(app); err != nil {
 		return err
 	}
@@ -291,6 +294,51 @@ func validateCompatibleProvider(contract string, compatible CompatibleApp) error
 	return nil
 }
 
+// validateExtraPorts checks the named non-UI ports an app declares. A name is
+// the handle a contract binds to, so a duplicate would make an offer resolve
+// to whichever entry the map happened to yield; a missing name or port makes
+// the entry unusable by construction; and a prefix that is not absolute would
+// be pasted into a Traefik rule and a consumer's URL as something that
+// matches nothing.
+//
+// The collision check against the app's own `port` is the one that matters
+// most. Two surfaces on one port is not a metadata problem but a runtime one:
+// Traefik would install a router for a service that answers with the other
+// surface's bytes, and the failure reads as a broken app rather than as a
+// catalog that named the same socket twice.
+func validateExtraPorts(app *App) error {
+	seen := make(map[string]bool, len(app.ExtraPorts))
+	for _, ep := range app.ExtraPorts {
+		if ep.Name == "" {
+			return fmt.Errorf("extraPorts entries need a name (%s)", app.CatalogID)
+		}
+		if seen[ep.Name] {
+			return fmt.Errorf("extraPorts lists %q twice (%s)", ep.Name, app.CatalogID)
+		}
+		seen[ep.Name] = true
+		if ep.Port <= 0 || ep.Port > 65535 {
+			return fmt.Errorf("extraPorts.%s.port must be a valid TCP port (got %d) (%s)", ep.Name, ep.Port, app.CatalogID)
+		}
+		if ep.Port == app.Port {
+			return fmt.Errorf("extraPorts.%s.port %d collides with the app's own port (%s)", ep.Name, ep.Port, app.CatalogID)
+		}
+		// A prefix is required, not optional. An extra port is how other apps
+		// reach a second surface, and the route that carries them is keyed on
+		// the prefix: without one there is nothing to route on that does not
+		// also claim the app's whole host, which is already taken by the UI.
+		if ep.PathPrefix == "" {
+			return fmt.Errorf("extraPorts.%s needs a pathPrefix: the route to a second port is keyed on it, and the app's host itself already belongs to its UI (%s)", ep.Name, app.CatalogID)
+		}
+		if !strings.HasPrefix(ep.PathPrefix, "/") {
+			return fmt.Errorf("extraPorts.%s.pathPrefix must be an absolute path (got %q) (%s)", ep.Name, ep.PathPrefix, app.CatalogID)
+		}
+		if ep.PathPrefix == "/" {
+			return fmt.Errorf("extraPorts.%s.pathPrefix must not be the root: that is the app's UI (got %q) (%s)", ep.Name, ep.PathPrefix, app.CatalogID)
+		}
+	}
+	return nil
+}
+
 // validateProvides checks the provider-side declarations against the contract
 // registry. Everything here is a cross-file agreement that no compiler sees: a
 // provider's `provides.pvr.secrets` has to carry the key the PVR contract names,
@@ -313,11 +361,37 @@ func validateProvides(app *App) error {
 		if err := validateContractSecrets(name, contract, offer); err != nil {
 			return err
 		}
-		if err := validateContractValues(name, contract, offer, app.Port); err != nil {
+		resolvedPort, err := resolveOfferPort(app, name, offer)
+		if err != nil {
+			return err
+		}
+		if err := validateContractValues(name, contract, offer, resolvedPort); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// resolveOfferPort turns a contract offer's `port:` name into the number the
+// address is composed from. An empty name means the app's main port, which is
+// every single-port app in the catalog and the path every existing contract
+// takes today.
+//
+// A name that does not resolve is a hard failure rather than a fallback to
+// the main port. Falling back would hand every consumer an address that
+// connects to the UI instead of the service the contract describes, which is
+// worse than an error: the connection succeeds, speaks the wrong protocol,
+// and points at an app that did nothing wrong.
+func resolveOfferPort(app *App, contract string, offer ContractProvides) (int, error) {
+	if offer.Port == "" {
+		return app.Port, nil
+	}
+	ep := app.ExtraPort(offer.Port)
+	if ep == nil {
+		return 0, fmt.Errorf("provides.%s.port names %q, which this app does not declare in extraPorts (its UI port is %d)",
+			contract, offer.Port, app.Port)
+	}
+	return ep.Port, nil
 }
 
 // validateContractSecrets checks the credentials an offer carries against what

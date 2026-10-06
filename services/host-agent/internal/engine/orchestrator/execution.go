@@ -5,6 +5,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
@@ -238,7 +240,68 @@ func (o *Orchestrator) computeContainerSpec(def *catalog.ContainerDef, appCatalo
 		return containerruntime.Spec{}, fmt.Errorf("build container spec: %w", err)
 	}
 	o.applyIssuerExtraHost(&spec, appCatalogID)
+	o.applyRoutedProviderExtraHosts(&spec, appCatalogID)
 	return spec, nil
+}
+
+// applyRoutedProviderExtraHosts pins the hostname of every provider this app
+// reaches through a routed extra port, so the container can dial the same
+// origin a browser dials.
+//
+// The need is the mirror image of the issuer pin and the reason is the same
+// one. A provider served on an extra port is reached through the instance's
+// proxy on the provider's own subdomain, and a container on the app network
+// has no resolver for that name: it is not a container name, and under plain
+// http there is no DNS record for it either. Without the pin the consumer
+// gets a well-formed URL from its binding that fails at getaddrinfo, which
+// reads as a broken provider rather than as a missing entry in its own
+// network configuration.
+//
+// Under a https public URL no pin is added, for exactly the reason the
+// issuer pin is skipped there: the name resolves to the real terminator,
+// which is not this box, and pinning it to the gateway would send the
+// container somewhere that serves no certificate for it.
+func (o *Orchestrator) applyRoutedProviderExtraHosts(spec *containerruntime.Spec, appCatalogID string) {
+	if o.hosts == nil || o.catalog == nil {
+		return
+	}
+	if o.hosts.Get().PublicScheme() == hostset.SchemeHTTPS {
+		return
+	}
+	consumer, err := o.catalog.Get(appCatalogID)
+	if err != nil || consumer == nil {
+		return
+	}
+	for contractName, integration := range consumer.Integrations {
+		for _, declared := range catalog.DeclaredProviders(integration) {
+			if declared.Source != "" {
+				continue
+			}
+			if !o.offersOnExtraPort(declared.App, contractName) {
+				continue
+			}
+			host, err := url.Parse(o.appPublicURL(declared.App))
+			if err != nil || host.Hostname() == "" {
+				continue
+			}
+			pin := host.Hostname() + ":host-gateway"
+			if !hasExtraHost(spec.ExtraHosts, pin) {
+				spec.ExtraHosts = append(spec.ExtraHosts, pin)
+			}
+		}
+	}
+}
+
+// offersOnExtraPort reports whether a provider serves one contract on a named
+// extra port rather than on its UI port. Only the first case needs a pin: a
+// contract on the UI port is reached the way it always was.
+func (o *Orchestrator) offersOnExtraPort(providerID, contractName string) bool {
+	provider, err := o.catalog.Get(providerID)
+	if err != nil || provider == nil {
+		return false
+	}
+	offer, ok := provider.Provides[contractName]
+	return ok && offer.Port != ""
 }
 
 // ensureNetworksForContainer creates every user-defined network the
