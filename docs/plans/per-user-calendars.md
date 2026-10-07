@@ -97,19 +97,25 @@ collection (`Movies`, `Shows`) or with `family`.
 ```
 calendar-service's tree (the real storage)
   /calendar-service/family/            shared, exists today
-  /calendar-service/people/bob/        new
+  /calendar-service/people/bob/        new: Bob's personal calendar
   /calendar-service/people/alice/      new
+  /calendar-service/inbox/bob/         new: "From Bloud", see Consent
 
 bob's tree (what bob's phone enumerates)
   /bob/Personal/        map -> /calendar-service/people/bob/      RWrw
+  /bob/From Bloud/      map -> /calendar-service/inbox/bob/      RWrw
   /bob/Family/          map -> /calendar-service/family/          RWrw   (exists today)
   /bob/Movies/          map -> /calendar-service/Movies/          Rr     (exists today)
 
-caldav-service's tree (what the agent enumerates)
+caldav-service's tree (what the agent enumerates, for a `direct` preference)
   /caldav-service/family/                                        RWrw   (exists today)
   /caldav-service/people/bob/     map -> /calendar-service/people/bob/   RWrw
   /caldav-service/people/alice/   map -> /calendar-service/people/alice/ RWrw
 ```
+
+The agent's tree is the one that carries the consent decision, and it is why the
+diagram is drawn per-tree: what the agent can write is exactly what is mounted
+for it, and nothing else.
 
 Two properties of Radicale's map implementation matter here, both verified in
 the pinned image:
@@ -134,6 +140,51 @@ Radicale derives supported components from the collection, and the family
 calendar already advertises `VTODO, VEVENT, VJOURNAL` from a `MKCALENDAR` that
 set nothing but a display name, so a personal calendar gets to-do support
 without a change to `createCalendar`.
+
+## One collection or two: the product consequences
+
+The question looks like a schema choice. It is a question about what a todo *is*
+to the person receiving it, and the two answers are visible to them every day.
+
+One collection means one CalDAV calendar holding `VEVENT` and `VTODO` side by
+side. Two means a calendar plus a separate "Bob's tasks" collection per person.
+
+| What the person notices | One collection | Calendar + Tasks |
+|---|---|---|
+| Their month view | A to-do with a due date renders on the day it is due, next to their appointments. Task noise in the schedule. | Tasks live in a collection they can uncheck. The grid stays clean. |
+| Can they separate the two views? | Mostly no. Most clients filter by *calendar*, not by component within one calendar, so "hide my to-dos from my schedule" is not generally available. | Yes, and this is the only way to get it. |
+| Their task app | The collection shows up as a task list because it contains `VTODO`. Same collection, read two ways in two apps. | Same, except the reading matches the name. |
+| What the agent must disambiguate | Exactly one target per person. "Add it to Bob" cannot land wrong. | Two plausible targets. "Dentist at 3" is an event, "buy milk" is a task, and a wrong pick shows up in the wrong list. |
+| Whether the name is honest | "Bob's calendar" is doing two jobs and lies about one of them. | "Bob's calendar" and "Bob's tasks" are each honest. |
+| Filing mistakes later | Nothing to move. | The agent files a task, the person wanted a calendar entry, and that is a manual move. |
+| Share surface | N collections | 2N, so every new person adds twice the rows and every change restarts Radicale. At household scale this is noise, not a limit. |
+
+One row deserves its own paragraph because it undercuts the second column more
+than the table shows: **the split is not enforced.** Radicale derives a
+collection's advertised components from what it is, and the family calendar was
+created with nothing but a display name yet reports `VTODO, VEVENT, VJOURNAL`.
+A collection named "Bob's tasks" accepts events exactly as happily as one named
+"Bob's calendar". The separation is a naming convention the agent has to
+respect, not a wall the server holds up.
+
+So the second collection buys one thing, the clean month view, and that thing
+is worth something every day to a person who lives in their calendar. It costs
+a permanent disambiguation the agent has to win on every request, for a
+boundary that nothing enforces.
+
+**Recommendation: one collection.** The agent has a single target so the ask
+cannot misfire; the separation the second collection offers is not enforced
+anyway; and a person who genuinely wants their tasks separated can create a
+second collection in their own tree, which their client will do without Bloud.
+The upgrade path stays open because the machinery is identical: adding the
+second collection later is one more entry in the same create-and-share loop,
+not a redesign.
+
+**The case that should flip it:** a household that lives in a dedicated task
+client rather than a calendar client. Those clients want a to-do collection and
+behave oddly with a mixed one, so for that household the two-collection shape is
+the right call. That is a fact about the household, not about the code, and it
+is worth asking before the first collection is created rather than after.
 
 ## Provisioning mechanics
 
@@ -183,9 +234,10 @@ read-only diff once everyone has a calendar.
 
 **Deactivation.** An inactive user drops out of `calendarRecipients`, their
 share rows disappear, and their phone loses the calendars on the next pass.
-Their data stays at `/calendar-service/people/bob/`. Retain it: it is a
-person's data, and reactivation restores the mount. A purge is a separate,
-explicit decision (see open questions).
+Deactivation is not deletion: the collections stay, and reactivation restores
+the mounts. Purging is reserved for actual deletion, and it is a much more
+dangerous operation than the create half of this design. See "Purging a deleted
+person".
 
 **Rename.** There is no user-rename endpoint today (`settings_users.go` offers
 create, delete, and role change), so keying by username is safe now. When
@@ -195,8 +247,8 @@ Authentik PK, which is stable across renames. Out of scope for this slice, and
 it should be recorded in the app's `INTEGRATION.md` under "What is not wired"
 rather than discovered later.
 
-**Deletion.** Deleting the user removes the shares. The collection should not
-be silently deleted with it. Same open question as deactivation.
+**Deletion** purges the collections. That is a decision with a safety section
+of its own rather than a paragraph here.
 
 ## Resolution: how the agent finds Bob
 
@@ -243,46 +295,110 @@ That gap can be narrowed but not closed at this layer:
   [`client-credentials.md`](client-credentials.md) is working toward, and the
   auth bypass in `docs/operations/tech-debt.md` is what has to be repaid
   before any of it can be trusted.
-- **An operator switch is cheap and should exist.** "The agent may write
-  personal calendars" as a setting, defaulting to off, means the household
-  decides rather than inherits. The share rows are rendered from one function,
-  so the switch is one condition in one place.
+- **Consent is enforced structurally, which is the one thing that is not
+  negotiable here.** See the next section. Whatever the household decides, the
+  agent's reach is the set of mounts it is given, and that set is rendered by
+  Bloud.
 
-## The semantics question, restated
+## Consent: the recipient decides
 
-If the goal is "hand Bob a task", a personal VTODO is a good delivery
-mechanism: Bob sees it in his task app, on his phone, with a due date.
+"Where does an agent-written todo land" is answered by the person whose calendar
+it is, not by the operator and not by the agent. That is a better answer than a
+global switch, and it is also the answer this architecture enforces most
+cheaply.
 
-If the goal is "Bob should know I asked him", a calendar entry is a weak
-notification and a shared list is a better one.
+Two collections per person make it expressible:
 
-If the goal is "the agent should not be silently editing my calendar", the
-answer is not a permission system, it is a separate collection: a
-`From Bloud` list per person that the agent owns and the human reads. Nothing
-appears inside anyone's personal calendar without them having put it there.
+- `/calendar-service/people/<user>/`, the personal calendar
+- `/calendar-service/inbox/<user>/`, "From Bloud", the agent's alternative
+  write target
 
-These are not compatible answers to one question, and picking between them is a
-product call rather than a technical one. The shape above supports all three:
-it is the same collection-creation and share-rendering machinery, differing
-only in which collections get created and which permissions the rows carry.
+The recipient's preference selects which of the two the agent receives an RW
+mount on:
 
-## Open decisions
+| Preference | The agent's tree gets | The agent's tree never gets |
+|---|---|---|
+| `direct` | `/caldav-service/people/<user>/` mapped to the personal calendar | nothing beyond it |
+| `inbox` | `/caldav-service/inbox/<user>/` mapped to From Bloud | any share on the personal calendar |
+| `off` | nothing for this person | both |
 
-1. **One collection per person, or a calendar plus a separate task list?** One
-   is simpler and clients can filter. Two keeps to-dos out of the month view,
-   which is a real complaint, and doubles the share rows and the naming
-   surface. Recommendation: one, with the upgrade path open.
-2. **Does the agent write into the person's personal calendar, or into a
-   per-person `From Bloud` inbox?** Direct is what was asked for. The inbox is
-   the answer to "I did not put that there". Recommendation: direct, gated by
-   the operator switch, with attribution properties.
-3. **Are personal calendars private by default?** The share set above gives the
-   person and the agent, and never another user. That should be asserted by a
-   test rather than trusted: a rendered row that shares one user's personal
-   collection with a second user is a bug with a victim.
-4. **What happens to a deleted or deactivated person's calendar?** Retained is
-   the default proposed here. A purge policy is a separate decision with a
-   retention period attached.
+The person always holds read-write on both of their own collections. The inbox
+is theirs to read and to clear; it is simply not a collection the agent may
+write into unless they said so.
+
+**Why this is enforcement and not policy.** `owner_only` means the agent can
+touch nothing that is not mounted in its own tree. A preference of `inbox`
+means the personal calendar is not mounted for the agent, so a write to it is
+refused by the server rather than by a check the agent might forget to run. The
+consent is the absence of a mount. That is the strongest guarantee available at
+this layer, and it costs one condition in `renderShares`.
+
+Where the preference lives: Bloud already keeps per-user local preferences
+alongside the directory record (`CreateManagedUserHandler` "ensures local
+preferences"), so this is a field on that, with an instance-level default for
+people who never set one. The Radicale configurator reads the set when it
+renders, the same way it reads the user list.
+
+What the preference does not control: the family calendar, which is a separate
+grant with a separate purpose, and the feeds, which are read-only for
+everyone. It governs the personal surface only.
+
+## Decisions
+
+1. **One collection per person**, carrying events and to-dos. The consequences
+   that led here are in the section above; the case that would flip it is named
+   there too.
+2. **The recipient chooses** where agent writes land: `direct`, `inbox`, or
+   `off`. Enforced by which mount the agent receives, not by a check.
+3. **Personal collections are never shared with another user.** Assert this by
+   test rather than trusting it: a rendered row that shares one person's
+   personal collection with a second person is a bug with a victim.
+4. **Purge on deletion.** See below.
+
+## Purging a deleted person
+
+Purging means the reconcile can delete, and that changes its safety profile
+completely. A create that is wrong leaves a stray collection. A delete that is
+wrong destroys a person's data.
+
+**Where it runs: not in the user-delete handler.** That handler would need the
+Radicale address and the `calendar-service` credential, which crosses the
+settings boundary and can fail half way through leaving shares removed and data
+behind. Instead the same pass that creates missing collections deletes orphan
+ones: an orphan is a collection under `people/` or `inbox/` whose key is not
+an active user. Symmetric, idempotent, self-healing, and the orchestrator stays
+the single writer.
+
+Every one of these conditions is required before any delete:
+
+- **Only on a confirmed enumeration.** `calendarRecipients` already returns
+  `(users, enumerated)` and the existing code refuses to render an empty set
+  when enumeration fails. The purge gates on the same flag, and `false` must
+  mean "delete nothing", never "delete everything".
+- **Only under the owned prefixes.** Never `family`, never a feed collection.
+  The prefix list is a constant, and a purge that can reach outside it is not a
+  purge.
+- **Only on a complete enumeration.** This is the one that is easy to get
+  wrong. `pkg/authentik.ListUsers` requests `page_size=200` and does not
+  paginate. On an instance with more than 200 users, everyone past the first
+  page is invisible, and every invisible user's collections are orphans by the
+  rule above. At household scale this never fires, and it is still the exact
+  shape of the bug that turns a bad reconcile into data loss. The purge should
+  compare the API's reported total against the length of the list it got back
+  and refuse to delete when they disagree. A delete that is only safe because
+  the deployment is small is not safe.
+- **After the create step in the same pass.** A purge that runs before creates
+  could delete a collection the same pass was about to adopt.
+
+What a purge is concretely: a DAV `DELETE` on the collection as
+`calendar-service`. The share rows need no cleanup because they were rendered
+for the recipient who is now gone.
+
+What is lost: everything in that person's personal calendar and inbox, including
+any agent-written history. That is the decision, and it belongs in the delete
+confirmation in the UI rather than in a doc nobody reads at the moment it
+matters. If that confirmation is not acceptable, the alternative is a timed
+purge, which needs a retention clock Bloud has no home for today.
 
 ## What this does not solve
 
@@ -292,9 +408,10 @@ only in which collections get created and which permissions the rows carry.
   Bob's calendar" is not expressible until the requester has an identity.
 - **Notifications.** A todo appearing in Bob's task list is the only signal.
   Nothing pings him.
-- **Migration.** Existing installs have no `people/` collections; they get
-  provisioned on the next pass. Nothing to migrate, but nothing to roll back
-  either: created collections stay on disk after the shares are removed.
+- **Rollback.** Existing installs have no `people/` collections and get them on
+  the next pass. Nothing to migrate, and nothing to roll back: once a
+  collection exists it holds real data, so reverting the feature leaves the
+  collections and their data behind rather than removing them.
 - **Contacts as a directory.** Bloud can provision a household address book
   (option B) but does not today; Radicale serves contacts as collections, not
   as a directory other apps query. See the "not wired" list in
