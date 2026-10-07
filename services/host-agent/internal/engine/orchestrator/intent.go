@@ -74,6 +74,26 @@ func NewClearAppDataIntent(appName string) ClearAppDataIntent {
 	return ClearAppDataIntent{intentBase: newIntentBase(), AppName: appName}
 }
 
+// RevokeClientSessionsIntent asks the orchestrator to end every live session
+// an app currently holds. It is the counterpart to rotating a credential, and
+// the two are deliberately separate: rotation changes what authenticates future
+// sign-ins, revocation ends the ones that already exist.
+//
+// The request has to go through the orchestrator rather than straight to the
+// container because clearing a running app's session store is a side effect on
+// a managed container, and invariant 1 makes the orchestrator the only
+// executor of those.
+type RevokeClientSessionsIntent struct {
+	intentBase
+	AppName string
+}
+
+func (RevokeClientSessionsIntent) intentMarker() {}
+
+func NewRevokeClientSessionsIntent(appName string) RevokeClientSessionsIntent {
+	return RevokeClientSessionsIntent{intentBase: newIntentBase(), AppName: appName}
+}
+
 // SetPublicURLIntent requests changing the address this Bloud is reachable
 // at, given as one origin: https://bloud.example.com:8443. The orchestrator
 // validates it, persists it, updates the runtime URL state, and resets

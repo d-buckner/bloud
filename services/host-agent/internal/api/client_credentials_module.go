@@ -85,6 +85,51 @@ func (m *clientCredentialsModule) Register(r chi.Router) {
 	r.Get("/apps/{name}/client-credentials", m.ListHandler())
 	r.Post("/apps/{name}/client-credentials/{secret}/reveal", m.revealHandler())
 	r.Post("/apps/{name}/client-credentials/{secret}/rotate", m.rotateHandler())
+	r.Post("/apps/{name}/client-credentials/{secret}/revoke", m.revokeHandler())
+}
+
+// revokeHandler ends every live session the app currently holds.
+//
+// This is the only control that logs a device out. Rotation does not: a session
+// is signed under the app's own key and records nothing about the credential
+// that minted it, so there is no join key a rotated credential could revoke
+// against. Clearing the session store is the whole mechanism.
+//
+// The handler submits an intent rather than clearing anything itself. Executing
+// inside a managed container is a side effect, and invariant 1 makes the
+// orchestrator the only executor of those. The response is 202 accepted: the
+// revocation lands on the next convergence pass, not on this request.
+func (m *clientCredentialsModule) revokeHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		appName := chi.URLParam(r, "name")
+		secretName := chi.URLParam(r, "secret")
+
+		if _, err := m.lookupAccess(appName, secretName); err != nil {
+			m.fail(w, err)
+			return
+		}
+		if m.orch == nil {
+			respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
+			return
+		}
+
+		intent := orchestrator.NewRevokeClientSessionsIntent(appName)
+		m.orch.Submit(intent)
+
+		m.logger.Warn("client session revoke submitted",
+			"app", appName,
+			"secret", secretName,
+			"remote", r.RemoteAddr)
+
+		respondJSON(w, http.StatusAccepted, map[string]any{
+			"intentId": intent.IntentID(),
+			"secret":   secretName,
+			// Every live session ends once the revoke lands. The UI needs this
+			// to render the confirm honestly, and a caller needs it to poll
+			// for the effect rather than assume the request was the effect.
+			"endsAllSessions": true,
+		})
+	}
 }
 
 // credentialDescriptor is the API shape of one client-accessible credential.

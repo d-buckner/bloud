@@ -56,6 +56,7 @@ type Configurator struct {
 	port       int
 	ssoBaseURL func() string
 	secrets    configurator.AppSecretsProvider
+	exec       configurator.ExecFunc
 	logger     *slog.Logger
 }
 
@@ -72,6 +73,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		port:       port,
 		ssoBaseURL: deps.PrimaryBaseURL,
 		secrets:    deps.Secrets,
+		exec:       deps.Exec,
 		logger:     logger.With("app", appName),
 	}
 }
@@ -134,6 +136,42 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 func (c *Configurator) PostStart(_ context.Context, _ *configurator.AppState) error {
 	c.logger.Info("post-start: client password is published under the clientPassword contract",
 		"secret", clientPasswordSecret)
+	return nil
+}
+
+// sessionsFileName is the file the app persists its session records to, under
+// HERMES_WEBUI_STATE_DIR. Bloud points that at /data, the app's managed
+// volume.
+const sessionsFileName = ".sessions.json"
+
+// RevokeSessions clears the app's persisted sessions through the container
+// exec channel.
+//
+// It removes the session file rather than truncating it or dropping individual
+// records. The app has no API for logging every session out, and reaching into
+// its store to remove one record while leaving others is a finer operation
+// than this control claims: the confirm the user acknowledges says every
+// session ends, so every session ends.
+//
+// The file is removed inside the container because that is where the app's own
+// uid can write it. Deleting from the host would fight the ownership the app
+// set on its state directory.
+//
+// Idempotent by construction: removing an absent file is not an error here,
+// because the resync path may call this against a store that is already empty.
+func (c *Configurator) RevokeSessions(ctx context.Context, _ *configurator.AppState) error {
+	if c.exec == nil {
+		return fmt.Errorf("%s: no exec channel; cannot revoke sessions", appName)
+	}
+	// The path is a constant rather than operator input, so there is nothing
+	// to inject here.
+	if _, err := c.exec(ctx, nodeName, nil, []string{
+		"rm", "-f", "/data/" + sessionsFileName,
+	}); err != nil {
+		return fmt.Errorf("%s: clear session store: %w", appName, err)
+	}
+	c.logger.Warn("cleared the app session store",
+		"container", nodeName, "file", sessionsFileName)
 	return nil
 }
 

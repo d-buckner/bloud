@@ -127,6 +127,72 @@ func rotateRequest(app, secret string) *http.Request {
 		map[string]string{"name": app, "secret": secret})
 }
 
+func revokeRequest(app, secret string) *http.Request {
+	return withURLParams(httptest.NewRequest(http.MethodPost,
+		"/api/apps/"+app+"/client-credentials/"+secret+"/revoke", nil),
+		map[string]string{"name": app, "secret": secret})
+}
+
+// TestRevokeSubmitsTheIntentAndSaysWhatItDoes pins the revoke contract.
+//
+// The response is 202 rather than 200 because the request is not the effect:
+// the revocation lands on the next convergence pass. A 200 would tell the UI
+// the devices are already logged out when they are not.
+func TestRevokeSubmitsTheIntentAndSaysWhatItDoes(t *testing.T) {
+	mod := newTestCCModule(&catalog.ClientAccess{
+		Reveal:  catalog.ClientRevealOnce,
+		Rotate:  catalog.ClientRotateBloud,
+		Reaches: "the app",
+	}, newFakeSecrets())
+	orch := mod.orch.(*fakeOrch)
+
+	rec := httptest.NewRecorder()
+	mod.revokeHandler()(rec, revokeRequest("hermes-webui", "password"))
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	require.Len(t, orch.intents, 1)
+	assert.Equal(t, fmt.Sprintf("%T", orchestrator.RevokeClientSessionsIntent{}), orch.intents[0])
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	assert.Equal(t, true, payload["endsAllSessions"],
+		"the response must say plainly that every live session ends")
+}
+
+// TestRevokeRejectsAnUndeclaredCredential stops a revoke aimed at something the
+// app never declared client-accessible.
+func TestRevokeRejectsAnUndeclaredCredential(t *testing.T) {
+	mod := newTestCCModule(&catalog.ClientAccess{
+		Reveal:  catalog.ClientRevealOnce,
+		Rotate:  catalog.ClientRotateBloud,
+		Reaches: "the app",
+	}, newFakeSecrets())
+
+	rec := httptest.NewRecorder()
+	mod.revokeHandler()(rec, revokeRequest("hermes-webui", "someOtherSecret"))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Empty(t, mod.orch.(*fakeOrch).intents)
+}
+
+// TestRevokeWithoutAnOrchestratorIsUnavailable proves the missing-dependency
+// path. A revoke cannot be performed without the orchestrator, and pretending
+// otherwise would tell the operator their users were logged out when nobody
+// was.
+func TestRevokeWithoutAnOrchestratorIsUnavailable(t *testing.T) {
+	mod := NewClientCredentialsModule(
+		&fakeCatalog{app: clientAccessApp(&catalog.ClientAccess{
+			Reveal:  catalog.ClientRevealOnce,
+			Rotate:  catalog.ClientRotateBloud,
+			Reaches: "the app",
+		})},
+		newFakeSecrets(), newFakeSettings(), nil, nil, nil,
+	)
+
+	rec := httptest.NewRecorder()
+	mod.revokeHandler()(rec, revokeRequest("hermes-webui", "password"))
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
 // TestRotateReplacesTheValueAndAsksForConvergence pins the rotate contract.
 func TestRotateReplacesTheValueAndAsksForConvergence(t *testing.T) {
 	secrets := newFakeSecrets()

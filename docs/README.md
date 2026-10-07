@@ -29,6 +29,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Making installs show what they will do | [plans/install-experience.md](plans/install-experience.md) |
 | Handing app credentials to third-party clients (reveal vs provision) | [plans/client-credentials.md](plans/client-credentials.md) |
 | Pilot: hermes-webui, OIDC for browsers plus a minted password for Hermex | [plans/client-credentials-hermes-webui-pilot.md](plans/client-credentials-hermes-webui-pilot.md) |
+| How client credentials work (declare, reveal, rotate, revoke) | [features/client-credentials.md](features/client-credentials.md) |
 | In-flight designs | [plans/](plans/) |
 
 ## Sections

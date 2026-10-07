@@ -28,6 +28,8 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applySetPublicURLIntent(i)
 		case SetInferenceIntent:
 			o.applySetInferenceIntent(i)
+		case RevokeClientSessionsIntent:
+			o.applyRevokeClientSessionsIntent(i)
 		case ReconcileIntent:
 			// The timer pass asks for no change of its own, so there is no
 			// user request to record. The one thing it does drive is the
