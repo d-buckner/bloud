@@ -11,15 +11,24 @@
 	import { isAdmin } from '$lib/stores/user';
 
 	interface Descriptor {
-		name: string;
+		secret: string;
 		label: string;
-		reveal: string;
-		revealable: boolean;
-		shown: boolean;
-		rotate: string;
-		rotateAllowed: boolean;
+		reveal: string; // never | once | always
+		rotate: string; // bloud | provider | none
 		reaches: string;
 		snippet: string;
+		revealed: boolean;
+		published: boolean;
+	}
+
+	// The backend sends the policy strings and the published/revealed facts,
+	// not the derived button visibility. Deriving here keeps the policy in one
+	// place (the loader) and the panel a dumb renderer of it.
+	function revealable(cred: Descriptor): boolean {
+		return cred.published && cred.reveal !== 'never';
+	}
+	function rotateAllowed(cred: Descriptor): boolean {
+		return cred.rotate === 'bloud' || cred.rotate === 'provider';
 	}
 
 	interface Props {
@@ -148,7 +157,7 @@
 	}
 
 	function labelFor(name: string): string {
-		return descriptors.find((d) => d.name === name)?.label || name;
+		return descriptors.find((d) => d.secret === name)?.label || name;
 	}
 </script>
 
@@ -165,11 +174,11 @@
 			</div>
 		{/if}
 
-		{#each descriptors as cred (cred.name)}
+		{#each descriptors as cred (cred.secret)}
 			<div class="credential">
 				<div class="credential-head">
 					<span class="credential-label">{cred.label}</span>
-					{#if cred.reveal === 'once' && cred.shown}
+					{#if cred.reveal === 'once' && cred.revealed}
 						<span class="badge badge-spent">shown</span>
 					{:else if cred.reveal === 'never'}
 						<span class="badge badge-hidden">not shown</span>
@@ -180,15 +189,15 @@
 					<p class="credential-reaches">{cred.reaches}</p>
 				{/if}
 
-				{#if revealed[cred.name]}
+				{#if revealed[cred.secret]}
 					<div class="credential-value">
-						<code>{revealed[cred.name]}</code>
+						<code>{revealed[cred.secret]}</code>
 						<button
 							class="btn btn-small"
-							onclick={() => copy(cred.name)}
+							onclick={() => copy(cred.secret)}
 							aria-label="Copy {cred.label}"
 						>
-							{copied === cred.name ? 'Copied' : 'Copy'}
+							{copied === cred.secret ? 'Copied' : 'Copy'}
 						</button>
 					</div>
 					{#if cred.reveal === 'once'}
@@ -197,29 +206,29 @@
 							one that can be shown. Devices already signed in keep working.
 						</p>
 					{/if}
-				{:else if cred.revealable}
+				{:else if revealable(cred)}
 					<button
 						class="btn btn-secondary btn-small"
-						onclick={() => reveal(cred.name)}
+						onclick={() => reveal(cred.secret)}
 						disabled={busy !== null}
 					>
-						{busy === cred.name ? 'Working...' : 'Reveal'}
+						{busy === cred.secret ? 'Working...' : 'Reveal'}
 					</button>
 				{/if}
 
 				<div class="credential-actions">
-					{#if cred.rotateAllowed}
+					{#if rotateAllowed(cred)}
 						<button
 							class="btn btn-secondary btn-small"
-							onclick={() => rotate(cred.name)}
+							onclick={() => rotate(cred.secret)}
 							disabled={busy !== null}
 						>
-							{busy === cred.name ? 'Working...' : 'Rotate password'}
+							{busy === cred.secret ? 'Working...' : 'Rotate password'}
 						</button>
 					{/if}
 					<button
 						class="btn btn-danger btn-small"
-						onclick={() => confirmRevoke(cred.name) && revoke(cred.name)}
+						onclick={() => confirmRevoke(cred.secret) && revoke(cred.secret)}
 						disabled={busy !== null}
 					>
 						Revoke sessions
