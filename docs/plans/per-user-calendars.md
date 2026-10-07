@@ -622,11 +622,14 @@ server rather than by a check the agent might forget to run. The consent is the
 absence of a mount. That is the strongest guarantee available at this layer,
 and it costs one condition in `renderShares`.
 
-Where the preference lives: Bloud already keeps per-user local preferences
-alongside the directory record (`CreateManagedUserHandler` "ensures local
-preferences"), so this is a field on that, with an instance-level default for
-people who never set one. The Radicale configurator reads the set when it
-renders, the same way it reads the user list.
+Where the preference lives is the expensive part, and it is not what this plan
+first claimed. `store.PreferencesStore` keys a `user_preferences` row by
+username, but its only payload is `layout`, a JSON blob holding the dashboard
+grid. There is no generic per-user preference field to hang this on. So Phase 4
+is not "a field on that": it is a versioned schema migration, an API endpoint
+to set it, a dashboard control, and the plan reading it. That is a real slice,
+and it is the strongest reason the consent switch stays separate from the
+provisioning slice rather than riding along with it.
 
 What the preference does not control: the family calendar, which is a separate
 grant with a separate purpose, and the feeds, which are read-only for
@@ -707,14 +710,18 @@ entry per household member with a name and a URL that carry the same identity,
 and a `create_todo` against one of them lands where it should. This is the
 phase that turns "the collection exists" into "the agent can find it".
 
-**Phase 4: the consent switch.** The per-user `direct` / `off` preference,
-read from the existing per-user preferences store, gating the agent's grant in
-the plan.
+**Phase 4: the consent switch.** The per-user `direct` / `off` preference
+gating the agent's grant in the plan.
+
+This is the one phase that is not contained inside the calendar app. It needs a
+versioned schema migration for the preference, an API endpoint to set it, a
+dashboard control, and the plan reading it. The existing `user_preferences`
+table carries only the dashboard `layout` JSON, so there is nothing to reuse.
+That cost is the reason this phase is separable, and it is worth keeping that
+way: the provisioning feature is complete and useful without it.
 
 What it proves: with `off`, the agent's tree has no mount for that person and a
-write is refused by the server rather than by a check. Because this is a
-subtraction from the shipped shape, it can also be skipped entirely and picked
-up later without touching anything.
+write is refused by the server rather than by a check.
 
 **Phase 5: the purge.** `reality - plan` under `people/`, gated on a plan
 marked complete.
