@@ -1,6 +1,5 @@
-> Status: exploring. Nothing here is built. The artifact is the analysis: what the
-> catalog can already do, the one constraint that decides the ownership question,
-> and the four decisions that are genuinely open.
+> Status: designed. The decisions are recorded and the build order is sequenced;
+> nothing is built yet.
 >
 > Facts verified against the tree at `d711f54` and against the pinned
 > `ghcr.io/kozea/radicale:3.8.1` image on 2026-10-07.
@@ -9,6 +8,28 @@
 
 The ask: **provision a personal calendar for each user, so that in Hermes I can
 ask to add a todo to a specific person.**
+
+## The design in six lines
+
+1. A calendar is a **value**: a path segment under a service-account owner, a
+   display name, and a list of grants. Family is a singleton instance of it;
+   personal calendars are a per-user instance; the Radarr and Sonarr feeds are
+   a third.
+2. One pure function, `planCalendars`, produces the whole set from the live
+   directory and the live feed bindings. Creation and sharing both consume that
+   one value, so they cannot disagree.
+3. Personal collections are owned by `calendar-service` at
+   `/calendar-service/people/<user>/` and map-shared into the user's tree and
+   the agent's tree, because Bloud cannot authenticate as the user and
+   therefore cannot create anything in it.
+4. The agent resolves "Bob" from the display name and the URL that
+   `list_calendars` already returns. `dav-mcp` is third-party: Bloud shapes the
+   data it sees, not the tools it offers.
+5. Consent is a two-state switch on the agent's mount, `direct` or `off`, set
+   per person. `off` means no mount, and `owner_only` enforces that the agent
+   cannot reach the calendar at all.
+6. Ship creation first. The purge half is the same diff pointed the other way,
+   and it is the only part of this design that can lose data.
 
 ## The ask, decomposed
 
@@ -386,7 +407,7 @@ empty set, and the same rule has to cover creation: unknown is not empty, and a
 blinking identity provider must not stop provisioning nor imply that people
 were deleted.
 
-**Ordering: I over-called this, and the correction matters.** Radicale's
+**Ordering: the window is real, small, and already shipped.** Radicale's
 `database_verify()` does reject a share whose `PathMapped` target does not
 exist:
 
@@ -412,10 +433,10 @@ create `/calendar-service/family/` at line 267. So **no restructuring of
 the family case has always had, and it resolves the same way: the collection
 exists before anything a person would notice.
 
-What `--verify-sharing` is good for is the opposite of a hazard: it is a
-free post-provision assertion. Running it after a provisioning pass and
-failing loudly if the sharing database is inconsistent is a cheap way to catch
-a render bug before a household does.
+What `--verify-sharing` is good for is the opposite of a hazard: it is a free
+post-provision assertion. Running it after a provisioning pass and failing
+loudly when the sharing database is inconsistent catches a render bug before a
+household does.
 
 The one ordering rule worth keeping is the cheap one: create in `PostStart`
 before the next pass re-renders, so the window never widens. Not a new
@@ -562,6 +583,61 @@ So: **provision one collection, ship `direct` and `off`, and leave `inbox` as
 a named deferred option rather than a provisioned default.** If the household
 that wants it turns out to exist, the second collection is one more entry in
 the same loop.
+
+## Build order
+
+Each phase is independently shippable and each one proves something the next one
+depends on.
+
+**Phase 1: the plan type, with no new calendars.** Introduce `Calendar`,
+`Grant`, and `planCalendars`, and route the *existing* family and feed
+calendars through it. Nothing new is provisioned.
+
+What it proves: `renderShares(plan)` produces a `sharing.csv` that is
+**byte-identical** to what the current constants produce, and
+`ensureCalendars(plan)` creates exactly the collections the current
+`ensure*` functions create. If a single byte moves, the refactor changed
+behavior and is wrong. That assertion is the whole reason to do this phase
+before adding anything: it proves the abstraction is faithful against a set
+that is already known good.
+
+**Phase 2: per-user calendars in the plan.** Add the per-user kind.
+`planCalendars` emits one `people/<user>` calendar per active directory user,
+with grants to that user and to the agent.
+
+What it proves: a new user in the directory gets a calendar and two mounts on
+the next pass without a reinstall; the shares file is stable across passes with
+no churn and no restart; a user who is deactivated loses the mounts and the
+collection survives. This is the feature, and it is the phase that makes "add a
+todo to Bob" possible.
+
+**Phase 3: resolution.** Display names, the URL convention, and the
+`dav-mcp` namespace description that Hermes reads, so the agent can go from a
+name to a collection without guessing.
+
+What it proves: against a live stack, `list_calendars` as the agent returns one
+entry per household member with a name and a URL that carry the same identity,
+and a `create_todo` against one of them lands where it should. This is the
+phase that turns "the collection exists" into "the agent can find it".
+
+**Phase 4: the consent switch.** The per-user `direct` / `off` preference,
+read from the existing per-user preferences store, gating the agent's grant in
+the plan.
+
+What it proves: with `off`, the agent's tree has no mount for that person and a
+write is refused by the server rather than by a check. Because this is a
+subtraction from the shipped shape, it can also be skipped entirely and picked
+up later without touching anything.
+
+**Phase 5: the purge.** `reality - plan` under `people/`, gated on a plan
+marked complete.
+
+This phase goes last on purpose, and it does not go in at all until phases 1
+through 4 have run for a while and the plan is demonstrably stable. The
+completeness check on the directory read is a hard prerequisite, not a
+follow-up: the purge set is a set difference, so shipping it against a plan
+that can silently shrink is shipping a way to delete a household's calendars
+with a truncated API response.
 
 ## Decisions
 
