@@ -203,9 +203,17 @@ func (c *Configurator) prepareDataDir(state *configurator.AppState) error {
 
 // agentConfig is the resolved upstream the web UI dials.
 type agentConfig struct {
-	Endpoint     string
-	APIKey       string
-	DefaultModel string
+	// Endpoint is the agent's OpenAI-compatible base URL, path included, as the
+	// agentApi binding composes it (e.g. https://hermes.<host>/v1).
+	Endpoint string
+	// GatewayBaseURL is the gateway root the webui's own gateway bridge dials.
+	// It differs from Endpoint deliberately: the webui treats
+	// HERMES_WEBUI_GATEWAY_BASE_URL as the gateway root and appends
+	// /v1/chat/completions itself, so handing it the OpenAI base (which already
+	// ends in /v1) produces /v1/v1/chat/completions and a 404.
+	GatewayBaseURL string
+	APIKey         string
+	DefaultModel   string
 }
 
 // resolveAgent reads the agentApi binding out of the resolved integrations the
@@ -220,14 +228,35 @@ func (c *Configurator) resolveAgent(state *configurator.AppState) (agentConfig, 
 	for _, binding := range state.Integrations.AgentAPIs {
 		if binding.Endpoint != "" && binding.APIKey != "" {
 			return agentConfig{
-				Endpoint:     binding.Endpoint,
-				APIKey:       binding.APIKey,
-				DefaultModel: binding.ModelName,
+				Endpoint:       binding.Endpoint,
+				GatewayBaseURL: gatewayRoot(binding.Endpoint),
+				APIKey:         binding.APIKey,
+				DefaultModel:   binding.ModelName,
 			}, nil
 		}
 	}
 	return agentConfig{}, fmt.Errorf(
 		"%s: no wired agentApi provider; the web UI has no backend to dial", appName)
+}
+
+// gatewayRoot returns the gateway's base origin, with the OpenAI /v1 path
+// segment removed. The webui appends /v1/chat/completions to this value itself,
+// so the binding's OpenAI base URL (which ends in /v1) would double the prefix.
+//
+// The endpoint the orchestrator composes is always the provider's public origin
+// plus the extraPort path prefix (/v1 for Hermes' gateway), so stripping the
+// final path segment recovers the origin. A trailing slash is also removed so a
+// future prefix change cannot produce a doubled //.
+func gatewayRoot(endpoint string) string {
+	endpoint = strings.TrimRight(endpoint, "/")
+	if idx := strings.LastIndex(endpoint, "/"); idx > 0 {
+		// Only strip the path when the part after the last slash is a path
+		// segment, not a port: an origin has at most two slashes (scheme://).
+		if scheme := strings.Index(endpoint, "://"); idx > scheme+2 {
+			return endpoint[:idx]
+		}
+	}
+	return endpoint
 }
 
 // ensureClientPassword returns the app's client password, minting and
@@ -271,7 +300,7 @@ func (c *Configurator) renderEnv(agent agentConfig, state *configurator.AppState
 
 	writeEnv(&b, "HERMES_WEBUI_PASSWORD", password)
 	writeEnv(&b, "HERMES_WEBUI_CHAT_BACKEND", "gateway")
-	writeEnv(&b, "HERMES_WEBUI_GATEWAY_BASE_URL", agent.Endpoint)
+	writeEnv(&b, "HERMES_WEBUI_GATEWAY_BASE_URL", agent.GatewayBaseURL)
 	writeEnv(&b, "HERMES_WEBUI_GATEWAY_API_KEY", agent.APIKey)
 	writeEnv(&b, "HERMES_WEBUI_DEFAULT_MODEL", agent.DefaultModel)
 

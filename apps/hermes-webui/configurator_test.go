@@ -123,7 +123,7 @@ func TestPreStartMintsAndDeliversTheClientPassword(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "HERMES_WEBUI_PASSWORD='"+minted+"'")
 	assert.Contains(t, string(content), "HERMES_WEBUI_CHAT_BACKEND='gateway'")
-	assert.Contains(t, string(content), "HERMES_WEBUI_GATEWAY_BASE_URL='https://hermes.example.com/v1'")
+	assert.Contains(t, string(content), "HERMES_WEBUI_GATEWAY_BASE_URL='https://hermes.example.com'")
 	assert.Contains(t, string(content), "HERMES_WEBUI_DEFAULT_MODEL='hermes'")
 	assert.Contains(t, string(content), "HERMES_WEBUI_OIDC_CLIENT_ID='webui-client'")
 	assert.Contains(t, string(content), "HERMES_WEBUI_SECURE='true'")
@@ -205,4 +205,19 @@ func TestRenderEnvOmitsEmptyValues(t *testing.T) {
 	assert.NotContains(t, out, "HERMES_WEBUI_PASSWORD")
 	assert.NotContains(t, out, "HERMES_WEBUI_GATEWAY_BASE_URL")
 	assert.NotContains(t, out, "HERMES_WEBUI_OIDC_CLIENT_ID")
+}
+
+// TestGatewayRootStripsTheOpenAIPath pins the double-/v1 bug: the webui appends
+// /v1/chat/completions to HERMES_WEBUI_GATEWAY_BASE_URL, so the binding's
+// OpenAI base (which ends in /v1) would double the prefix. The gateway root is
+// the origin with that final segment removed, and the origin is never touched.
+func TestGatewayRootStripsTheOpenAIPath(t *testing.T) {
+	assert.Equal(t, "https://hermes.example.com", gatewayRoot("https://hermes.example.com/v1"))
+	assert.Equal(t, "https://hermes.example.com", gatewayRoot("https://hermes.example.com/v1/"))
+	assert.Equal(t, "http://hermes.localhost:8080", gatewayRoot("http://hermes.localhost:8080/v1"))
+	// An origin with no path is returned unchanged, so a prefix-less endpoint
+	// cannot be mangled.
+	assert.Equal(t, "https://hermes.example.com", gatewayRoot("https://hermes.example.com"))
+	// A bare origin with a port must not have the port mistaken for a path.
+	assert.Equal(t, "https://hermes.example.com:8080", gatewayRoot("https://hermes.example.com:8080"))
 }
