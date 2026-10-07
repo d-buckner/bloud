@@ -1065,6 +1065,7 @@ to the right doc. When a doc moves, update it in both places.
 | Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
 |Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|
 |Build the .deb release package|[operations/packaging.md](docs/operations/packaging.md)|
+|Back up, restore, and update an install|[operations/backup-restore.md](docs/operations/backup-restore.md)|
 |Sharing/federation (removed)|archived design in [docs/plans/archive/](docs/plans/archive/)|
 |MCP servers as catalog apps (shipped: `apps/affine-mcp` providers, Hermes consumes)|[features/mcp.md](docs/features/mcp.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
