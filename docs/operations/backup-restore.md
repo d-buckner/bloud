@@ -35,7 +35,10 @@ trap, so a failed or interrupted archive still leaves the instance running.
 
 The capture writes nothing under the data directory. With every writer
 stopped, the script only reads; the tree is untouched whether the archive
-succeeds or fails. A clean host-agent shutdown closes the SQLite connection
+succeeds or fails. Stopping the systemd unit does not by itself prove there is
+no writer: a `host-agent` started by hand is not managed by the unit, so the
+script also checks for a `host-agent` process and aborts rather than capture
+the tree under a live writer. A clean host-agent shutdown closes the SQLite connection
 and checkpoints the write-ahead log, so the archive normally holds just
 `bloud.db`. If the process was killed instead, `bloud.db-wal` and
 `bloud.db-shm` are captured alongside it, which is still a recoverable
