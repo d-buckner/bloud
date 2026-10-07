@@ -76,6 +76,15 @@ The file is the delivery mechanism rather than container `environment` because
 the values change and a running container's environment does not. A rotate is a
 file rewrite plus a recreate.
 
+## The data directory is world-writable
+
+The image's init drops privileges to the `hermeswebui` user (uid 1024) and then
+verifies `HERMES_WEBUI_STATE_DIR` is writable by touching a test file there.
+The bind-mounted `<appDataDir>/data` directory is owned by the host agent (uid
+1000), which maps to container uid 0, so a uid-1024 runtime cannot write a 0755
+directory. `PreStart` sets it to `0777` on every pass, the same world-write
+contract Hermes uses for its home directory (`HERMES_HOME_MODE: 0777`).
+
 ## The agent connection
 
 The `agentApi` integration is `required: true` with `requires: [apiKey]`. The

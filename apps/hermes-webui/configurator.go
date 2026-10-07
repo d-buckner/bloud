@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -96,6 +97,10 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		return configurator.NoRestart(), fmt.Errorf("%s: no app state", appName)
 	}
 
+	if err := c.prepareDataDir(state); err != nil {
+		return configurator.NoRestart(), err
+	}
+
 	agent, err := c.resolveAgent(state)
 	if err != nil {
 		return configurator.NoRestart(), err
@@ -172,6 +177,27 @@ func (c *Configurator) RevokeSessions(ctx context.Context, _ *configurator.AppSt
 	}
 	c.logger.Warn("cleared the app session store",
 		"container", nodeName, "file", sessionsFileName)
+	return nil
+}
+
+// prepareDataDir makes the app's state directory writable by the container's
+// runtime user.
+//
+// The image's init drops privileges to the `hermeswebui` user (uid 1024) and
+// then verifies HERMES_WEBUI_STATE_DIR is writable by touching a test file
+// there. The bind-mounted host directory is owned by the host agent (uid 1000),
+// which maps to container uid 0, so a uid-1024 runtime cannot write a 0755
+// directory. The world-write bit is the one mode the host agent can set that
+// lets the container's mapped subuid write, which is the same contract Hermes
+// uses for its home directory (HERMES_HOME_MODE: 0777).
+func (c *Configurator) prepareDataDir(state *configurator.AppState) error {
+	dir := filepath.Join(state.DataPath, "data")
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		return fmt.Errorf("%s: create data dir: %w", appName, err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil {
+		return fmt.Errorf("%s: make data dir writable: %w", appName, err)
+	}
 	return nil
 }
 

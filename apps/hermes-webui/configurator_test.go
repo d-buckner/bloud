@@ -112,6 +112,12 @@ func TestPreStartMintsAndDeliversTheClientPassword(t *testing.T) {
 	minted := secrets.GetAppSecret(appName, clientPasswordSecret)
 	require.NotEmpty(t, minted)
 
+	// The data dir must be world-writable for the container's uid-1024 runtime
+	// user (the image verifies it by touching a test file there).
+	info, err := os.Stat(filepath.Join(state.DataPath, "data"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o777), info.Mode().Perm())
+
 	// The dotenv carries the value, the gateway wiring, and the OIDC client.
 	content, err := os.ReadFile(filepath.Join(state.DataPath, "config", envFileName))
 	require.NoError(t, err)

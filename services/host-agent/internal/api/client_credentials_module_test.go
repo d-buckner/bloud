@@ -468,11 +468,13 @@ func TestSnippetRendersThePair(t *testing.T) {
 		Reaches: "the app",
 	}, newFakeSecrets())
 
-	snippet := mod.renderSnippet(catalog.SnippetURLAndPassword, "hunter2")
+	snippet := mod.renderSnippet(catalog.SnippetURLAndPassword, "hermes-webui", "hunter2")
 	assert.Contains(t, snippet, "URL:")
 	assert.Contains(t, snippet, "hunter2")
+	// The URL is the app's own routed subdomain, not the instance root.
+	assert.Contains(t, snippet, "hermes-webui.localhost:8080")
 
-	assert.Equal(t, "hunter2", mod.renderSnippet("", "hunter2"),
+	assert.Equal(t, "hunter2", mod.renderSnippet("", "hermes-webui", "hunter2"),
 		"no snippet shape means the bare value")
 }
 

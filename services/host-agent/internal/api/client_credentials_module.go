@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
@@ -225,7 +226,7 @@ func (m *clientCredentialsModule) revealHandler() http.HandlerFunc {
 		respondJSON(w, http.StatusOK, map[string]string{
 			"secret":  secretName,
 			"value":   value,
-			"snippet": m.renderSnippet(access.Snippet, value),
+			"snippet": m.renderSnippet(access.Snippet, appName, value),
 		})
 	}
 }
@@ -323,7 +324,7 @@ func (m *clientCredentialsModule) rotateHandler() http.HandlerFunc {
 		respondJSON(w, http.StatusOK, map[string]any{
 			"secret":          secretName,
 			"value":           value,
-			"snippet":         m.renderSnippet(access.Snippet, value),
+			"snippet":         m.renderSnippet(access.Snippet, appName, value),
 			"sessionsSurvive": true,
 		})
 	}
@@ -439,11 +440,12 @@ func fingerprint(value string) string {
 }
 
 // renderSnippet builds the copy-ready form the provider asked for. The URL is
-// the live instance address rather than anything stored with the credential,
-// so a reveal after an address change hands over the address that currently
-// works.
-func (m *clientCredentialsModule) renderSnippet(shape, value string) string {
-	base := m.publicURL()
+// the app's own routed subdomain rather than the instance root: a client
+// pastes it straight into Hermex, and the base origin would land on the
+// dashboard, not the app. It is derived live so a reveal after an address
+// change hands over the address that currently works.
+func (m *clientCredentialsModule) renderSnippet(shape, appName, value string) string {
+	base := m.appURL(appName)
 	switch shape {
 	case catalog.SnippetURLAndPassword:
 		return fmt.Sprintf("URL: %s\nPassword: %s", base, value)
@@ -456,11 +458,23 @@ func (m *clientCredentialsModule) renderSnippet(shape, value string) string {
 	}
 }
 
-func (m *clientCredentialsModule) publicURL() string {
+// appURL returns the origin the app is reached at from outside: the instance's
+// primary address with the app's subdomain on it. The routing rule is
+// HostRegexp(`^<app>\.`), so `<app>.<host>` is the only host the app answers
+// on. Falls back to the instance root when no host state is available.
+func (m *clientCredentialsModule) appURL(appName string) string {
+	var base string
 	if m.hostState == nil {
-		return hostset.DefaultPublicURL
+		base = hostset.DefaultPublicURL
+	} else {
+		base = m.hostState.Get().PrimaryBaseURL()
 	}
-	return m.hostState.Get().PrimaryBaseURL()
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	parsed.Host = appName + "." + parsed.Host
+	return parsed.String()
 }
 
 // fail maps a lookup error to a status. A typed notFound is a 404 and anything
