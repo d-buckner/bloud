@@ -1,7 +1,11 @@
 # Pilot: hermes-webui as the first client-credentials app
 
-> Status: draft. This is the pilot for the pattern specified in
-> [`client-credentials.md`](client-credentials.md).
+> Status: implemented and shipped (PR on this branch). Work items A through J
+> are done and green in CI. Two success criteria are closed as "not verified in
+> the pilot" rather than passed, because neither can be exercised on the stock
+> dev VM: SC1 (browser SSO) needs a real https deployment and SC2 (Hermex on a
+> phone) needs a physical device. SC3 through SC7 are covered by tests or by
+> the config assertions below.
 >
 > The pilot is scoped by two hard constraints:
 >

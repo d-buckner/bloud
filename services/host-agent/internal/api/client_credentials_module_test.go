@@ -287,7 +287,10 @@ func TestRotateRotatedValueIsRevealableOnce(t *testing.T) {
 // about the API, and the modal is not the security boundary. This asserts the
 // serialized response contains no trace of the value at any reveal policy,
 // including `always`.
-func TestListNeverReturnsTheValue(t *testing.T) {
+// TestNonPollableListNeverReturnsTheValue is the SC3 assertion. It walks the
+// list response under every reveal policy and fails if the value appears in
+// any of them. The name matches the pilot plan's "How to verify" command.
+func TestNonPollableListNeverReturnsTheValue(t *testing.T) {
 	policies := []catalog.ClientReveal{
 		catalog.ClientRevealNever,
 		catalog.ClientRevealOnce,
@@ -322,6 +325,27 @@ func TestListNeverReturnsTheValue(t *testing.T) {
 			assert.True(t, payload.Credentials[0].Published)
 		})
 	}
+}
+
+// TestListReturnsEmptyForAnAppWithoutClientAccess is the SC6 backend half:
+// an app that declares no clientAccess block returns an empty descriptor list,
+// which is what removes the panel from the UI.
+func TestListReturnsEmptyForAnAppWithoutClientAccess(t *testing.T) {
+	app := clientAccessApp(&catalog.ClientAccess{Reveal: catalog.ClientRevealOnce})
+	app.Provides = catalog.Provides{} // the app offers nothing client-accessible
+
+	mod := NewClientCredentialsModule(
+		&fakeCatalog{app: app}, newFakeSecrets(), newFakeSettings(), nil, &fakeOrch{}, nil)
+
+	rec := httptest.NewRecorder()
+	mod.ListHandler()(rec, listRequest("hermes-webui"))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var payload struct {
+		Credentials []credentialDescriptor `json:"credentials"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	assert.Empty(t, payload.Credentials, "no clientAccess block means no credentials to show")
 }
 
 // TestRevealUnderOnceServesOnceThenRefuses pins the once-only contract.
