@@ -78,14 +78,37 @@ The file is the delivery mechanism rather than container `environment` because
 the values change and a running container's environment does not. A rotate is a
 file rewrite plus a recreate.
 
-## The data directory is world-writable
+## The data directory is world-writable, until the container takes it over
 
 The image's init drops privileges to the `hermeswebui` user (uid 1024) and then
 verifies `HERMES_WEBUI_STATE_DIR` is writable by touching a test file there.
-The bind-mounted `<appDataDir>/data` directory is owned by the host agent (uid
-1000), which maps to container uid 0, so a uid-1024 runtime cannot write a 0755
-directory. `PreStart` sets it to `0777` on every pass, the same world-write
+The bind-mounted `<appDataDir>/data` directory starts out owned by whoever runs
+the host agent, which maps to container uid 0, so a uid-1024 runtime cannot
+write a 0755 directory. `PreStart` widens it to `0777`, the same world-write
 contract Hermes uses for its home directory (`HERMES_HOME_MODE: 0777`).
+
+That is the first-boot story. It is not the story every later pass sees. The
+image's init performs a uid/gid handoff and chowns its own state directory, so
+from the first boot on the directory belongs to the container's runtime user,
+which under rootless podman is a **subordinate uid on the host**: container uid
+1024 lands on host uid 101023 under a `100000:65536` mapping (container uid 0
+maps to the agent's own uid, so uid 1 and up start at the base of the range).
+POSIX allows `chmod` only by the file's owner or by `CAP_FOWNER`, so an
+unconditional `os.Chmod` there returns `EPERM` and keeps returning it. Since
+`prepareDataDir` is the first thing `PreStart` does, that failure used to abort
+the whole pass before the client password was minted and before `bloud.env` was
+written: `ERROR` on a fresh install, and a permanently stale config behind a
+`WARN` on every resync of a running app.
+
+`prepareDataDir` therefore goes through `managedfile.EnsureWritable`, which is
+the repo's answer for any path a container has taken over. It still widens the
+directory whenever the agent can, and tolerates the `EPERM` when a foreign uid
+owns the path and can write it. The tolerance is bounded rather than blanket: a
+directory with no write bit at all still errors, because the container could not
+write that either. No host-side workaround substitutes for the fix: `chmod` as
+the agent is the same `EPERM`, `chmod` as root fixes the mode but not the
+ownership so the next pass fails identically, and `chown` to the agent takes
+the directory away from the process that actually writes it.
 
 ## The agent connection
 

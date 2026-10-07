@@ -185,17 +185,32 @@ func (c *Configurator) RevokeSessions(ctx context.Context, _ *configurator.AppSt
 //
 // The image's init drops privileges to the `hermeswebui` user (uid 1024) and
 // then verifies HERMES_WEBUI_STATE_DIR is writable by touching a test file
-// there. The bind-mounted host directory is owned by the host agent (uid 1000),
+// there. The bind-mounted host directory starts out owned by the host agent,
 // which maps to container uid 0, so a uid-1024 runtime cannot write a 0755
 // directory. The world-write bit is the one mode the host agent can set that
 // lets the container's mapped subuid write, which is the same contract Hermes
 // uses for its home directory (HERMES_HOME_MODE: 0777).
+//
+// It cannot just chmod the directory on every pass, because the directory does
+// not stay the agent's. The image's init performs a uid/gid handoff and chowns
+// its own state directory, so from the first boot onward the directory belongs
+// to the container's runtime user: host uid 101023 under a 100000-based
+// rootless-podman mapping. POSIX permits chmod only by the file's owner or by
+// CAP_FOWNER, so a bare os.Chmod returns EPERM there and will keep returning
+// it forever, which parks the node in ERROR on a fresh install and leaves a
+// running app's config stale on every resync.
+//
+// EnsureWritable is what makes that survivable. It tolerates the EPERM when a
+// foreign uid owns the path and can write it, which is exactly this case: the
+// owner is the process that writes there, and the agent never needs to write
+// it. The tolerance stays bounded, so a directory with no write bit at all
+// still errors loudly, because the container could not write that either.
 func (c *Configurator) prepareDataDir(state *configurator.AppState) error {
 	dir := filepath.Join(state.DataPath, "data")
 	if err := os.MkdirAll(dir, 0o777); err != nil {
 		return fmt.Errorf("%s: create data dir: %w", appName, err)
 	}
-	if err := os.Chmod(dir, 0o777); err != nil {
+	if err := managedfile.EnsureWritable(dir, 0o777); err != nil {
 		return fmt.Errorf("%s: make data dir writable: %w", appName, err)
 	}
 	return nil
