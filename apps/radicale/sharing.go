@@ -48,40 +48,15 @@ const (
 	writableShare = "RWrw"
 )
 
-// renderShares renders the csv sharing database: every shared collection
-// mounted into every recipient's own tree.
-//
-// A map share is what makes discovery work. CalDAV clients enumerate the
-// authenticated principal's home to find their calendars, so a collection
-// that lives in someone else's tree is invisible until it is mapped in. The
-// feeds and the family calendar live under the service account, and each
-// recipient gets a virtual copy under their own.
-//
-// The output is ordered by recipient and then by mount name so re-rendering
-// the same set is byte-identical and asks for no restart.
-func renderShares(recipients []string, feeds []configurator.ICSFeedBinding) string {
-	var b strings.Builder
-	b.WriteString(sharesCSVHeader)
-	b.WriteString("\n")
-
-	for _, recipient := range shareRecipients(recipients) {
-		b.WriteString(shareRow(recipient, familyCollection, calendarOwner, familyCollection, writableShare))
-		for _, feed := range sortedFeeds(feeds) {
-			b.WriteString(shareRow(recipient, feed.CalendarName, calendarOwner, feed.CalendarName, readOnlyShare))
-		}
-	}
-	return b.String()
-}
-
 // shareRow renders one map share: the owner's real collection mounted at
 // `recipient/mount/` in the recipient's tree.
 //
 // EnabledByOwner and EnabledByUser are both pre-set true. A share that needs
 // the recipient to accept it is a share nobody accepts: Bloud has no screen
 // for that, and the whole point is that the calendars are simply there.
-func shareRow(recipient, mount, owner, owned string, perms string) string {
-	return fmt.Sprintf("map;/%s/%s/;/%s/%s/;none;%s;%s;%s;True;True;False;False;0;0;{};{}\n",
-		recipient, mount, owner, owned, owner, recipient, perms)
+func shareRow(recipient, mount, owner, owned, perms, properties string) string {
+	return fmt.Sprintf("map;/%s/%s/;/%s/%s/;none;%s;%s;%s;True;True;False;False;0;0;%s;{}\n",
+		recipient, mount, owner, owned, owner, recipient, perms, properties)
 }
 
 // shareRecipients composes the full set of principals the shared collections
@@ -143,20 +118,22 @@ func feedComplete(feed configurator.ICSFeedBinding) bool {
 	return feed.Installed && feed.APIKey != "" && feed.Path != "" && feed.BaseURL != "" && feed.CalendarName != ""
 }
 
-// calendarRecipients lists the logins that every shared collection is mounted
-// for: everyone on the instance.
+// calendarRecipients lists the active users on the instance, with the human
+// name each one gets.
 //
-// The identity provider is the only place this answer lives, and its user list
-// already excludes service accounts and its own built-in admin. Inactive
-// accounts are dropped here too: a deactivated account is not somebody's
-// family member, and a share for it is a live grant to a door that is shut for
-// a reason.
+// The same list answers two questions, which is why it is one call: it is who
+// the shared collections are mounted for, and it is the set of people who get
+// a personal calendar. Both come from the identity provider, the only place
+// this answer lives. Its user list already excludes service accounts and its
+// own built-in admin. Inactive accounts are dropped here too: a deactivated
+// account is not somebody's family member, and a share for it is a live grant
+// to a door that is shut for a reason.
 //
 // The bool is the load-bearing part. It separates "there is nobody to share
 // with" from "we could not ask", and the caller must not treat the second as
 // the first: rendering an empty list because the provider was briefly
 // unreachable would strip every user's calendars.
-func (c *Configurator) calendarRecipients(ctx context.Context, state *configurator.AppState) ([]string, bool) {
+func (c *Configurator) calendarRecipients(ctx context.Context, state *configurator.AppState) ([]DirectoryUser, bool) {
 	idp, bound := identityProvider(state)
 	if !bound {
 		c.logger.Info("radicale sharing: no identity provider token, cannot list users")
@@ -174,21 +151,44 @@ func (c *Configurator) calendarRecipients(ctx context.Context, state *configurat
 		return nil, false
 	}
 
-	recipients := make([]string, 0, len(users))
+	recipients := make([]DirectoryUser, 0, len(users))
 	seen := make(map[string]bool, len(users))
 	for _, u := range users {
 		if !u.IsActive {
 			continue
 		}
 		name := strings.TrimSpace(u.Username)
-		if name == "" || name == calendarOwner || name == agentUsername || seen[name] {
+		if !usableUsername(name) || name == calendarOwner || name == agentUsername || seen[name] {
 			continue
 		}
 		seen[name] = true
-		recipients = append(recipients, name)
+		recipients = append(recipients, DirectoryUser{
+			Username:    name,
+			DisplayName: strings.TrimSpace(u.Name),
+		})
 	}
-	sort.Strings(recipients)
+	sort.Slice(recipients, func(i, j int) bool { return recipients[i].Username < recipients[j].Username })
 	return recipients, true
+}
+
+// usableUsername rejects a username that cannot be a collection path segment.
+//
+// The username is the identity a personal calendar is keyed on, so it goes
+// straight into `/calendar-service/people/<username>/`. A slash would escape the
+// prefix and a leading dot would make the directory hidden, and either way the
+// purge boundary stops meaning what it says. Better to skip the person and say so
+// than to provision a collection in the wrong place.
+func usableUsername(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return false
+	}
+	if strings.HasPrefix(name, ".") {
+		return false
+	}
+	return !strings.ContainsAny(name, " \t\n")
 }
 
 // identityProvider picks the resolved `sso` binding that carries an API token,
@@ -204,86 +204,6 @@ func identityProvider(state *configurator.AppState) (configurator.SSOBinding, bo
 		}
 	}
 	return configurator.SSOBinding{}, false
-}
-
-// ensureFamilyCalendar creates the shared family calendar under the service
-// account if it is not there yet.
-//
-// It has to be created over DAV rather than written into the storage tree: the
-// server owns its own storage format, and the account that owns the collection
-// is the one that has to ask for it. That is why this runs in PostStart with
-// the owner's credential and not in PreStart with the rest of the files.
-//
-// A failure is a warning, not a fault. The shares for the family calendar are
-// rendered regardless, so until this succeeds they point at a collection that
-// is not there yet; the next pass tries again, and the node keeps serving
-// everything that does work.
-func (c *Configurator) ensureFamilyCalendar(ctx context.Context) error {
-	ownerPassword := c.calendarOwnerPassword()
-	if ownerPassword == "" {
-		c.logger.Warn("radicale sharing: no shared-calendar owner credential yet; family calendar not created")
-		return nil
-	}
-
-	path := "/" + calendarOwner + "/" + familyCollection + "/"
-	exists, err := c.api.collectionExists(ctx, path, calendarOwner, ownerPassword)
-	if err != nil {
-		c.logger.Warn("radicale sharing: could not check for the family calendar", "err", err)
-		return nil
-	}
-	if exists {
-		return nil
-	}
-	if err := c.api.createCalendar(ctx, path, calendarOwner, ownerPassword, familyDisplayName); err != nil {
-		c.logger.Warn("radicale sharing: could not create the family calendar", "path", path, "err", err)
-		return nil
-	}
-	c.logger.Info("created the shared family calendar", "path", path, "owner", calendarOwner)
-	return nil
-}
-
-// ensureFeedCalendars pre-creates the collection each installed feed projects
-// into, and names it while doing so.
-//
-// Two problems, one function.
-//
-// The display name: pimsync cannot set one. `display_name` is rejected by its
-// webcal storage, and the value it does carry as a synced property never
-// arrives, because an anonymous ICS document has no display name to sync. A
-// collection Radicale creates for itself derives one from the path, which is
-// how `calendar-service/radarr` ended up in a family member's calendar. The
-// `<D:set>` form used here is the one shape that actually sticks, and it is
-// the same one that makes the shared calendar read "Family".
-//
-// The dangling share: the share row for a provider is rendered as soon as the
-// provider is installed, but the collection used to appear only when the feed
-// produced its first non-empty event. Every user had a calendar mounted that
-// pointed at nothing until then. Creating the collection here closes that gap.
-//
-// Like the family calendar this warns rather than fails: the shares render
-// regardless, and the next pass tries again.
-func (c *Configurator) ensureFeedCalendars(ctx context.Context, feeds []configurator.ICSFeedBinding) {
-	ownerPassword := c.calendarOwnerPassword()
-	if ownerPassword == "" {
-		c.logger.Warn("radicale sharing: no shared-calendar owner credential yet; feed calendars not created")
-		return
-	}
-	for _, feed := range sortedFeeds(feeds) {
-		path := "/" + calendarOwner + "/" + feed.CalendarName + "/"
-		exists, err := c.api.collectionExists(ctx, path, calendarOwner, ownerPassword)
-		if err != nil {
-			c.logger.Warn("radicale sharing: could not check for a feed calendar", "path", path, "err", err)
-			continue
-		}
-		if exists {
-			continue
-		}
-		if err := c.api.createCalendar(ctx, path, calendarOwner, ownerPassword, feed.CalendarName); err != nil {
-			c.logger.Warn("radicale sharing: could not create the feed calendar", "path", path, "err", err)
-			continue
-		}
-		c.logger.Info("created the feed calendar", "path", path, "provider", feed.App, "owner", calendarOwner)
-	}
 }
 
 // calendarOwnerPassword reads the shared-calendar owner credential out of this
