@@ -259,6 +259,38 @@ var contracts = []Contract{
 			{Key: "workspaceId", Optional: true},
 		},
 	},
+
+	// A credential meant to be copied by a human into a third-party client
+	// that cannot join the identity provider: a native phone app, a desktop
+	// sync tool, a device with no browser.
+	//
+	// This is the other half of the audience split. Every other contract in
+	// this registry answers "what does a consumer app get?". This one answers
+	// "what does a person holding a phone get?", and `clientAccess` on the
+	// offer is what makes that second audience explicit rather than implicit.
+	// The distinction matters because the two need different controls: a
+	// machine credential is rotated by an operator and never displayed, and
+	// a human credential has to be shown at least once, copied by hand, and
+	// survived losing.
+	//
+	// It is a separate contract from `appApi` rather than a flag on it. The
+	// `appApi` payload is a real account's real password, deliberately handed
+	// to a companion process that Bloud itself configured. Folding a
+	// human-copyable credential into it would put that same value on a
+	// surface designed to be copied onto a phone, and the two have different
+	// blast radii: a companion's credential is one process Bloud placed, a
+	// human-copied one is wherever the person put it. Invariant 15 makes a
+	// new capability a new contract entry for exactly this reason.
+	//
+	// The contract itself carries no policy. Reveal, rotate, and the
+	// disclosure all live on the provider's `clientAccess` block, because
+	// they are facts about the app being revealed rather than about the shape
+	// of the credential, and the loader holds that block to a stricter bar
+	// than it holds anything else in an offer.
+	{
+		Name:    "clientPassword",
+		Secrets: []string{"password"},
+	},
 }
 
 // ContractFor returns the contract with the given name.

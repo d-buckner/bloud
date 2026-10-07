@@ -31,6 +31,10 @@ type appSpec struct {
 	// that renders their real config rather than the locked-down no-provider
 	// fallback the same code produces.
 	WithLDAP bool
+	// WithAgent says to hand the configurator a wired agentApi provider. Apps
+	// that are front ends for an agent have no useful config to write without
+	// one, so the harness has to supply the binding their PreStart requires.
+	WithAgent bool
 	// Preseed runs against a fresh data dir before each pass.
 	Preseed func(dataDir string) error
 }
@@ -44,6 +48,7 @@ var conformanceTable = []appSpec{
 	{Dir: "calino", Node: "apps-calino", DefaultPort: 8180},
 	{Dir: "dav-mcp", Node: "apps-dav-mcp", DefaultPort: 9333},
 	{Dir: "hermes", Node: "apps-hermes", DefaultPort: 9119, WithSSO: true},
+	{Dir: "hermes-webui", Node: "apps-hermes-webui", DefaultPort: 8787, WithSSO: true, WithAgent: true},
 	{Dir: "homeassistant", Node: "apps-homeassistant", DefaultPort: 8123, WithSSO: true, Preseed: preseedHAComponent},
 	{Dir: "immich", Node: "apps-immich-server", DefaultPort: 2283, WithSSO: true},
 	{Dir: "jellyfin", Node: "apps-jellyfin", DefaultPort: 8096},
@@ -101,7 +106,7 @@ func TestConformance(t *testing.T) {
 				Node:        spec.Node,
 				Metadata:    md,
 				DefaultPort: spec.DefaultPort,
-				State:       stateFor(spec.WithSSO, spec.WithLDAP),
+				State:       stateForSpec(spec),
 				Preseed:     spec.Preseed,
 			}
 			configtest.Run(t, tc)
@@ -112,13 +117,16 @@ func TestConformance(t *testing.T) {
 // stateFor builds the AppState the harness passes to PreStart. With SSO off
 // the configurator sees no provider, which is the shape it handles when
 // Authentik is not installed.
-func stateFor(withSSO, withLDAP bool) func(dataDir, bloudDataDir string) *configurator.AppState {
+// stateForSpec builds the AppState the harness passes to PreStart. With SSO off
+// the configurator sees no provider, which is the shape it handles when
+// Authentik is not installed.
+func stateForSpec(spec appSpec) func(dataDir, bloudDataDir string) *configurator.AppState {
 	return func(dataDir, bloudDataDir string) *configurator.AppState {
 		st := &configurator.AppState{
 			DataPath:      dataDir,
 			BloudDataPath: bloudDataDir,
 		}
-		if withSSO {
+		if spec.WithSSO {
 			st.SSOEnabled = true
 			st.OIDC = &configurator.OIDCOutput{
 				ClientID:     "conformance-client",
@@ -127,7 +135,7 @@ func stateFor(withSSO, withLDAP bool) func(dataDir, bloudDataDir string) *config
 				RedirectURI:  "http://app.localhost:8080/mCallback",
 			}
 		}
-		if withLDAP {
+		if spec.WithLDAP {
 			st.SSOEnabled = true
 			st.LDAP = &configurator.LDAPOutput{
 				Host:         "apps-authentik-ldap",
@@ -135,6 +143,15 @@ func stateFor(withSSO, withLDAP bool) func(dataDir, bloudDataDir string) *config
 				BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
 				BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
 				BindPassword: "conformance-ldap-reader-secret",
+			}
+		}
+		if spec.WithAgent {
+			st.Integrations.AgentAPIs = []configurator.AgentAPIBinding{
+				{
+					Endpoint:  "http://hermes.localhost:8080/v1",
+					APIKey:    "conformance-agent-key",
+					ModelName: "hermes",
+				},
 			}
 		}
 		return st

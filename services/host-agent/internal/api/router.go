@@ -198,6 +198,12 @@ type routerModules struct {
 	settings *settingsModule
 	ai       *aiSettingsModule
 	system   *systemModule
+	// clientCreds serves the reveal surface for credentials a provider
+	// declares under `clientAccess`. It is its own module rather than a route
+	// on settings because its dependency set is the catalog plus the secret
+	// store, and it is the only surface in the API whose whole job is to hand
+	// out a secret under a policy.
+	clientCreds *clientCredentialsModule
 
 	requestTimeout func(http.Handler) http.Handler
 	authMiddleware func(http.Handler) http.Handler
@@ -274,7 +280,9 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 			orch:          deps.orchCaller,
 			logger:        logger,
 		},
-		system:         systemMod,
+		system: systemMod,
+		clientCreds: NewClientCredentialsModule(deps.catalogCache, deps.secrets,
+			cfg.Settings, cfg.Hosts, deps.orchCaller, logger),
 		realOrch:       deps.realOrch,
 		authMiddleware: authMiddlewareFn(deps.sessionStore, logger, cfg.TrustedLocalNets, cfg.APIToken),
 		// No global request timeout on the router: SSE streams must outlive a
@@ -377,6 +385,12 @@ func (m *routerModules) registerRoutes(r chi.Router) {
 		admin.Get("/system/rebuild/stream", rebuildStreamHandler())
 		NewSettingsRouter(m.settings, admin)
 		RegisterAIRoutes(m.ai, admin)
+
+		// Client credentials: reveal and rotate for credentials a provider
+		// declares under `clientAccess`. Admin-only, because the reveal
+		// endpoint returns a live credential, and the admin position is the
+		// only thing standing between that and any authenticated user.
+		m.clientCreds.Register(admin)
 	})
 }
 

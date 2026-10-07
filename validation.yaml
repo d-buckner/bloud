@@ -239,6 +239,15 @@ apps:
       - apps/hermes/**
     e2e-project: hermes
 
+  # The client-credentials pilot. Browser sign-in is native-oidc; the mobile
+  # client path is a Bloud-minted password, which is not an SSO strategy the
+  # app joins, so `auth` names the ingress strategy the browser sees.
+  hermes-webui:
+    auth: native-oidc
+    validation-level: full
+    files:
+      - apps/hermes-webui/**
+
   paperless-ngx:
     auth: native-oidc
     validation-level: embed
