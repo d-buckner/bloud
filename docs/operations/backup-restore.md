@@ -28,11 +28,19 @@ sudo ./backup.sh --output-dir /mnt/usb/bloud
 ```
 
 The script stops the host-agent and every container labeled
-`io.bloud.managed=true`, checkpoints the SQLite database, writes
-`<output-dir>/bloud-<UTC timestamp>.tar.gz` (mode `0600`, it holds
-credentials), then starts the containers and the host-agent back. The restart
-runs from an `EXIT` trap, so a failed or interrupted archive still leaves the
-instance running.
+`io.bloud.managed=true`, writes `<output-dir>/bloud-<UTC timestamp>.tar.gz`
+(mode `0600`, it holds credentials) with `tar` reading the frozen tree, then
+starts the containers and the host-agent back. The restart runs from an `EXIT`
+trap, so a failed or interrupted archive still leaves the instance running.
+
+The capture writes nothing under the data directory. With every writer
+stopped, the script only reads; the tree is untouched whether the archive
+succeeds or fails. A clean host-agent shutdown closes the SQLite connection
+and checkpoints the write-ahead log, so the archive normally holds just
+`bloud.db`. If the process was killed instead, `bloud.db-wal` and
+`bloud.db-shm` are captured alongside it, which is still a recoverable
+snapshot; `restore.sh` clears stale sidecars before putting the database
+back.
 
 By default the archive is the whole data directory **except** `media/`,
 `downloads/`, and the rootless Podman image store under
