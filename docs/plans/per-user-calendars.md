@@ -51,6 +51,44 @@ can write" already ships. It is called the family calendar. What follows is
 mostly generalizing it, plus two things that are not generalizations at all:
 resolution and attribution.
 
+## This is the family calendar, N times
+
+The family calendar already does the whole thing: a collection Bloud creates,
+owned by a service account, shared to the people who use it and to the agent,
+re-rendered from the directory on every pass. A personal calendar is that same
+object with a computed name and a narrower recipient list.
+
+| Aspect | Family calendar today | Per-user |
+|---|---|---|
+| Owner | `calendar-service` | `calendar-service`, same |
+| Created by | `ensureFamilyCalendar`, `PostStart`, PROPFIND then MKCALENDAR | the same loop, once per user |
+| Path | `/calendar-service/family/` | `/calendar-service/people/<user>/` |
+| Display name | `"Family"`, a constant | `"Bob's calendar"`, computed |
+| Share render | `renderShares`, every pass, from the directory | the same function |
+| Recipients | every active user plus the agent | that user plus the agent |
+| Permissions | `RWrw` | `RWrw` |
+| Restart on change | yes, Radicale reads shares at process start | same |
+
+Only three things are genuinely new, and none of them is the mechanism:
+
+1. **The name is computed rather than a constant.** `familyCollection` becomes a
+   function of the user.
+2. **The recipient set is 1:1 rather than a fan-out.** Family shares to
+   everyone; a personal calendar shares to one person and the agent. That is a
+   different argument to the same `shareRow`, not a different row shape.
+3. **It can be deleted.** The family calendar never dies. A personal one does,
+   with the user, and that is where all the real risk in this design lives.
+
+Everything else is a loop around code that already works. That is the argument
+for this shape: it inherits a proven path rather than opening a new one.
+
+**The consent switch is optional, which is what makes the first slice exactly
+this.** Ship without it and every personal calendar behaves like the family
+calendar: created for the user, mounted for the user, writable by the agent.
+The preference only decides whether the agent keeps that write mount, so it is
+a subtraction from the shipped shape rather than an addition to it, and it can
+arrive in its own change later.
+
 ## The constraint that decides ownership
 
 **Bloud cannot authenticate as a user over DAV.**
@@ -197,8 +235,9 @@ an empty set, and the same rule has to cover creation: unknown is not empty, and
 a blinking identity provider must not stop provisioning nor imply that people
 were deleted.
 
-**Ordering is load-bearing, not stylistic.** Radicale's sharing verifier treats
-a share whose target does not exist as a hard failure:
+**Ordering: I over-called this, and the correction matters.** Radicale's
+`database_verify()` does reject a share whose `PathMapped` target does not
+exist:
 
 ```python
 # radicale/sharing/__init__.py, database_verify()
@@ -208,22 +247,28 @@ if not item:
     return False
 ```
 
-`radicale --verify-sharing` exits 1 on the whole database for one dangling
-row. So the invariant is: **no share row for a collection that does not
-exist.** The pass order that holds it:
+But `verify()` is only reachable from the `--verify-sharing` CLI
+(`__main__.py:219`). The runtime `sharing.load()` path never calls it: it
+checks whether sharing is enabled and initializes the database, and nothing
+else. A dangling share at runtime resolves to a collection that 404s until it
+appears.
 
-1. `PreStart`: render the shares file for the set of collections *confirmed to
-   exist*, not for the set of users that *should* have one.
-2. `PostStart`: `ensurePersonalCalendars(recipients)`, PROPFIND then
-   MKCALENDAR as `calendar-service`, next to `ensureFamilyCalendar`.
-3. `PostStart`: if any collection was created, re-render the shares file with
-   the now-confirmed set. One restart for a new person, not one per collection.
+Which is why the family calendar works today with exactly that window. The
+shipped order is shares-then-collection: `PreStart` writes `sharing.csv` at
+line 155, the container starts and reads it, and only then does `PostStart`
+create `/calendar-service/family/` at line 267. So **no restructuring of
+`syncShares` is needed.** The per-user case inherits the same one-pass window
+the family case has always had, and it resolves the same way: the collection
+exists before anything a person would notice.
 
-That is a change to what `syncShares` renders today (users) into what it
-renders (confirmed collections), and it is the one place where this design is
-not a pure extension of the family calendar. The feed path already learned this
-lesson the hard way: the aggregation notes record that a share rendered before
-its collection existed left "a calendar mounted that pointed at nothing".
+What `--verify-sharing` is good for is the opposite of a hazard: it is a
+free post-provision assertion. Running it after a provisioning pass and
+failing loudly if the sharing database is inconsistent is a cheap way to catch
+a render bug before a household does.
+
+The one ordering rule worth keeping is the cheap one: create in `PostStart`
+before the next pass re-renders, so the window never widens. Not a new
+invariant, just the existing order.
 
 **Idempotency.** `managedfile.Write` reports `changed=false` on identical
 bytes, and the shares file is sorted by recipient then mount, so a steady-state
