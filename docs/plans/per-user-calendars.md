@@ -177,6 +177,155 @@ calendar already advertises `VTODO, VEVENT, VJOURNAL` from a `MKCALENDAR` that
 set nothing but a display name, so a personal calendar gets to-do support
 without a change to `createCalendar`.
 
+## The abstraction: a calendar is a value
+
+Today a calendar's identity is smeared across three places. `familyCollection`
+and `familyDisplayName` are constants, `ensureFamilyCalendar` knows how to make
+that one collection, and `renderShares` knows who it goes to. The feeds are the
+same shape again with a different source of names. Adding a per-user calendar to
+that structure means adding a fourth place that has to agree.
+
+The fix is to make a calendar a value and have exactly one function decide what
+the set of them is.
+
+```go
+// A Calendar is one collection Bloud owns: its identity under the owner, what
+// it is called, and who it is mounted for. Singleton and per-user calendars are
+// the same type; nothing downstream branches on which kind it is.
+type Calendar struct {
+    // Segment is the path under the owner: "family", "people/bob".
+    Segment string
+    // DisplayName is the DAV displayname on the owned collection.
+    DisplayName string
+    // Grants are the mounts this calendar produces, one per recipient.
+    Grants []Grant
+}
+
+// Grant is one recipient's view of a calendar.
+type Grant struct {
+    Principal string // "bob", "caldav-service"
+    Mount     string // segment in the recipient's tree: "family", "Personal"
+    Perms     string // writableShare, readOnlyShare
+}
+
+// planCalendars is the only place that knows the difference between a
+// singleton and a per-user calendar. It is pure: the same directory and the
+// same feed bindings always produce the same set, in the same order.
+func planCalendars(users []string, feeds []ICSFeedBinding) []Calendar
+```
+
+Two consumers, both dumb loops over the plan:
+
+```go
+// PROPFIND then MKCALENDAR, once per calendar, as the owner.
+func ensureCalendars(ctx context.Context, plan []Calendar) ([]string, error)
+
+// One nested loop: calendar, then grant. Sorted for byte stability.
+func renderShares(plan []Calendar) string
+```
+
+**Why the plan function is the point, not the types.** Creation and sharing
+cannot disagree about the set of calendars, because they read the same value.
+Today they can: `ensureFamilyCalendar` and `renderShares` agree only because
+both reference the same constant, and the feed path agrees only because both
+read the same contract. A plan makes the agreement structural. It is also the
+whole design surface in one pure function, which means the interesting
+questions (who sees what, what is called what) are answerable by reading one
+function and testing it without a server.
+
+The three kinds the plan emits, which is why this is not speculative
+generalization:
+
+| Kind | Segment | DisplayName | Grants |
+|---|---|---|---|
+| Singleton, shared | `family` | `Family` | every user `RWrw`, agent `RWrw` |
+| Singleton, from a feed | `Movies`, `Shows` | from `icsFeed.calendarName` | every user `Rr`, agent `Rr` |
+| Per-user | `people/bob` | `Bob's calendar` | that user `RWrw`, agent `RWrw` |
+
+The feed's *content source*, the pimsync sidecar and its sync pairs, is not
+part of this abstraction and should not be. A calendar value says a collection
+exists and who may see it. Where its contents come from is a separate concern
+that happens to have a container attached.
+
+### One thing the value has to account for
+
+**A display name belongs to the collection, not to the mount.** The current
+family setup gets away with one name because the mount segment and the display
+name are effectively the same word. A personal calendar wants them different: the
+agent should read "Bob's calendar" and Bob should read "Personal" in his own
+tree.
+
+That is expressible, and it is not currently used. The share row has a
+`Properties` column, always `{}`, gated by `[sharing]
+permit_properties_overlay`, which lets a share override the display name for
+its recipient. So the design has three options and should pick one explicitly
+rather than discover the mismatch during implementation:
+
+1. **One name, accept it.** The collection is "Bob's calendar" and Bob sees
+   "Bob's calendar" in his own tree. Simplest, mildly redundant.
+2. **Name it "Personal" and let the agent's list be ambiguous.** Bob sees
+   "Personal", and the agent disambiguates by URL rather than by name.
+3. **Use the properties overlay.** Different display names per recipient. The
+   most correct and the only option that touches a Radicale feature Bloud does
+   not currently exercise, so it needs its own verification.
+
+Recommendation: start with 1. It costs nothing, it is honest, and the agent's
+resolution already works off the URL. Options 2 and 3 are both reachable later
+without changing the type, because `DisplayName` and `Mount` are already
+separate fields.
+
+## Purging is the same diff, pointed the other way
+
+Once the plan exists, deletion stops being a special case. The reconcile has two
+halves over the same value:
+
+```
+create: plan - reality   (in the plan, not on the server)
+purge:  reality - plan   (on the server, not in the plan, under owned prefixes)
+```
+
+That is a much better framing than a separate orphan-deletion routine, because
+it puts the risk exactly where it belongs: **the purge set is a set difference,
+so anything that wrongly shrinks the plan wrongly grows the purge set.** A
+truncated user list, a failed directory read, a feed binding that resolved
+empty: each is a smaller plan, and each is a bigger pile of things to delete.
+
+Which is what makes the safety conditions mechanical rather than advisory:
+
+- The plan must be marked complete. `calendarRecipients` already returns
+  `(users, enumerated)`; the plan should carry that flag, and the purge half
+  must refuse to run on an incomplete plan. Creation can proceed on partial
+  information because it adds nothing that was not asked for. Deletion cannot.
+- The plan must be *complete*, not merely non-empty. `pkg/authentik.ListUsers`
+  requests `page_size=200` and does not paginate, so past 200 users the plan
+  is silently short and everyone beyond is in the purge set. Compare the API's
+  reported total against the length of the returned list and refuse to delete
+  on disagreement.
+- The purge is bounded to owned prefixes. Today that is `people/`. Family and
+  feed collections are never in scope, so a wrong plan cannot reach them.
+
+The asymmetry is the whole lesson: the create half of this design is safe by
+construction, and the delete half is safe only if the plan is provably whole.
+Ship the create half first, let it run for a while, and only then wire the half
+that can lose data.
+
+**Where it runs: not in the user-delete handler.** That handler would need the
+Radicale address and the `calendar-service` credential, which crosses the
+settings boundary and can fail half way through, leaving shares removed and the
+data behind. Running it as the purge half of the reconcile keeps it symmetric
+with creation, idempotent, self-healing, and inside the orchestrator as the
+single writer.
+
+**What a purge is concretely:** a DAV `DELETE` on the collection as
+`calendar-service`. The share rows need no separate cleanup, because they were
+rendered for the recipient who is now gone and drop out of the next plan.
+
+**What is lost:** everything in that person's personal calendar, including any
+agent-written history. That belongs in the delete confirmation in the UI rather
+than in a doc nobody reads at the moment it matters. If that confirmation is
+not acceptable to the household, the alternative is a timed purge, which needs
+a retention clock Bloud has no home for today.
+
 ## Splitting events from to-dos: the product consequences
 
 This is a separate axis from the consent question below. The question here is
@@ -225,14 +374,16 @@ is worth asking before the first collection is created rather than after.
 ## Provisioning mechanics
 
 Everything below is the existing pattern applied to a bigger set. No new
-lifecycle phase, no new contract.
+lifecycle phase, no new contract, and no new shape in the configurator: the
+plan function replaces the constants and the two loops replace the two
+bespoke `ensure*` functions.
 
 **Trigger.** The user list is already enumerated on every pass by
-`calendarRecipients`. That list is the provisioning input: a user appears in
-the directory, the next pass creates their calendar. A pass that cannot read
-the directory already leaves the shares file untouched rather than rendering
-an empty set, and the same rule has to cover creation: unknown is not empty, and
-a blinking identity provider must not stop provisioning nor imply that people
+`calendarRecipients`, and that list is the plan's input: a user appears in the
+directory, the next pass creates their calendar. A pass that cannot read the
+directory already leaves the shares file untouched rather than rendering an
+empty set, and the same rule has to cover creation: unknown is not empty, and a
+blinking identity provider must not stop provisioning nor imply that people
 were deleted.
 
 **Ordering: I over-called this, and the correction matters.** Radicale's
@@ -417,59 +568,22 @@ the same loop.
 1. **One collection per person**, carrying events and to-dos. The consequences
    that led here are in the section above; the case that would flip it is named
    there too.
-2. **The recipient chooses** whether the agent may write their calendar at all:
+2. **A calendar is a value, and one pure function produces the set.** Family is
+   a singleton instance of it, personal calendars are a per-user instance of it,
+   and the feed collections are a third. Creation and sharing both consume the
+   same plan so they cannot disagree, and nothing downstream branches on the
+   kind.
+3. **The recipient chooses** whether the agent may write their calendar at all:
    `direct` or `off`. Enforced by which mount the agent receives, not by a
    check. The `inbox` middle state is deferred, not provisioned, for the
-   reasons above.
-3. **Personal collections are never shared with another user.** Assert this by
+   reasons above. This is a subtraction from the shipped shape, so it can ship
+   after the provisioning slice rather than with it.
+4. **Personal collections are never shared with another user.** Assert this by
    test rather than trusting it: a rendered row that shares one person's
    personal collection with a second person is a bug with a victim.
-4. **Purge on deletion.** See below.
-
-## Purging a deleted person
-
-Purging means the reconcile can delete, and that changes its safety profile
-completely. A create that is wrong leaves a stray collection. A delete that is
-wrong destroys a person's data.
-
-**Where it runs: not in the user-delete handler.** That handler would need the
-Radicale address and the `calendar-service` credential, which crosses the
-settings boundary and can fail half way through leaving shares removed and data
-behind. Instead the same pass that creates missing collections deletes orphan
-ones: an orphan is a collection under `people/` whose key is not
-an active user. Symmetric, idempotent, self-healing, and the orchestrator stays
-the single writer.
-
-Every one of these conditions is required before any delete:
-
-- **Only on a confirmed enumeration.** `calendarRecipients` already returns
-  `(users, enumerated)` and the existing code refuses to render an empty set
-  when enumeration fails. The purge gates on the same flag, and `false` must
-  mean "delete nothing", never "delete everything".
-- **Only under the owned prefixes.** Never `family`, never a feed collection.
-  Today that is `people/` alone. The prefix list is a constant, and a purge
-  that can reach outside it is not a purge.
-- **Only on a complete enumeration.** This is the one that is easy to get
-  wrong. `pkg/authentik.ListUsers` requests `page_size=200` and does not
-  paginate. On an instance with more than 200 users, everyone past the first
-  page is invisible, and every invisible user's collections are orphans by the
-  rule above. At household scale this never fires, and it is still the exact
-  shape of the bug that turns a bad reconcile into data loss. The purge should
-  compare the API's reported total against the length of the list it got back
-  and refuse to delete when they disagree. A delete that is only safe because
-  the deployment is small is not safe.
-- **After the create step in the same pass.** A purge that runs before creates
-  could delete a collection the same pass was about to adopt.
-
-What a purge is concretely: a DAV `DELETE` on the collection as
-`calendar-service`. The share rows need no cleanup because they were rendered
-for the recipient who is now gone.
-
-What is lost: everything in that person's personal calendar, including any
-agent-written history. That is the decision, and it belongs in the delete
-confirmation in the UI rather than in a doc nobody reads at the moment it
-matters. If that confirmation is not acceptable, the alternative is a timed
-purge, which needs a retention clock Bloud has no home for today.
+5. **Purge on deletion, shipped separately from creation.** It is the same diff
+   pointed the other way, and it is the only half of this design that can lose
+   data.
 
 ## What this does not solve
 
