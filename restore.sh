@@ -195,19 +195,29 @@ cleanup_staging() {
 }
 
 stop_agent() {
-	if ! command -v systemctl >/dev/null 2>&1; then
-		warn "systemctl not found; cannot stop $unit"
-		return 0
-	fi
-	if run_as_bloud systemctl --user is-active --quiet "$unit" 2>/dev/null; then
-		log "stopping $unit"
-		if run_as_bloud systemctl --user stop "$unit"; then
-			stopped_agent=1
+	if command -v systemctl >/dev/null 2>&1; then
+		if run_as_bloud systemctl --user is-active --quiet "$unit" 2>/dev/null; then
+			log "stopping $unit"
+			if run_as_bloud systemctl --user stop "$unit"; then
+				stopped_agent=1
+			else
+				die "could not stop $unit; aborting before overwriting state"
+			fi
 		else
-			die "could not stop $unit; aborting before overwriting state"
+			warn "$unit is not running"
 		fi
 	else
-		warn "$unit is not running"
+		warn "systemctl not found; cannot stop $unit"
+	fi
+
+	# Stopping the unit says nothing about a host-agent started by hand, which
+	# would keep writing while the tree is replaced. Refuse to run under one.
+	if command -v pgrep >/dev/null 2>&1; then
+		if run_as_bloud pgrep -x host-agent >/dev/null 2>&1; then
+			die "a host-agent process is still running; stop it by hand before restoring"
+		fi
+	else
+		warn "pgrep not found; cannot confirm that no host-agent process is still running"
 	fi
 }
 

@@ -11,6 +11,9 @@
 # every container Bloud manages first, captures the tree, and starts both
 # again.
 #
+# The capture is read-only. Once the writers are stopped the script only reads
+# the tree with tar, so a failed backup cannot damage live state.
+#
 # The shared media/ and downloads/ trees are left out by default: they are a
 # media library, not app state, and they dwarf everything else. Pass
 # --include-shared to archive them too.
@@ -51,7 +54,7 @@ die() {
 }
 
 usage() {
-	sed -n '3,40p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '3,43p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 data_dir="${BLOUD_DATA_DIR:-/var/lib/bloud}"
@@ -157,31 +160,30 @@ stopped_containers=""
 stopped_agent=0
 resumed=0
 
-checkpoint_sqlite() {
-	[ -f "$data_dir/bloud.db" ] || return 0
-	if command -v sqlite3 >/dev/null 2>&1; then
-		log "checkpointing bloud.db"
-		run_as_bloud sqlite3 "$data_dir/bloud.db" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null 2>&1 ||
-			warn "could not checkpoint bloud.db; archiving it as-is"
-	else
-		warn "sqlite3 not found; archiving bloud.db as-is"
-	fi
-}
-
 stop_agent() {
-	if ! command -v systemctl >/dev/null 2>&1; then
-		warn "systemctl not found; cannot stop $unit"
-		return 0
-	fi
-	if run_as_bloud systemctl --user is-active --quiet "$unit" 2>/dev/null; then
-		log "stopping $unit"
-		if run_as_bloud systemctl --user stop "$unit"; then
-			stopped_agent=1
+	if command -v systemctl >/dev/null 2>&1; then
+		if run_as_bloud systemctl --user is-active --quiet "$unit" 2>/dev/null; then
+			log "stopping $unit"
+			if run_as_bloud systemctl --user stop "$unit"; then
+				stopped_agent=1
+			else
+				die "could not stop $unit; aborting so the archive is not captured mid-write"
+			fi
 		else
-			die "could not stop $unit; aborting so the archive is not captured mid-write"
+			warn "$unit is not running"
 		fi
 	else
-		warn "$unit is not running"
+		warn "systemctl not found; cannot stop $unit"
+	fi
+
+	# Stopping the unit says nothing about a host-agent started by hand, which
+	# would keep writing while tar reads. Refuse to run under a live writer.
+	if command -v pgrep >/dev/null 2>&1; then
+		if run_as_bloud pgrep -x host-agent >/dev/null 2>&1; then
+			die "a host-agent process is still running; aborting so the archive is not captured mid-write (pass --no-stop for a live backup)"
+		fi
+	else
+		warn "pgrep not found; cannot confirm that no host-agent process is still running"
 	fi
 }
 
@@ -277,7 +279,6 @@ trap 'exit 143' TERM
 if [ "$do_stop" -eq 1 ]; then
 	stop_agent
 	stop_containers
-	checkpoint_sqlite
 else
 	warn "--no-stop: not stopping Bloud, the archive may capture files mid-write"
 fi
