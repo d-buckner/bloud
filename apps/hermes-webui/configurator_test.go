@@ -124,6 +124,7 @@ func TestPreStartMintsAndDeliversTheClientPassword(t *testing.T) {
 	assert.Contains(t, string(content), "HERMES_WEBUI_PASSWORD='"+minted+"'")
 	assert.Contains(t, string(content), "HERMES_WEBUI_CHAT_BACKEND='gateway'")
 	assert.Contains(t, string(content), "HERMES_WEBUI_GATEWAY_BASE_URL='https://hermes.example.com/v1'")
+	assert.Contains(t, string(content), "HERMES_WEBUI_DEFAULT_MODEL='hermes'")
 	assert.Contains(t, string(content), "HERMES_WEBUI_OIDC_CLIENT_ID='webui-client'")
 	assert.Contains(t, string(content), "HERMES_WEBUI_SECURE='true'")
 }

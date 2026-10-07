@@ -1118,3 +1118,56 @@ func TestPreStart_WritesWhenTheConfigIsMissingEvenIfContainerStopped(t *testing.
 }
 
 var _ configurator.NodeLifecycle = (*Configurator)(nil)
+
+// contractStore is an in-memory AppSecretsProvider that records the contract
+// values publishAgentModelName writes, so the steady-state no-op and the
+// first-write can be asserted without a host store.
+type contractStore struct {
+	values map[string]string
+}
+
+func newContractStore() *contractStore { return &contractStore{values: map[string]string{}} }
+
+func (s *contractStore) GenerateAppAdminPassword(string) (string, error) { return "", nil }
+func (s *contractStore) GetAppSecret(_, key string) string               { return "" }
+func (s *contractStore) SetAppSecret(_, key, value string) error {
+	s.values["secret:"+key] = value
+	return nil
+}
+func (s *contractStore) SetAppContractValue(_, contract, key, value string) error {
+	s.values[contract+":"+key] = value
+	return nil
+}
+func (s *contractStore) GetAppContractValue(_, contract, key string) string {
+	return s.values[contract+":"+key]
+}
+
+func TestPublishAgentModelName(t *testing.T) {
+	store := newContractStore()
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Secrets: store})
+
+	c.publishAgentModelName("qwen3.8-flash-next")
+	if got := store.GetAppContractValue("", "agentApi", "modelName"); got != "qwen3.8-flash-next" {
+		t.Fatalf("modelName = %q, want the Bloud default", got)
+	}
+
+	// Steady state: publishing the same value again is a no-op (no churn).
+	store.values["agentApi:modelName"] = "qwen3.8-flash-next"
+	c.publishAgentModelName("qwen3.8-flash-next")
+	if got := store.GetAppContractValue("", "agentApi", "modelName"); got != "qwen3.8-flash-next" {
+		t.Fatalf("steady-state publish rewrote the value to %q", got)
+	}
+}
+
+func TestPublishAgentModelNameSkipsEmptyAndNilStore(t *testing.T) {
+	// No store: a publish is skipped, not a panic.
+	NewConfigurator(0, configurator.Deps{Logger: quietLogger()}).publishAgentModelName("anything")
+
+	// Empty default: the contract marks modelName optional, so an agent with
+	// no preference leaves the consumer's own default standing.
+	store := newContractStore()
+	NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Secrets: store}).publishAgentModelName("")
+	if got := store.GetAppContractValue("", "agentApi", "modelName"); got != "" {
+		t.Fatalf("empty default published %q, want no write", got)
+	}
+}

@@ -120,11 +120,16 @@ containers:
       # sessions and the signing key survive a container recreate, which is
       # what keeps a signed-in phone working across a restart.
       HERMES_WEBUI_STATE_DIR: /data
-      # Bound on all interfaces inside apps-net. Traefik reaches the container
-      # by name; nothing else on the LAN can, because the port is not
-      # published.
+      # Bound on all interfaces inside apps-net. Traefik runs in the host
+      # network namespace and reaches this app by dialing localhost on the
+      # published port, the same loopback contract as every other apps-net
+      # app: the `ports:` entry below binds the port to the host, and nothing
+      # else on the LAN can reach it because it is not a public host address.
       HERMES_WEBUI_HOST: 0.0.0.0
       HERMES_WEBUI_PORT: "8787"
+    ports:
+      - host: 8787
+        container: 8787
     volumes:
       - source: "{{appDataDir}}/data"
         destination: /data

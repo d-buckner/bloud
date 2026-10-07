@@ -291,6 +291,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	binding, hasInference := inferenceBinding(state)
 	if hasInference {
 		applyInference(doc, binding)
+		c.publishAgentModelName(binding.DefaultModel)
 	} else {
 		stripInference(doc)
 	}
@@ -451,6 +452,33 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // present, and the gateway treats a usable key as the switch that starts the
 // api_server adapter, so this is both the credential and the enable.
 const agentAPIKeyEnvVar = "API_SERVER_KEY"
+
+// agentModelNameValue is the `agentApi` contract value this configurator fills
+// at runtime, carrying the default model Hermes is actually running so a
+// consumer front end can preset its own picker to the same model.
+const agentModelNameValue = "modelName"
+
+// publishAgentModelName fills the agentApi contract's modelName value with the
+// Bloud inference default model, so a consumer (e.g. hermes-webui) can preset
+// its model picker to the same model instead of defaulting to a discovered
+// list's arbitrary first entry.
+//
+// It is a no-op when there is no store or no default model. A missing model
+// name is not a fault: the contract marks it optional precisely because an
+// agent with no preference lets the consumer's own default stand.
+func (c *Configurator) publishAgentModelName(defaultModel string) {
+	if c.secrets == nil || defaultModel == "" {
+		return
+	}
+	if existing := c.secrets.GetAppContractValue(appName, "agentApi", agentModelNameValue); existing == defaultModel {
+		return // steady state: no write, so the resync stays a read-only diff
+	}
+	if err := c.secrets.SetAppContractValue(appName, "agentApi", agentModelNameValue, defaultModel); err != nil {
+		c.logger.Warn("publishing the agent default model", "value", agentModelNameValue, "err", err)
+		return
+	}
+	c.logger.Info("published the agent default model for the agentApi contract", "model", defaultModel)
+}
 
 // publishAgentAPIKey reads the agent API credential Hermes minted for itself
 // and publishes it under the `agentApi` contract, so a consumer gets the real

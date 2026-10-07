@@ -203,8 +203,9 @@ func (c *Configurator) prepareDataDir(state *configurator.AppState) error {
 
 // agentConfig is the resolved upstream the web UI dials.
 type agentConfig struct {
-	Endpoint string
-	APIKey   string
+	Endpoint     string
+	APIKey       string
+	DefaultModel string
 }
 
 // resolveAgent reads the agentApi binding out of the resolved integrations the
@@ -218,7 +219,11 @@ type agentConfig struct {
 func (c *Configurator) resolveAgent(state *configurator.AppState) (agentConfig, error) {
 	for _, binding := range state.Integrations.AgentAPIs {
 		if binding.Endpoint != "" && binding.APIKey != "" {
-			return agentConfig{Endpoint: binding.Endpoint, APIKey: binding.APIKey}, nil
+			return agentConfig{
+				Endpoint:     binding.Endpoint,
+				APIKey:       binding.APIKey,
+				DefaultModel: binding.ModelName,
+			}, nil
 		}
 	}
 	return agentConfig{}, fmt.Errorf(
@@ -268,6 +273,7 @@ func (c *Configurator) renderEnv(agent agentConfig, state *configurator.AppState
 	writeEnv(&b, "HERMES_WEBUI_CHAT_BACKEND", "gateway")
 	writeEnv(&b, "HERMES_WEBUI_GATEWAY_BASE_URL", agent.Endpoint)
 	writeEnv(&b, "HERMES_WEBUI_GATEWAY_API_KEY", agent.APIKey)
+	writeEnv(&b, "HERMES_WEBUI_DEFAULT_MODEL", agent.DefaultModel)
 
 	if state.OIDC != nil {
 		writeEnv(&b, "HERMES_WEBUI_OIDC_ISSUER", state.OIDC.IssuerURL)
