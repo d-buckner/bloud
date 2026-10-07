@@ -130,3 +130,22 @@ containers:
 		t.Errorf("server ports: expected host=2283, got %v", srv.Ports)
 	}
 }
+
+func TestApp_HasClientAccess(t *testing.T) {
+	withBlock := App{
+		CatalogID: "hermes-webui",
+		Provides: Provides{
+			"clientPassword": {ClientAccess: &ClientAccess{Reveal: ClientRevealOnce}},
+		},
+	}
+	assert.True(t, withBlock.HasClientAccess())
+
+	noBlock := App{
+		CatalogID: "jellyfin",
+		Provides:  Provides{"pvr": {Secrets: []string{"apiKey"}}},
+	}
+	assert.False(t, noBlock.HasClientAccess())
+
+	var empty App
+	assert.False(t, empty.HasClientAccess())
+}

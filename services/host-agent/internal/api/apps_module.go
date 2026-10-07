@@ -166,7 +166,7 @@ func (m *appsModule) GetInstalled() ([]installedAppResponse, error) {
 			userApps = append(userApps, app)
 		}
 	}
-	return enrichApps(userApps, m.buildLaunchPaths(), m.catalogMissing(userApps), m.buildHeadlessSet()), nil
+	return enrichApps(userApps, m.buildLaunchPaths(), m.catalogMissing(userApps), m.buildHeadlessSet(), m.buildClientAccessSet()), nil
 }
 
 // catalogMissing returns the installed apps that have no catalog entry, so the
@@ -313,6 +313,27 @@ func (m *appsModule) buildHeadlessSet() map[string]bool {
 		}
 	}
 	return headless
+}
+
+// buildClientAccessSet indexes the catalog ids of apps that publish a
+// clientAccess credential, so the dashboard's right-click menu can offer the
+// reveal surface only where it is declared. Same nil-catalog tolerance as
+// buildHeadlessSet: an empty set is the safe answer, not an error.
+func (m *appsModule) buildClientAccessSet() map[string]bool {
+	set := make(map[string]bool)
+	if m.catalog == nil {
+		return set
+	}
+	apps, err := m.catalog.GetAll()
+	if err != nil {
+		return set
+	}
+	for _, a := range apps {
+		if a.HasClientAccess() {
+			set[a.CatalogID] = true
+		}
+	}
+	return set
 }
 
 // ---- HTTP handler methods (on concrete type, not interface) ----
@@ -545,18 +566,24 @@ type installedAppResponse struct {
 	// dashboard keeps such an app off the grid but still reports its status.
 	Headless       bool `json:"headless,omitempty"`
 	CatalogMissing bool `json:"catalog_missing,omitempty"`
+	// HasClientAccess is the catalog's answer to "does this app publish a
+	// credential for a human-held client?". The dashboard shows the reveal
+	// surface in the right-click menu only when it is true.
+	HasClientAccess bool `json:"has_client_access,omitempty"`
 }
 
 // enrichApps enriches installed apps with SSO launch paths, the
-// catalog-missing flag, and the catalog's headless marking.
-func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string, catalogMissing map[string]bool, headless map[string]bool) []installedAppResponse {
+// catalog-missing flag, the catalog's headless marking, and whether the app
+// publishes a clientAccess credential.
+func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string, catalogMissing map[string]bool, headless map[string]bool, clientAccess map[string]bool) []installedAppResponse {
 	result := make([]installedAppResponse, 0, len(apps))
 	for _, app := range apps {
 		result = append(result, installedAppResponse{
-			InstalledApp:   app,
-			SSOLaunchPath:  launchPaths[app.CatalogID],
-			Headless:       headless[app.CatalogID],
-			CatalogMissing: catalogMissing[app.CatalogID],
+			InstalledApp:    app,
+			SSOLaunchPath:   launchPaths[app.CatalogID],
+			Headless:        headless[app.CatalogID],
+			CatalogMissing:  catalogMissing[app.CatalogID],
+			HasClientAccess: clientAccess[app.CatalogID],
 		})
 	}
 	return result

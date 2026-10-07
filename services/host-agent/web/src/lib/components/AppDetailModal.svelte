@@ -4,7 +4,6 @@
 	import AppIcon from './AppIcon.svelte';
 	import CloseButton from './CloseButton.svelte';
 	import Icon from './Icon.svelte';
-	import ClientAccessPanel from './ClientAccessPanel.svelte';
 	import type { CatalogApp } from '$lib/types';
 	import { isAdmin } from '$lib/stores/user';
 
@@ -106,10 +105,6 @@
 					<Icon name="check-circle" size={20} />
 					<span>This app is installed</span>
 				</div>
-
-				<!-- Rendered only when the app declares client access, so an app
-				     that does not use the pattern shows nothing here. -->
-				<ClientAccessPanel appName={app.catalogId} />
 			{/if}
 		</div>
 

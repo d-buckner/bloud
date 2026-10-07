@@ -7,7 +7,7 @@
 	// client-credentials endpoint what the app declared and renders that, so a
 	// second app adopting the pattern needs no frontend change. If the app
 	// declares nothing, the panel renders nothing.
-	import Icon from './Icon.svelte';
+	import Button from './Button.svelte';
 	import { isAdmin } from '$lib/stores/user';
 
 	interface Descriptor {
@@ -38,7 +38,7 @@
 	let { appName }: Props = $props();
 
 	let descriptors = $state<Descriptor[]>([]);
-	let loading = $state(false);
+	let loading = $state(true);
 	let busy = $state<string | null>(null);
 	let error = $state<string | null>(null);
 	let revealed = $state<Record<string, string>>({});
@@ -161,106 +161,87 @@
 	}
 </script>
 
-{#if $isAdmin && descriptors.length > 0}
-	<section class="client-access">
-		<h3 class="section-title">
-			<Icon name="key" size={16} />
-			<span>Client access</span>
-		</h3>
+{#if $isAdmin && loading}
+	<p class="loading-state">Loading client access...</p>
+{:else if $isAdmin && descriptors.length > 0}
+	{#if error}
+		<div class="error-message">{error}</div>
+	{/if}
 
-		{#if error}
-			<div class="alert alert-error" role="alert">
-				<p>{error}</p>
+	{#each descriptors as cred (cred.secret)}
+		<div class="credential">
+			<div class="credential-head">
+				<span class="credential-label">{cred.label}</span>
+				{#if cred.reveal === 'once' && cred.revealed}
+					<span class="pill pill-muted">shown once</span>
+				{:else if cred.reveal === 'never'}
+					<span class="pill pill-muted">not shown</span>
+				{/if}
 			</div>
-		{/if}
 
-		{#each descriptors as cred (cred.secret)}
-			<div class="credential">
-				<div class="credential-head">
-					<span class="credential-label">{cred.label}</span>
-					{#if cred.reveal === 'once' && cred.revealed}
-						<span class="badge badge-spent">shown</span>
-					{:else if cred.reveal === 'never'}
-						<span class="badge badge-hidden">not shown</span>
-					{/if}
+			{#if cred.reaches}
+				<p class="credential-reaches">{cred.reaches}</p>
+			{/if}
+
+			{#if revealed[cred.secret]}
+				<div class="revealed-value">
+					<code>{revealed[cred.secret]}</code>
+					<Button variant="secondary" size="sm" onclick={() => copy(cred.secret)}>
+						{copied === cred.secret ? 'Copied' : 'Copy'}
+					</Button>
 				</div>
-
-				{#if cred.reaches}
-					<p class="credential-reaches">{cred.reaches}</p>
+				{#if cred.reveal === 'once'}
+					<p class="hint">
+						This password will not be shown again. If you lose it, rotate to get one
+						that can be shown. Devices already signed in keep working.
+					</p>
 				{/if}
-
-				{#if revealed[cred.secret]}
-					<div class="credential-value">
-						<code>{revealed[cred.secret]}</code>
-						<button
-							class="btn btn-small"
-							onclick={() => copy(cred.secret)}
-							aria-label="Copy {cred.label}"
-						>
-							{copied === cred.secret ? 'Copied' : 'Copy'}
-						</button>
-					</div>
-					{#if cred.reveal === 'once'}
-						<p class="credential-note">
-							This password will not be shown again. If it is lost, rotate to get a
-							one that can be shown. Devices already signed in keep working.
-						</p>
-					{/if}
-				{:else if revealable(cred)}
-					<button
-						class="btn btn-secondary btn-small"
-						onclick={() => reveal(cred.secret)}
-						disabled={busy !== null}
-					>
-						{busy === cred.secret ? 'Working...' : 'Reveal'}
-					</button>
-				{/if}
-
-				<div class="credential-actions">
-					{#if rotateAllowed(cred)}
-						<button
-							class="btn btn-secondary btn-small"
-							onclick={() => rotate(cred.secret)}
-							disabled={busy !== null}
-						>
-							{busy === cred.secret ? 'Working...' : 'Rotate password'}
-						</button>
-					{/if}
-					<button
-						class="btn btn-danger btn-small"
-						onclick={() => confirmRevoke(cred.secret) && revoke(cred.secret)}
-						disabled={busy !== null}
-					>
-						Revoke sessions
-					</button>
-				</div>
-
-				<p class="credential-rotate-note">
-					Rotating changes the password for new sign-ins. Sessions already running
-					are not ended by it: use Revoke sessions for that.
+			{:else if revealable(cred) && !cred.revealed}
+				<Button variant="primary" size="sm" onclick={() => reveal(cred.secret)} disabled={busy !== null}>
+					{busy === cred.secret ? 'Revealing…' : 'Reveal password'}
+				</Button>
+			{:else if cred.revealed && cred.reveal === 'once'}
+				<p class="hint">
+					This password was already revealed and cannot be shown again. Rotate to
+					get a new one you can reveal.
 				</p>
+			{/if}
+
+			<div class="credential-actions">
+				{#if rotateAllowed(cred)}
+					<Button variant="secondary" size="sm" onclick={() => rotate(cred.secret)} disabled={busy !== null}>
+						{busy === cred.secret ? 'Rotating…' : 'Rotate password'}
+					</Button>
+				{/if}
+				<Button
+					variant="danger"
+					size="sm"
+					onclick={() => confirmRevoke(cred.secret) && revoke(cred.secret)}
+					disabled={busy !== null}
+				>
+					Revoke sessions
+				</Button>
 			</div>
-		{/each}
-	</section>
+
+			<p class="hint">
+				Rotating changes the password for new sign-ins. Sessions already running are
+				not ended by it: use Revoke sessions for that.
+			</p>
+		</div>
+	{/each}
 {/if}
 
 <style>
-	.client-access {
-		margin-top: var(--space-lg);
-		padding-top: var(--space-lg);
-		border-top: 1px solid var(--color-border);
-	}
-
-	.section-title {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		font-size: var(--text-md);
-		margin-bottom: var(--space-md);
+	.loading-state {
+		padding: var(--space-xl);
+		text-align: center;
+		color: var(--color-text-muted);
+		font-size: 0.9375rem;
 	}
 
 	.credential {
-		padding: var(--space-md);
+		padding: var(--space-lg);
+		background: var(--color-bg-elevated);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 		margin-bottom: var(--space-md);
@@ -274,58 +255,71 @@
 	}
 
 	.credential-label {
-		font-weight: 600;
+		font-size: 0.9375rem;
+		font-weight: 500;
 	}
 
 	.credential-reaches {
-		color: var(--color-text-muted);
-		font-size: var(--text-sm);
-		margin-bottom: var(--space-sm);
+		margin: 0 0 var(--space-md) 0;
+		color: var(--color-text-secondary);
+		font-size: 0.875rem;
+		line-height: 1.5;
 	}
 
-	.credential-value {
+	.revealed-value {
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
 		margin-bottom: var(--space-sm);
 	}
 
-	.credential-value code {
+	.revealed-value code {
 		flex: 1;
-		padding: var(--space-xs) var(--space-sm);
-		background: var(--color-bg-secondary);
-		border-radius: var(--radius-sm);
-		word-break: break-all;
+		padding: var(--space-sm) var(--space-md);
+		background: var(--color-bg-subtle);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
 		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		word-break: break-all;
 	}
 
-	.credential-note,
-	.credential-rotate-note {
-		font-size: var(--text-xs);
+	.hint {
+		margin: var(--space-sm) 0 0 0;
+		font-size: 0.8125rem;
+		line-height: 1.4;
 		color: var(--color-text-muted);
-		margin-top: var(--space-xs);
 	}
 
 	.credential-actions {
 		display: flex;
+		align-items: center;
 		gap: var(--space-sm);
-		margin-top: var(--space-sm);
+		margin-top: var(--space-md);
 	}
 
-	.badge {
-		font-size: var(--text-xs);
-		padding: 2px 6px;
-		border-radius: var(--radius-sm);
+	.pill {
+		display: inline-block;
+		padding: 2px 8px;
+		border-radius: 9999px;
+		font-size: 0.6875rem;
+		font-weight: 500;
+		vertical-align: middle;
 	}
 
-	.badge-spent,
-	.badge-hidden {
-		background: var(--color-bg-secondary);
+	.pill-muted {
+		background: var(--color-bg-subtle);
 		color: var(--color-text-muted);
+		border: 1px solid var(--color-border);
 	}
 
-	.btn-small {
-		padding: var(--space-xs) var(--space-sm);
-		font-size: var(--text-sm);
+	.error-message {
+		margin-bottom: var(--space-md);
+		padding: var(--space-sm) var(--space-md);
+		font-size: 0.875rem;
+		color: var(--color-error);
+		background: var(--color-error-bg);
+		border: 1px solid rgba(153, 27, 27, 0.15);
+		border-radius: var(--radius-md);
 	}
 </style>

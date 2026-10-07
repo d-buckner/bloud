@@ -21,6 +21,10 @@ type homeModuleSimple struct {
 	// getHeadless returns the catalog ids of apps that have no browser UI of
 	// their own. Optional: with no lookup wired, nothing is marked headless.
 	getHeadless func() map[string]bool
+	// getClientAccess returns the catalog ids of apps that publish a
+	// clientAccess credential. Optional: with no lookup wired, nothing is
+	// offered the reveal surface.
+	getClientAccess func() map[string]bool
 }
 
 // SetHeadlessLookup wires the catalog-derived headless set so the home payload
@@ -28,6 +32,13 @@ type homeModuleSimple struct {
 // in the payload, so its status and the event stream still describe it.
 func (m *homeModuleSimple) SetHeadlessLookup(fn func() map[string]bool) {
 	m.getHeadless = fn
+}
+
+// SetClientAccessLookup wires the catalog-derived clientAccess set so the home
+// payload can carry it. The dashboard's right-click menu offers the reveal
+// surface only for the apps in this set.
+func (m *homeModuleSimple) SetClientAccessLookup(fn func() map[string]bool) {
+	m.getClientAccess = fn
 }
 
 // NewHomeModule creates a new HomeModule.
@@ -74,6 +85,7 @@ func (m *homeModuleSimple) GetLayout(username string) (*homeResponse, error) {
 func (m *homeModuleSimple) homeAppItems(apps []*store.InstalledApp, posMap map[string]store.Position) []appWithPosition {
 	launchPaths := m.getLaunchPaths()
 	headless := m.headlessIDs()
+	clientAccess := m.clientAccessIDs()
 	items := make([]appWithPosition, 0, len(apps))
 	for _, app := range apps {
 		if app.IsSystem {
@@ -82,13 +94,14 @@ func (m *homeModuleSimple) homeAppItems(apps []*store.InstalledApp, posMap map[s
 		pos := posMap[app.CatalogID]
 		w, h := atLeastOne(pos)
 		items = append(items, appWithPosition{
-			InstalledApp:  app,
-			SSOLaunchPath: launchPaths[app.CatalogID],
-			Headless:      headless[app.CatalogID],
-			X:             pos.X,
-			Y:             pos.Y,
-			W:             w,
-			H:             h,
+			InstalledApp:    app,
+			SSOLaunchPath:   launchPaths[app.CatalogID],
+			Headless:        headless[app.CatalogID],
+			HasClientAccess: clientAccess[app.CatalogID],
+			X:               pos.X,
+			Y:               pos.Y,
+			W:               w,
+			H:               h,
 		})
 	}
 	return items
@@ -102,6 +115,15 @@ func (m *homeModuleSimple) headlessIDs() map[string]bool {
 		return nil
 	}
 	return m.getHeadless()
+}
+
+// clientAccessIDs returns the catalog ids that publish a clientAccess
+// credential, or an empty set when no lookup is wired.
+func (m *homeModuleSimple) clientAccessIDs() map[string]bool {
+	if m.getClientAccess == nil {
+		return nil
+	}
+	return m.getClientAccess()
 }
 
 // homeWidgetItems picks the widget-typed positions out of the user's full set.
@@ -199,10 +221,14 @@ type appWithPosition struct {
 	// Headless is catalog-derived: the app has no UI to open, so the
 	// dashboard leaves it off the grid.
 	Headless bool `json:"headless,omitempty"`
-	X        *int `json:"x"`
-	Y        *int `json:"y"`
-	W        int  `json:"w"`
-	H        int  `json:"h"`
+	// HasClientAccess is catalog-derived: the app publishes a credential for a
+	// human-held client, so the dashboard offers the reveal surface in the
+	// right-click menu.
+	HasClientAccess bool `json:"has_client_access,omitempty"`
+	X               *int `json:"x"`
+	Y               *int `json:"y"`
+	W               int  `json:"w"`
+	H               int  `json:"h"`
 }
 
 type widgetPosition struct {
