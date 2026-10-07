@@ -4,11 +4,15 @@ package hermeswebui
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -165,6 +169,120 @@ func TestPreStartWithoutSecretsStillWritesConfig(t *testing.T) {
 	assert.NotContains(t, string(content), "HERMES_WEBUI_PASSWORD=",
 		"no password is written when there is no store to hold it")
 	assert.Contains(t, string(content), "HERMES_WEBUI_OIDC_CLIENT_ID='webui-client'")
+}
+
+// TestPrepareDataDirWidensAnAgentOwnedDir pins the first-boot contract: a
+// directory the agent still owns gets widened to 0777, because the container's
+// uid-1024 runtime needs the world-write bit to write its state into a path
+// the agent created.
+func TestPrepareDataDirWidensAnAgentOwnedDir(t *testing.T) {
+	cfg := NewConfigurator(0, testDeps(nil, nil))
+	state := &configurator.AppState{DataPath: t.TempDir()}
+
+	require.NoError(t, cfg.prepareDataDir(state))
+
+	info, err := os.Stat(filepath.Join(state.DataPath, "data"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o777), info.Mode().Perm())
+}
+
+// TestPrepareDataDirLeavesAWidenedDirUntouched pins that a pass does not
+// chmod a directory that already carries the mode, so it cannot narrow what
+// the app or an operator set, and a steady-state resync stays a read-only diff.
+func TestPrepareDataDirLeavesAWidenedDirUntouched(t *testing.T) {
+	cfg := NewConfigurator(0, testDeps(nil, nil))
+	state := &configurator.AppState{DataPath: t.TempDir()}
+
+	require.NoError(t, cfg.prepareDataDir(state))
+	dir := filepath.Join(state.DataPath, "data")
+	before, err := os.Stat(dir)
+	require.NoError(t, err)
+
+	require.NoError(t, cfg.prepareDataDir(state))
+	after, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.True(t, before.ModTime().Equal(after.ModTime()),
+		"an already-writable dir must not be chmodded again")
+}
+
+// TestPrepareDataDirReportsACreateFailure keeps the two failure modes
+// distinguishable: a parent that is not a directory is a broken install and
+// must read as "create data dir", never as the tolerated cross-uid chmod case.
+func TestPrepareDataDirReportsACreateFailure(t *testing.T) {
+	cfg := NewConfigurator(0, testDeps(nil, nil))
+	parent := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(parent, []byte("x"), 0o644))
+	state := &configurator.AppState{DataPath: parent}
+
+	err := cfg.prepareDataDir(state)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create data dir")
+	assert.NotContains(t, err.Error(), "make data dir writable")
+}
+
+// foreignOwnedDataDir reproduces the takeover the issue describes: the data
+// directory owned by the container's runtime uid at a mode short of 0777.
+// Under rootless podman, container uid 1024 lands on host uid 101023 with a
+// 100000-based mapping, so the test user is neither owner nor group member and
+// os.Chmod on the directory returns EPERM. That is the exact condition the
+// agent hits on a live install, and no single-uid test can manufacture it:
+// tightening the mode does not help, because the owner may always chmod its own
+// directory. A second uid is required, hence the container.
+//
+// Skips rather than fails when podman or the image is unavailable. The
+// tolerance decision itself stays pinned by managedfile's containerOwned table;
+// what this adds is the end-to-end path through prepareDataDir.
+func foreignOwnedDataDir(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("podman"); err != nil {
+		t.Skip("podman unavailable: cannot create a cross-uid directory to reproduce EPERM")
+	}
+	dir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cmd := exec.Command("podman", "run", "--rm", "-u", "0",
+		"-v", dir+":/host:z", "alpine",
+		"sh", "-c", "chown 1024:1024 /host && chmod 0750 /host")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("podman cannot create a cross-uid directory (%v): %s", err, out)
+	}
+
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	st, ok := info.Sys().(*syscall.Stat_t)
+	require.True(t, ok, "no Stat_t behind the directory's FileInfo")
+	if st.Uid == uint32(os.Getuid()) {
+		t.Skip("podman mapped the container uid onto our own; no cross-uid condition to test")
+	}
+	// The setup only means something if the chmod really is refused.
+	if err := os.Chmod(dir, 0o777); err == nil {
+		t.Skip("the host user could chmod the foreign directory; no EPERM to tolerate")
+	} else if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("expected a permission error from the foreign chmod, got %v", err)
+	}
+	return dir
+}
+
+// TestPrepareDataDirToleratesAContainerOwnedDir is the regression test for the
+// issue: once the image's init chowns its state directory, the agent's chmod
+// is refused forever. prepareDataDir has to converge anyway, because a failure
+// here is what parked fresh installs in ERROR before the client password was
+// minted and left running apps serving a permanently stale bloud.env. Fails
+// against a bare os.Chmod, passes through managedfile.EnsureWritable.
+func TestPrepareDataDirToleratesAContainerOwnedDir(t *testing.T) {
+	dir := foreignOwnedDataDir(t)
+	cfg := NewConfigurator(0, testDeps(nil, nil))
+	state := &configurator.AppState{DataPath: filepath.Dir(dir)}
+
+	require.NoError(t, cfg.prepareDataDir(state))
+
+	// The tolerance must not come from fighting the takeover: the directory is
+	// still the container's, still 0750, still written by the uid that owns it.
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o750), info.Mode().Perm(),
+		"the fix tolerates the takeover rather than clawing the directory back")
 }
 
 // TestRevokeSessionsClearsTheStoreThroughExec pins G: revocation runs the
