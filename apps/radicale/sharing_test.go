@@ -22,9 +22,15 @@ import (
 
 // ---- rendering ----
 
+// renderWith renders the sharing database for a recipient and feed set, so the
+// tests read as the scenario rather than as the plumbing that builds a Plan.
+func renderWith(recipients []string, feeds []configurator.ICSFeedBinding) string {
+	return renderShares(planCalendars(recipients, feeds, true))
+}
+
 func TestRenderSharesMountsEverySharedCollectionIntoEveryTree(t *testing.T) {
 	feeds := []configurator.ICSFeedBinding{feedBinding()}
-	got := renderShares([]string{"alice", "bob"}, feeds)
+	got := renderWith([]string{"alice", "bob"}, feeds)
 
 	// The header pins the column order Radicale's csv backend reads.
 	assert.True(t, strings.HasPrefix(got, sharesCSVHeader+"\n"))
@@ -53,7 +59,7 @@ func TestRenderSharesMountsEverySharedCollectionIntoEveryTree(t *testing.T) {
 }
 
 func TestRenderSharesWithNoUsersStillSharesWithTheAgent(t *testing.T) {
-	got := renderShares(nil, []configurator.ICSFeedBinding{feedBinding()})
+	got := renderWith(nil, []configurator.ICSFeedBinding{feedBinding()})
 
 	lines := strings.Split(strings.TrimSpace(got), "\n")
 	// Header + the agent's family + the agent's feed.
@@ -65,7 +71,7 @@ func TestRenderSharesSkipsIncompleteFeeds(t *testing.T) {
 	noKey := feedBinding()
 	noKey.APIKey = ""
 
-	got := renderShares([]string{"alice"}, []configurator.ICSFeedBinding{noKey})
+	got := renderWith([]string{"alice"}, []configurator.ICSFeedBinding{noKey})
 
 	// The feed is not shared, but the family calendar still is: an unready
 	// feed says nothing about the collection people write to.
@@ -78,9 +84,55 @@ func TestRenderSharesIsDeterministic(t *testing.T) {
 	sonarr := feedBinding()
 	sonarr.App = "sonarr"
 
-	first := renderShares([]string{"bob", "alice"}, []configurator.ICSFeedBinding{sonarr, radarr})
-	second := renderShares([]string{"alice", "bob"}, []configurator.ICSFeedBinding{radarr, sonarr})
+	first := renderWith([]string{"bob", "alice"}, []configurator.ICSFeedBinding{sonarr, radarr})
+	second := renderWith([]string{"alice", "bob"}, []configurator.ICSFeedBinding{radarr, sonarr})
 	assert.Equal(t, first, second, "a re-render must be byte-identical or every pass restarts Radicale")
+}
+
+// TestRenderSharesMatchesThePrePlanGoldenOutput is the Phase 1 gate. The
+// golden bytes were captured from the renderer that this abstraction replaced --
+// the one that walked the `familyCollection` constant and the feed bindings
+// directly -- for three recipients and two feeds. The plan-driven renderer must
+// produce exactly those bytes.
+//
+// This is the whole reason to do the refactor before adding anything: it proves
+// the abstraction is faithful against a set that is already known good. If a
+// single byte moves, the refactor changed behavior, and a changed sharing.csv
+// means a Radicale restart on the pass that ships it.
+func TestRenderSharesMatchesThePrePlanGoldenOutput(t *testing.T) {
+	const golden = "ShareType;PathOrToken;PathMapped;Conversion;Owner;User;Permissions;EnabledByOwner;EnabledByUser;HiddenByOwner;HiddenByUser;TimestampCreated;TimestampUpdated;Properties;Actions\n" +
+		"map;/alice/family/;/calendar-service/family/;none;calendar-service;alice;RWrw;True;True;False;False;0;0;{};{}\n" +
+		"map;/alice/Movies/;/calendar-service/Movies/;none;calendar-service;alice;Rr;True;True;False;False;0;0;{};{}\n" +
+		"map;/alice/Shows/;/calendar-service/Shows/;none;calendar-service;alice;Rr;True;True;False;False;0;0;{};{}\n" +
+		"map;/bob/family/;/calendar-service/family/;none;calendar-service;bob;RWrw;True;True;False;False;0;0;{};{}\n" +
+		"map;/bob/Movies/;/calendar-service/Movies/;none;calendar-service;bob;Rr;True;True;False;False;0;0;{};{}\n" +
+		"map;/bob/Shows/;/calendar-service/Shows/;none;calendar-service;bob;Rr;True;True;False;False;0;0;{};{}\n" +
+		"map;/caldav-service/family/;/calendar-service/family/;none;calendar-service;caldav-service;RWrw;True;True;False;False;0;0;{};{}\n" +
+		"map;/caldav-service/Movies/;/calendar-service/Movies/;none;calendar-service;caldav-service;Rr;True;True;False;False;0;0;{};{}\n" +
+		"map;/caldav-service/Shows/;/calendar-service/Shows/;none;calendar-service;caldav-service;Rr;True;True;False;False;0;0;{};{}\n" +
+		"map;/carol/family/;/calendar-service/family/;none;calendar-service;carol;RWrw;True;True;False;False;0;0;{};{}\n" +
+		"map;/carol/Movies/;/calendar-service/Movies/;none;calendar-service;carol;Rr;True;True;False;False;0;0;{};{}\n" +
+		"map;/carol/Shows/;/calendar-service/Shows/;none;calendar-service;carol;Rr;True;True;False;False;0;0;{};{}\n"
+
+	feeds := []configurator.ICSFeedBinding{
+		{
+			ProviderRef:  configurator.ProviderRef{App: "sonarr", Installed: true, BaseURL: "http://sonarr:8989"},
+			APIKey:       "sonarr-key",
+			Path:         "/api/v3/calendar",
+			CalendarName: "Shows",
+		},
+		{
+			ProviderRef:  configurator.ProviderRef{App: "radarr", Installed: true, BaseURL: "http://radarr:7878"},
+			APIKey:       "radarr-key",
+			Path:         "/api/v3/calendar",
+			CalendarName: "Movies",
+		},
+	}
+
+	// Deliberately unsorted on the way in: the render must not depend on it.
+	got := renderWith([]string{"carol", "alice", "bob"}, feeds)
+	assert.Equal(t, golden, got,
+		"the plan-driven renderer must emit the exact bytes the constant-driven renderer emitted")
 }
 
 func TestShareRecipientsExcludesTheOwnerAndDedupes(t *testing.T) {
@@ -183,7 +235,7 @@ func TestSyncSharesKeepsTheExistingFileWhenTheDirectoryCannotBeRead(t *testing.T
 
 	// First pass: no directory, no file on disk, so a header-only database is
 	// written rather than leaving the sharing backend with nothing to read.
-	changed, err := c.syncShares(context.Background(), dataPath, state)
+	changed, err := c.syncShares(dataPath, c.planFor(context.Background(), state))
 	require.NoError(t, err)
 	assert.True(t, changed)
 
@@ -195,7 +247,7 @@ func TestSyncSharesKeepsTheExistingFileWhenTheDirectoryCannotBeRead(t *testing.T
 	// must survive untouched: losing every user's calendars because the
 	// provider blinked is worse than a stale list.
 	require.NoError(t, os.WriteFile(path, []byte("SENTINEL"), 0o644))
-	changed, err = c.syncShares(context.Background(), dataPath, state)
+	changed, err = c.syncShares(dataPath, c.planFor(context.Background(), state))
 	require.NoError(t, err)
 	assert.False(t, changed)
 
@@ -244,7 +296,7 @@ func ownerSecrets() *fakeSecrets {
 	}}
 }
 
-func TestEnsureFamilyCalendarCreatesItWhenItIsMissing(t *testing.T) {
+func TestEnsureCalendarsCreatesTheFamilyCalendarWhenItIsMissing(t *testing.T) {
 	var seen []string
 	server := davRecorder(t, http.StatusNotFound, &seen)
 	defer server.Close()
@@ -253,13 +305,13 @@ func TestEnsureFamilyCalendarCreatesItWhenItIsMissing(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureFamilyCalendar(context.Background()))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true)))
 
 	want := "/" + calendarOwner + "/" + familyCollection + "/"
 	assert.Equal(t, []string{"PROPFIND " + want, "MKCALENDAR " + want}, seen)
 }
 
-func TestEnsureFamilyCalendarIsANoOpWhenItAlreadyExists(t *testing.T) {
+func TestEnsureCalendarsIsANoOpWhenItAlreadyExists(t *testing.T) {
 	var seen []string
 	server := davRecorder(t, http.StatusMultiStatus, &seen)
 	defer server.Close()
@@ -268,12 +320,12 @@ func TestEnsureFamilyCalendarIsANoOpWhenItAlreadyExists(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureFamilyCalendar(context.Background()))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true)))
 	assert.Equal(t, []string{"PROPFIND /" + calendarOwner + "/" + familyCollection + "/"}, seen,
 		"an existing calendar must not be re-created")
 }
 
-func TestEnsureFamilyCalendarWithoutACredentialWarnsInsteadOfFailing(t *testing.T) {
+func TestEnsureCalendarsWithoutACredentialWarnsInsteadOfFailing(t *testing.T) {
 	// The Authentik configurator publishes the owner credential during its own
 	// convergence. Before that happens the node still has to converge, so a
 	// missing credential is a "not yet", not a fault.
@@ -285,11 +337,11 @@ func TestEnsureFamilyCalendarWithoutACredentialWarnsInsteadOfFailing(t *testing.
 	c.baseURL = server.URL
 	c.secrets = &fakeSecrets{values: map[string]string{}}
 
-	require.NoError(t, c.ensureFamilyCalendar(context.Background()))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true)))
 	assert.Empty(t, seen, "no credential means no call is made against the server")
 }
 
-func TestEnsureFamilyCalendarSurvivesAServerError(t *testing.T) {
+func TestEnsureCalendarsSurvivesAServerError(t *testing.T) {
 	var seen []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Method)
@@ -301,8 +353,8 @@ func TestEnsureFamilyCalendarSurvivesAServerError(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureFamilyCalendar(context.Background()),
-		"a failed family-calendar pass warns and retries next time; it must not park the calendar in ERROR")
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true)),
+		"a failed create pass warns and retries next time; it must not park the calendar in ERROR")
 	assert.Equal(t, []string{"PROPFIND"}, seen)
 }
 
@@ -343,7 +395,7 @@ func feedWith(name, calendarName string) configurator.ICSFeedBinding {
 // name. pimsync cannot do either: a webcal source has no display name to
 // sync, and a collection Radicale makes for itself derives one from the path,
 // which is how `calendar-service/radarr` reached a family member's calendar.
-func TestEnsureFeedCalendarsCreatesEachCollectionNamed(t *testing.T) {
+func TestEnsureCalendarsCreatesEachFeedCollectionNamed(t *testing.T) {
 	var seen []string
 	bodies := map[string]string{}
 	server := davBodyRecorder(t, http.StatusNotFound, &seen, &bodies)
@@ -353,12 +405,16 @@ func TestEnsureFeedCalendarsCreatesEachCollectionNamed(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{
 		feedWith("radarr", "Movies"),
 		feedWith("sonarr", "Shows"),
-	})
+	}, true)))
 
+	// The family calendar is in the plan too, and it is created first: one loop
+	// over one value rather than a bespoke pass per kind.
 	assert.Equal(t, []string{
+		"PROPFIND /" + calendarOwner + "/family/",
+		"MKCALENDAR /" + calendarOwner + "/family/",
 		"PROPFIND /" + calendarOwner + "/Movies/",
 		"MKCALENDAR /" + calendarOwner + "/Movies/",
 		"PROPFIND /" + calendarOwner + "/Shows/",
@@ -368,7 +424,7 @@ func TestEnsureFeedCalendarsCreatesEachCollectionNamed(t *testing.T) {
 	assert.Contains(t, bodies["/"+calendarOwner+"/Shows/"], "<D:displayname>Shows</D:displayname>")
 }
 
-func TestEnsureFeedCalendarsIsANoOpWhenTheCollectionExists(t *testing.T) {
+func TestEnsureCalendarsIsANoOpWhenTheFeedCollectionExists(t *testing.T) {
 	var seen []string
 	bodies := map[string]string{}
 	server := davBodyRecorder(t, http.StatusMultiStatus, &seen, &bodies)
@@ -378,14 +434,16 @@ func TestEnsureFeedCalendarsIsANoOpWhenTheCollectionExists(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{feedWith("radarr", "Movies")})
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{feedWith("radarr", "Movies")}, true)))
 
-	assert.Equal(t, []string{"PROPFIND /" + calendarOwner + "/Movies/"}, seen,
-		"an existing collection must not be re-created")
+	assert.Equal(t, []string{
+		"PROPFIND /" + calendarOwner + "/family/",
+		"PROPFIND /" + calendarOwner + "/Movies/",
+	}, seen, "an existing collection must not be re-created")
 	assert.Empty(t, bodies)
 }
 
-func TestEnsureFeedCalendarsSkipsAnIncompleteFeed(t *testing.T) {
+func TestEnsureCalendarsSkipsAnIncompleteFeed(t *testing.T) {
 	var seen []string
 	bodies := map[string]string{}
 	server := davBodyRecorder(t, http.StatusNotFound, &seen, &bodies)
@@ -400,14 +458,20 @@ func TestEnsureFeedCalendarsSkipsAnIncompleteFeed(t *testing.T) {
 	notInstalled := feedWith("sonarr", "Shows")
 	notInstalled.Installed = false
 
-	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{noKey, notInstalled})
-	assert.Empty(t, seen, "a feed that cannot sync creates nothing")
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{noKey, notInstalled}, true)))
+
+	// The feeds create nothing; the family calendar is unaffected, because an
+	// unready feed says nothing about the collection people write to.
+	assert.Equal(t, []string{
+		"PROPFIND /" + calendarOwner + "/family/",
+		"MKCALENDAR /" + calendarOwner + "/family/",
+	}, seen, "a feed that cannot sync creates nothing")
 }
 
-// A server error on one feed must not stop the others: the family calendar and
-// every other collection still need their pass, and parking the whole node in
-// ERROR because one MKCALENDAR failed is worse than retrying next time.
-func TestEnsureFeedCalendarsContinuesPastAServerError(t *testing.T) {
+// A server error on one calendar must not stop the others: the remaining
+// collections still need their pass, and parking the whole node in ERROR
+// because one MKCALENDAR failed is worse than retrying next time.
+func TestEnsureCalendarsContinuesPastAServerError(t *testing.T) {
 	var seen []string
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -432,16 +496,16 @@ func TestEnsureFeedCalendarsContinuesPastAServerError(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{
 		feedWith("radarr", "Movies"),
 		feedWith("sonarr", "Shows"),
-	})
+	}, true)))
 
 	assert.Contains(t, seen, "MKCALENDAR /"+calendarOwner+"/Shows/",
-		"the second feed still gets created after the first errored")
+		"the later calendars still get created after an earlier one errored")
 }
 
-func TestEnsureFeedCalendarsWithoutACredentialMakesNoCalls(t *testing.T) {
+func TestEnsureCalendarsWithoutACredentialMakesNoCalls(t *testing.T) {
 	var seen []string
 	bodies := map[string]string{}
 	server := davBodyRecorder(t, http.StatusNotFound, &seen, &bodies)
@@ -451,6 +515,6 @@ func TestEnsureFeedCalendarsWithoutACredentialMakesNoCalls(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = &fakeSecrets{values: map[string]string{}}
 
-	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{feedWith("radarr", "Movies")})
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{feedWith("radarr", "Movies")}, true)))
 	assert.Empty(t, seen)
 }

@@ -152,7 +152,8 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		return configurator.NoRestart(), fmt.Errorf("write %s: %w", cfgPath, err)
 	}
 
-	sharesChanged, err := c.syncShares(ctx, state.DataPath, state)
+	plan := c.planFor(ctx, state)
+	sharesChanged, err := c.syncShares(state.DataPath, plan)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("write %s: %w", sharesFileName, err)
 	}
@@ -176,28 +177,39 @@ func feedsOf(state *configurator.AppState) []configurator.ICSFeedBinding {
 	return state.Integrations.ICSFeeds
 }
 
+// planFor reads the live directory and feed bindings and builds the set of
+// calendars the instance should have right now.
+//
+// Both halves of the reconcile read this one value: the share renderer walks
+// its grants, the creator walks its segments. That is the point of the plan --
+// the two halves cannot drift apart into disagreeing sets the way a constant and
+// a contract can.
+func (c *Configurator) planFor(ctx context.Context, state *configurator.AppState) Plan {
+	recipients, enumerated := c.calendarRecipients(ctx, state)
+	return planCalendars(recipients, feedsOf(state), enumerated)
+}
+
 // syncShares renders the csv sharing database and writes it into the writable
 // storage tree. Bloud is the single writer: Radicale reads it at startup and
 // never writes it back unless its own sharing API is used, which Bloud does not
 // call. A change needs a restart, exactly like the feed jobs and the rights.
 //
-// When the user list cannot be read, the file that is already on disk is left
-// exactly as it is and the call reports no change. Rendering an empty list
-// because the identity provider was briefly unreachable would take every
-// shared calendar away from every user, and a transport error says nothing
-// about who should hold a share. A file that does not exist yet is still
-// written, header-only, so the sharing backend always has a database to read
-// rather than a missing one.
-func (c *Configurator) syncShares(ctx context.Context, dataPath string, state *configurator.AppState) (bool, error) {
+// When the plan is not Complete -- the user list could not be read -- the file
+// already on disk is left exactly as it is and the call reports no change.
+// Rendering an empty list because the identity provider was briefly unreachable
+// would take every shared calendar away from every user, and a transport error
+// says nothing about who should hold a share. A file that does not exist yet is
+// still written, header-only, so the sharing backend always has a database to
+// read rather than a missing one.
+func (c *Configurator) syncShares(dataPath string, plan Plan) (bool, error) {
 	path := filepath.Join(dataPath, "collections", sharesDirName, sharesFileName)
-	recipients, enumerated := c.calendarRecipients(ctx, state)
-	if !enumerated {
+	if !plan.Complete {
 		if _, err := os.Stat(path); err == nil {
 			c.logger.Warn("radicale sharing: user list unavailable, keeping the shares already on disk")
 			return false, nil
 		}
 	}
-	return managedfile.Write(path, []byte(renderShares(recipients, feedsOf(state))), managedfile.ModeSharedConfig)
+	return managedfile.Write(path, []byte(renderShares(plan)), managedfile.ModeSharedConfig)
 }
 
 // sharesCSVHeader is the semicolon-delimited header Radicale's csv sharing
@@ -222,11 +234,11 @@ func feedURL(feed configurator.ICSFeedBinding) string {
 // which users exist and which feeds are installed, and Radicale reads them at
 // process start, so a change needs a restart. Returns true when the container
 // was restarted, in which case the caller should skip probing it this pass.
-func (c *Configurator) resyncGeneratedConfig(ctx context.Context, state *configurator.AppState) (bool, error) {
-	if state == nil || state.DataPath == "" {
+func (c *Configurator) resyncGeneratedConfig(ctx context.Context, dataPath string, plan Plan) (bool, error) {
+	if dataPath == "" {
 		return false, nil
 	}
-	sharesChanged, err := c.syncShares(ctx, state.DataPath, state)
+	sharesChanged, err := c.syncShares(dataPath, plan)
 	if err != nil {
 		return false, fmt.Errorf("write %s: %w", sharesFileName, err)
 	}
@@ -251,7 +263,16 @@ func (c *Configurator) resyncGeneratedConfig(ctx context.Context, state *configu
 // assertion about the process, not a re-read of the file that was written, so
 // it catches a container that came up on a stale or ignored config.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	restarted, err := c.resyncGeneratedConfig(ctx, state)
+	plan := c.planFor(ctx, state)
+
+	// A bare test pass hands over a nil state; the resync is the only part that
+	// needs a data path, and the calendar pass needs neither.
+	var dataPath string
+	if state != nil {
+		dataPath = state.DataPath
+	}
+
+	restarted, err := c.resyncGeneratedConfig(ctx, dataPath, plan)
 	if err != nil {
 		return err
 	}
@@ -261,17 +282,14 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return nil
 	}
 
-	// The shared family calendar has to be created by the account that owns it,
-	// over the running server, so this is the one point in the lifecycle where it
-	// can happen. It is idempotent and it warns rather than fails.
-	if err := c.ensureFamilyCalendar(ctx); err != nil {
+	// Every collection the plan calls for is created here, the family calendar
+	// and the feed collections alike. They have to be created over DAV by the
+	// account that owns them, against the running server, which makes this the
+	// one point in the lifecycle where they can be. It is idempotent, it warns
+	// rather than fails, and one calendar failing does not stop the others.
+	if err := c.ensureCalendars(ctx, plan); err != nil {
 		return err
 	}
-
-	// The feed collections get the same treatment, for the same reason, and
-	// for one the family calendar does not have: pimsync cannot name the
-	// collection it syncs into.
-	c.ensureFeedCalendars(ctx, feedsOf(state))
 
 	status, err := c.api.probeUnauthenticated(ctx)
 	if err != nil {

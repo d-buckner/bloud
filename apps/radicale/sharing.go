@@ -48,31 +48,6 @@ const (
 	writableShare = "RWrw"
 )
 
-// renderShares renders the csv sharing database: every shared collection
-// mounted into every recipient's own tree.
-//
-// A map share is what makes discovery work. CalDAV clients enumerate the
-// authenticated principal's home to find their calendars, so a collection
-// that lives in someone else's tree is invisible until it is mapped in. The
-// feeds and the family calendar live under the service account, and each
-// recipient gets a virtual copy under their own.
-//
-// The output is ordered by recipient and then by mount name so re-rendering
-// the same set is byte-identical and asks for no restart.
-func renderShares(recipients []string, feeds []configurator.ICSFeedBinding) string {
-	var b strings.Builder
-	b.WriteString(sharesCSVHeader)
-	b.WriteString("\n")
-
-	for _, recipient := range shareRecipients(recipients) {
-		b.WriteString(shareRow(recipient, familyCollection, calendarOwner, familyCollection, writableShare))
-		for _, feed := range sortedFeeds(feeds) {
-			b.WriteString(shareRow(recipient, feed.CalendarName, calendarOwner, feed.CalendarName, readOnlyShare))
-		}
-	}
-	return b.String()
-}
-
 // shareRow renders one map share: the owner's real collection mounted at
 // `recipient/mount/` in the recipient's tree.
 //
@@ -204,86 +179,6 @@ func identityProvider(state *configurator.AppState) (configurator.SSOBinding, bo
 		}
 	}
 	return configurator.SSOBinding{}, false
-}
-
-// ensureFamilyCalendar creates the shared family calendar under the service
-// account if it is not there yet.
-//
-// It has to be created over DAV rather than written into the storage tree: the
-// server owns its own storage format, and the account that owns the collection
-// is the one that has to ask for it. That is why this runs in PostStart with
-// the owner's credential and not in PreStart with the rest of the files.
-//
-// A failure is a warning, not a fault. The shares for the family calendar are
-// rendered regardless, so until this succeeds they point at a collection that
-// is not there yet; the next pass tries again, and the node keeps serving
-// everything that does work.
-func (c *Configurator) ensureFamilyCalendar(ctx context.Context) error {
-	ownerPassword := c.calendarOwnerPassword()
-	if ownerPassword == "" {
-		c.logger.Warn("radicale sharing: no shared-calendar owner credential yet; family calendar not created")
-		return nil
-	}
-
-	path := "/" + calendarOwner + "/" + familyCollection + "/"
-	exists, err := c.api.collectionExists(ctx, path, calendarOwner, ownerPassword)
-	if err != nil {
-		c.logger.Warn("radicale sharing: could not check for the family calendar", "err", err)
-		return nil
-	}
-	if exists {
-		return nil
-	}
-	if err := c.api.createCalendar(ctx, path, calendarOwner, ownerPassword, familyDisplayName); err != nil {
-		c.logger.Warn("radicale sharing: could not create the family calendar", "path", path, "err", err)
-		return nil
-	}
-	c.logger.Info("created the shared family calendar", "path", path, "owner", calendarOwner)
-	return nil
-}
-
-// ensureFeedCalendars pre-creates the collection each installed feed projects
-// into, and names it while doing so.
-//
-// Two problems, one function.
-//
-// The display name: pimsync cannot set one. `display_name` is rejected by its
-// webcal storage, and the value it does carry as a synced property never
-// arrives, because an anonymous ICS document has no display name to sync. A
-// collection Radicale creates for itself derives one from the path, which is
-// how `calendar-service/radarr` ended up in a family member's calendar. The
-// `<D:set>` form used here is the one shape that actually sticks, and it is
-// the same one that makes the shared calendar read "Family".
-//
-// The dangling share: the share row for a provider is rendered as soon as the
-// provider is installed, but the collection used to appear only when the feed
-// produced its first non-empty event. Every user had a calendar mounted that
-// pointed at nothing until then. Creating the collection here closes that gap.
-//
-// Like the family calendar this warns rather than fails: the shares render
-// regardless, and the next pass tries again.
-func (c *Configurator) ensureFeedCalendars(ctx context.Context, feeds []configurator.ICSFeedBinding) {
-	ownerPassword := c.calendarOwnerPassword()
-	if ownerPassword == "" {
-		c.logger.Warn("radicale sharing: no shared-calendar owner credential yet; feed calendars not created")
-		return
-	}
-	for _, feed := range sortedFeeds(feeds) {
-		path := "/" + calendarOwner + "/" + feed.CalendarName + "/"
-		exists, err := c.api.collectionExists(ctx, path, calendarOwner, ownerPassword)
-		if err != nil {
-			c.logger.Warn("radicale sharing: could not check for a feed calendar", "path", path, "err", err)
-			continue
-		}
-		if exists {
-			continue
-		}
-		if err := c.api.createCalendar(ctx, path, calendarOwner, ownerPassword, feed.CalendarName); err != nil {
-			c.logger.Warn("radicale sharing: could not create the feed calendar", "path", path, "err", err)
-			continue
-		}
-		c.logger.Info("created the feed calendar", "path", path, "provider", feed.App, "owner", calendarOwner)
-	}
 }
 
 // calendarOwnerPassword reads the shared-calendar owner credential out of this
