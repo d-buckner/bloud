@@ -9,7 +9,7 @@
 The ask: **provision a personal calendar for each user, so that in Hermes I can
 ask to add a todo to a specific person.**
 
-## The design in six lines
+## The design in seven lines
 
 1. A calendar is a **value**: a path segment under a service-account owner, a
    display name, and a list of grants. Family is a singleton instance of it;
@@ -30,6 +30,9 @@ ask to add a todo to a specific person.**
    cannot reach the calendar at all.
 6. Ship creation first. The purge half is the same diff pointed the other way,
    and it is the only part of this design that can lose data.
+7. **No migration is required.** The feature is additive. What needs care is
+   the mount-name collision with calendars users already made, and keeping
+   deactivation out of the purge set.
 
 ## The ask, decomposed
 
@@ -298,32 +301,44 @@ separate fields.
 ## Purging is the same diff, pointed the other way
 
 Once the plan exists, deletion stops being a special case. The reconcile has two
-halves over the same value:
+halves:
 
 ```
-create: plan - reality   (in the plan, not on the server)
-purge:  reality - plan   (on the server, not in the plan, under owned prefixes)
+create: plan - reality        (in the plan, not on the server)
+purge:  reality - roster     (on the server, not in the roster, under owned prefixes)
 ```
 
-That is a much better framing than a separate orphan-deletion routine, because
-it puts the risk exactly where it belongs: **the purge set is a set difference,
-so anything that wrongly shrinks the plan wrongly grows the purge set.** A
-truncated user list, a failed directory read, a feed binding that resolved
-empty: each is a smaller plan, and each is a bigger pile of things to delete.
+Note that the two halves read **different things**, and that is not an
+asymmetry to smooth over.
+
+**The purge must not read the plan.** `calendarRecipients` filters on
+`IsActive`, so a deactivated user is absent from the plan, and `reality - plan`
+would purge their calendar the moment somebody is deactivated. That directly
+contradicts the decision that deactivation is not deletion. The create half
+wants *active* users. The purge half wants *confirmed absent from the
+directory*, which includes deactivated accounts. `ListUsers` returns both, so
+the distinction is available; what it is not is something the current recipient
+list can express. The purge's negative space is the roster, not the plan.
+
+That framing still puts the risk where it belongs: **the purge set is a set
+difference, so anything that wrongly shrinks the roster wrongly grows the purge
+set.** A truncated user list, a failed directory read, a feed binding that
+resolved empty: each is a smaller set, and each is a bigger pile of things to
+delete.
 
 Which is what makes the safety conditions mechanical rather than advisory:
 
-- The plan must be marked complete. `calendarRecipients` already returns
-  `(users, enumerated)`; the plan should carry that flag, and the purge half
-  must refuse to run on an incomplete plan. Creation can proceed on partial
-  information because it adds nothing that was not asked for. Deletion cannot.
-- The plan must be *complete*, not merely non-empty. `pkg/authentik.ListUsers`
-  requests `page_size=200` and does not paginate, so past 200 users the plan
+- The roster must be marked complete. `calendarRecipients` already returns
+  `(users, enumerated)`; the purge half must refuse to run on an incomplete
+  read. Creation can proceed on partial information because it adds nothing
+  that was not asked for. Deletion cannot.
+- The roster must be *complete*, not merely non-empty. `pkg/authentik.ListUsers`
+  requests `page_size=200` and does not paginate, so past 200 users the roster
   is silently short and everyone beyond is in the purge set. Compare the API's
   reported total against the length of the returned list and refuse to delete
   on disagreement.
 - The purge is bounded to owned prefixes. Today that is `people/`. Family and
-  feed collections are never in scope, so a wrong plan cannot reach them.
+  feed collections are never in scope, so a wrong roster cannot reach them.
 
 The asymmetry is the whole lesson: the create half of this design is safe by
 construction, and the delete half is safe only if the plan is provably whole.
@@ -346,6 +361,76 @@ agent-written history. That belongs in the delete confirmation in the UI rather
 than in a doc nobody reads at the moment it matters. If that confirmation is
 not acceptable to the household, the alternative is a timed purge, which needs
 a retention clock Bloud has no home for today.
+
+## Migration
+
+**The core feature needs none.** Creating per-user calendars is purely
+additive: new empty collections under a prefix that does not exist yet, plus new
+share rows. No existing collection is touched, renamed, or moved. Phase 1's
+byte-identical requirement means the refactor does not even produce a
+share-file change, so an upgrade that ships phases 1 and 2 does not restart
+Radicale for a reason nobody can explain.
+
+Four things are migration-adjacent and need an explicit answer rather than a
+shrug.
+
+### A mount name that collides with a calendar the user already made
+
+This is not a new problem. It is a known one, multiplied. The family calendar's
+own integration notes already record it:
+
+> A user who already owns a collection named `family`. The family calendar is
+> mounted at `/<user>/family/`, so a personal collection with that name
+> collides with the mount. Nothing detects it; the name is reserved by
+> convention.
+
+Reserved-by-convention is tolerable for one collection with one name. It is not
+tolerable when every user gets a mount whose entire purpose is being *their*
+calendar. And the failure mode is worse than a warning in a log: the map
+resolver intercepts the path before the storage lookup, so the share shadows the
+user's own collection. Alice keeps writing into what she believes is her
+calendar while actually writing into the mapped one, or her existing events stop
+being reachable. The data is not lost, but it lands in the wrong place and she
+has no way to know.
+
+Two mitigations:
+
+- **Detect before granting.** PROPFIND the recipient's own mount path during
+  the plan pass; if a collection already sits there and is not the mapped one,
+  skip the grant and warn. Costs one round trip per user per pass, and it turns
+  a silent shadowing into a log line and a missing mount.
+- **Pick a mount name no client would choose.** Less likely to collide, but
+  "less likely" is the same class of argument that produced the current note.
+
+Recommendation: detect. The round trip is cheap against the alternative, and it
+is the same PROPFIND the create half already issues.
+
+### The `people/` prefix against an account named `people`
+
+A directory account literally named `people` would make
+`/calendar-service/people/` both a user home and the prefix this design treats
+as reserved. Reject it at the plan level with a clear message rather than
+discovering it in the storage tree: the prefix is reserved, and a username that
+collides with it is a directory problem that should say so out loud.
+
+### Rollback leaves residue
+
+Reverting the feature after it ships removes the share rows, so the collections
+become invisible, but they and their data stay on disk. That is less a
+migration problem than a reason not to describe the feature as reversible. The
+existing alpha precedent is the same shape: installs made before the shared
+calendar owner existed left their synced feeds under the operator's tree, and
+the notes say plainly that they are "documented, not migrated".
+
+### What the purge must not do on upgrade
+
+Phase 5 must not treat legacy collections as orphans. Today the purge prefix is
+`people/`, which contains only what the plan created, so `reality - roster` is
+empty on the first purge pass and the upgrade is safe. That is a property of
+the prefix choice, not of the logic, and it stops being true the moment anyone
+widens the prefix to sweep legacy collections. If the sweep is ever widened, it
+needs an adoption pass first: existing collections are claimed into the roster,
+not deleted.
 
 ## Splitting events from to-dos: the product consequences
 
@@ -603,13 +688,15 @@ that is already known good.
 
 **Phase 2: per-user calendars in the plan.** Add the per-user kind.
 `planCalendars` emits one `people/<user>` calendar per active directory user,
-with grants to that user and to the agent.
+with grants to that user and to the agent, and it checks the mount path before
+granting it so an existing collection the user made is shadowed by nothing.
 
 What it proves: a new user in the directory gets a calendar and two mounts on
 the next pass without a reinstall; the shares file is stable across passes with
 no churn and no restart; a user who is deactivated loses the mounts and the
-collection survives. This is the feature, and it is the phase that makes "add a
-todo to Bob" possible.
+collection survives; a user who already owns a collection at the mount path
+gets a warning and no mount rather than a shadowed calendar. This is the
+feature, and it is the phase that makes "add a todo to Bob" possible.
 
 **Phase 3: resolution.** Display names, the URL convention, and the
 `dav-mcp` namespace description that Hermes reads, so the agent can go from a
@@ -660,6 +747,10 @@ with a truncated API response.
 5. **Purge on deletion, shipped separately from creation.** It is the same diff
    pointed the other way, and it is the only half of this design that can lose
    data.
+6. **No migration.** The feature adds empty collections and share rows and
+   touches nothing existing. The mount collision is detected rather than
+   assumed, and the purge reads the directory roster rather than the plan so a
+   deactivated account is never mistaken for a deleted one.
 
 ## What this does not solve
 
