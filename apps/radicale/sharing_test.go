@@ -22,10 +22,20 @@ import (
 
 // ---- rendering ----
 
-// renderWith renders the sharing database for a recipient and feed set, so the
-// tests read as the scenario rather than as the plumbing that builds a Plan.
+// renderWith renders the sharing database for a set of people and feeds, so
+// the tests read as the scenario rather than as the plumbing that builds a
+// Plan. The names arrive with no directory display name, which is the case
+// where the username has to carry the identity alone.
 func renderWith(recipients []string, feeds []configurator.ICSFeedBinding) string {
-	return renderShares(planCalendars(recipients, feeds, true))
+	return renderShares(planCalendars(usersNamed(recipients...), feeds, true, nil))
+}
+
+func usersNamed(names ...string) []DirectoryUser {
+	out := make([]DirectoryUser, 0, len(names))
+	for _, n := range names {
+		out = append(out, DirectoryUser{Username: n})
+	}
+	return out
 }
 
 func TestRenderSharesMountsEverySharedCollectionIntoEveryTree(t *testing.T) {
@@ -131,8 +141,28 @@ func TestRenderSharesMatchesThePrePlanGoldenOutput(t *testing.T) {
 
 	// Deliberately unsorted on the way in: the render must not depend on it.
 	got := renderWith([]string{"carol", "alice", "bob"}, feeds)
-	assert.Equal(t, golden, got,
-		"the plan-driven renderer must emit the exact bytes the constant-driven renderer emitted")
+	assert.Equal(t, golden, withoutPersonalRows(got),
+		"the family and feed rows must be the exact bytes the constant-driven renderer emitted")
+}
+
+// withoutPersonalRows drops the rows the per-user calendars add, leaving the
+// family and feed rows exactly as the Phase 1 golden captured them.
+//
+// The match is on the mapped-to field, which is the only field in a row that
+// can carry the people prefix. A row's own mount is `/bob/Personal/` and its
+// owner is a bare name, so nothing else in the line can produce this substring.
+func withoutPersonalRows(rendered string) string {
+	var kept []string
+	for _, line := range strings.SplitAfter(rendered, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, ";/"+calendarOwner+"/"+peoplePrefix+"/") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "")
 }
 
 func TestShareRecipientsExcludesTheOwnerAndDedupes(t *testing.T) {
@@ -192,7 +222,8 @@ func TestCalendarRecipientsListsActiveUsers(t *testing.T) {
 	c, _ := newTestConfigurator(t, nil)
 	got, ok := c.calendarRecipients(context.Background(), ssoState(t, server.URL))
 	require.True(t, ok)
-	assert.Equal(t, []string{"alice", "bob"}, got, "a deactivated account is not somebody's family member")
+	assert.Equal(t, []string{"alice", "bob"}, usernamesOf(got),
+		"a deactivated account is not somebody's family member")
 }
 
 func TestCalendarRecipientsExcludesTheServiceAccounts(t *testing.T) {
@@ -206,11 +237,52 @@ func TestCalendarRecipientsExcludesTheServiceAccounts(t *testing.T) {
 	c, _ := newTestConfigurator(t, nil)
 	got, ok := c.calendarRecipients(context.Background(), ssoState(t, server.URL))
 	require.True(t, ok)
-	assert.Equal(t, []string{"alice"}, got)
+	assert.Equal(t, []string{"alice"}, usernamesOf(got))
 
 	// The agent is still in the set that gets the shares, added downstream of
 	// the directory rather than coming from it.
-	assert.Contains(t, shareRecipients(got), agentUsername)
+	assert.Contains(t, shareRecipients(usernamesOf(got)), agentUsername)
+}
+
+// The human name has to survive the read: it becomes the displayname on that
+// person's calendar, which is the string a household member reads when the
+// agent shows them whose calendar they are looking at.
+func TestCalendarRecipientsCarriesTheDirectoryDisplayName(t *testing.T) {
+	server := authentikDirectory(t, []map[string]any{
+		{"pk": 1, "username": "alice", "name": "Alice Hart", "is_active": true, "type": "internal"},
+		{"pk": 2, "username": "bob", "name": "", "is_active": true, "type": "internal"},
+	})
+	defer server.Close()
+
+	c, _ := newTestConfigurator(t, nil)
+	got, ok := c.calendarRecipients(context.Background(), ssoState(t, server.URL))
+	require.True(t, ok)
+	require.Len(t, got, 2)
+
+	assert.Equal(t, "Alice Hart", got[0].DisplayName)
+	assert.Empty(t, got[1].DisplayName, "a blank name stays blank rather than becoming whitespace")
+	assert.Equal(t, "Bob's calendar", personalDisplayName(got[1]),
+		"with no human name the username carries the identity")
+	assert.Equal(t, "Alice Hart's calendar", personalDisplayName(got[0]))
+}
+
+// A username is the identity a personal calendar is keyed on and goes straight
+// into a collection path, so one that cannot be a path segment is not a person
+// this feature can provision.
+func TestCalendarRecipientsSkipsAUsernameThatCannotBeAPathSegment(t *testing.T) {
+	server := authentikDirectory(t, []map[string]any{
+		{"pk": 1, "username": "alice", "is_active": true, "type": "internal"},
+		{"pk": 2, "username": "evil/../x", "is_active": true, "type": "internal"},
+		{"pk": 3, "username": ".hidden", "is_active": true, "type": "internal"},
+		{"pk": 4, "username": "two words", "is_active": true, "type": "internal"},
+	})
+	defer server.Close()
+
+	c, _ := newTestConfigurator(t, nil)
+	got, ok := c.calendarRecipients(context.Background(), ssoState(t, server.URL))
+	require.True(t, ok)
+	assert.Equal(t, []string{"alice"}, usernamesOf(got),
+		"a username that escapes the people/ prefix or hides its directory is not provisioned")
 }
 
 func TestCalendarRecipientsReportsFailureWhenTheDirectoryIsUnreachable(t *testing.T) {
@@ -305,7 +377,7 @@ func TestEnsureCalendarsCreatesTheFamilyCalendarWhenItIsMissing(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true)))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true, nil)))
 
 	want := "/" + calendarOwner + "/" + familyCollection + "/"
 	assert.Equal(t, []string{"PROPFIND " + want, "MKCALENDAR " + want}, seen)
@@ -320,7 +392,7 @@ func TestEnsureCalendarsIsANoOpWhenItAlreadyExists(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true)))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true, nil)))
 	assert.Equal(t, []string{"PROPFIND /" + calendarOwner + "/" + familyCollection + "/"}, seen,
 		"an existing calendar must not be re-created")
 }
@@ -337,7 +409,7 @@ func TestEnsureCalendarsWithoutACredentialWarnsInsteadOfFailing(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = &fakeSecrets{values: map[string]string{}}
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true)))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true, nil)))
 	assert.Empty(t, seen, "no credential means no call is made against the server")
 }
 
@@ -353,7 +425,7 @@ func TestEnsureCalendarsSurvivesAServerError(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true)),
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true, nil)),
 		"a failed create pass warns and retries next time; it must not park the calendar in ERROR")
 	assert.Equal(t, []string{"PROPFIND"}, seen)
 }
@@ -408,7 +480,7 @@ func TestEnsureCalendarsCreatesEachFeedCollectionNamed(t *testing.T) {
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{
 		feedWith("radarr", "Movies"),
 		feedWith("sonarr", "Shows"),
-	}, true)))
+	}, true, nil)))
 
 	// The family calendar is in the plan too, and it is created first: one loop
 	// over one value rather than a bespoke pass per kind.
@@ -434,7 +506,7 @@ func TestEnsureCalendarsIsANoOpWhenTheFeedCollectionExists(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{feedWith("radarr", "Movies")}, true)))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{feedWith("radarr", "Movies")}, true, nil)))
 
 	assert.Equal(t, []string{
 		"PROPFIND /" + calendarOwner + "/family/",
@@ -458,7 +530,7 @@ func TestEnsureCalendarsSkipsAnIncompleteFeed(t *testing.T) {
 	notInstalled := feedWith("sonarr", "Shows")
 	notInstalled.Installed = false
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{noKey, notInstalled}, true)))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{noKey, notInstalled}, true, nil)))
 
 	// The feeds create nothing; the family calendar is unaffected, because an
 	// unready feed says nothing about the collection people write to.
@@ -499,7 +571,7 @@ func TestEnsureCalendarsContinuesPastAServerError(t *testing.T) {
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{
 		feedWith("radarr", "Movies"),
 		feedWith("sonarr", "Shows"),
-	}, true)))
+	}, true, nil)))
 
 	assert.Contains(t, seen, "MKCALENDAR /"+calendarOwner+"/Shows/",
 		"the later calendars still get created after an earlier one errored")
@@ -515,6 +587,189 @@ func TestEnsureCalendarsWithoutACredentialMakesNoCalls(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = &fakeSecrets{values: map[string]string{}}
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{feedWith("radarr", "Movies")}, true)))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{feedWith("radarr", "Movies")}, true, nil)))
 	assert.Empty(t, seen)
+}
+
+// ---- per-user calendars ----
+
+// parsedRow is a rendered share line, for assertions that read as the
+// relationship between the columns rather than as positional indexing.
+type parsedRow struct {
+	mountedAt  string
+	mappedTo   string
+	user       string
+	perms      string
+	properties string
+}
+
+func parseRows(rendered string) []parsedRow {
+	var out []parsedRow
+	for _, line := range strings.Split(strings.TrimSuffix(rendered, "\n"), "\n") {
+		fields := strings.Split(line, ";")
+		if len(fields) < 15 || fields[0] == "ShareType" {
+			continue
+		}
+		out = append(out, parsedRow{
+			mountedAt:  fields[1],
+			mappedTo:   fields[2],
+			user:       fields[5],
+			perms:      fields[6],
+			properties: fields[13],
+		})
+	}
+	return out
+}
+
+func household() []DirectoryUser {
+	return []DirectoryUser{
+		{Username: "alice", DisplayName: "Alice Hart"},
+		{Username: "bob", DisplayName: "Bob Nunes"},
+		{Username: "carol"},
+	}
+}
+
+func TestPlanEmitsOnePersonalCalendarPerPerson(t *testing.T) {
+	plan := planCalendars(household(), nil, true, nil)
+
+	for _, want := range []struct{ segment, display string }{
+		{"people/alice", "Alice Hart's calendar"},
+		{"people/bob", "Bob Nunes's calendar"},
+		{"people/carol", "Carol's calendar"},
+	} {
+		var found *Calendar
+		for i := range plan.Calendars {
+			if plan.Calendars[i].Segment == want.segment {
+				found = &plan.Calendars[i]
+			}
+		}
+		require.NotNil(t, found, "no calendar planned for %s", want.segment)
+		assert.Equal(t, want.display, found.DisplayName)
+		require.Len(t, found.Grants, 2, "one mount for the person, one for the agent")
+	}
+}
+
+// The person's own mount reads "Personal" rather than their own name, and the
+// agent's mount carries the name. Same collection, two readings, because the
+// mount is where the personal-versus-shared distinction should show.
+func TestPersonalMountsCarryTheirOwnDisplayNames(t *testing.T) {
+	plan := planCalendars([]DirectoryUser{{Username: "bob", DisplayName: "Bob Nunes"}}, nil, true, nil)
+	rows := parseRows(renderShares(plan))
+
+	var own, agent *parsedRow
+	for i := range rows {
+		switch rows[i].user {
+		case "bob":
+			if rows[i].mountedAt == "/bob/Personal/" {
+				own = &rows[i]
+			}
+		case agentUsername:
+			if rows[i].mountedAt == "/"+agentUsername+"/people/bob/" {
+				agent = &rows[i]
+			}
+		}
+	}
+
+	require.NotNil(t, own, "bob has no Personal mount")
+	assert.Equal(t, "/calendar-service/people/bob/", own.mappedTo)
+	assert.Equal(t, writableShare, own.perms)
+	assert.Equal(t, "{'D:displayname': 'Personal'}", own.properties)
+
+	require.NotNil(t, agent, "the agent has no mount for bob")
+	assert.Equal(t, "/calendar-service/people/bob/", agent.mappedTo)
+	assert.Equal(t, writableShare, agent.perms)
+	assert.Equal(t, "{}", agent.properties,
+		"the agent inherits the collection's own displayname, which carries the person's name")
+}
+
+// Decision 4 in the plan: assert this rather than trust it. A row that mounts
+// one person's personal collection into a second person's tree is a privacy
+// bug with a named victim, and nothing in the rendered file looks wrong about
+// it unless this is checked.
+func TestPersonalCalendarsAreNeverSharedWithAnotherPerson(t *testing.T) {
+	plan := planCalendars(household(), []configurator.ICSFeedBinding{feedBinding()}, true, nil)
+
+	for _, row := range parseRows(renderShares(plan)) {
+		trimmed := strings.TrimPrefix(row.mappedTo, "/"+calendarOwner+"/"+peoplePrefix+"/")
+		if trimmed == row.mappedTo {
+			continue // not a personal collection
+		}
+		owner := strings.TrimSuffix(trimmed, "/")
+		if row.user == agentUsername {
+			continue
+		}
+		assert.Equal(t, owner, row.user,
+			"a personal collection is mounted for someone other than its owner: %s -> %s",
+			row.mappedTo, row.mountedAt)
+	}
+}
+
+// The mount path is checked before the grant is issued. A map share shadows
+// whatever already sits at that path, so a person who made a calendar called
+// Personal themselves would lose sight of it to a provisioning step they
+// never asked for.
+func TestOwnMountIsSkippedWhenThePersonAlreadyHasOne(t *testing.T) {
+	dataPath := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dataPath, "collections", "bob", personalMount), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dataPath, "collections", "bob", personalMount, ".Radicale.props"), []byte("{}"), 0o644))
+
+	c, _ := newTestConfigurator(t, nil)
+	occupied := c.occupiedMounts(dataPath, household())
+	plan := planCalendars(household(), nil, true, occupied)
+
+	require.Len(t, plan.Conflicts, 1)
+	assert.Equal(t, "bob", plan.Conflicts[0].Recipient)
+	assert.Equal(t, personalMount, plan.Conflicts[0].Mount)
+
+	for _, row := range parseRows(renderShares(plan)) {
+		assert.NotEqual(t, "/bob/Personal/", row.mountedAt,
+			"the shadowing mount must not be rendered")
+	}
+
+	// The agent keeps its mount: the collision is about the person's own tree,
+	// and their calendar is still reachable by the agent and by themselves
+	// under whatever they named it.
+	var agentSeesBob bool
+	for _, row := range parseRows(renderShares(plan)) {
+		if row.user == agentUsername && row.mappedTo == "/calendar-service/people/bob/" {
+			agentSeesBob = true
+		}
+	}
+	assert.True(t, agentSeesBob, "a collision in the person's tree must not remove the agent's mount")
+}
+
+// A directory that is not a collection shadows nothing, so it must not be
+// mistaken for one and cost the person their mount.
+func TestOccupiedMountsIgnoresADirectoryThatIsNotACollection(t *testing.T) {
+	dataPath := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dataPath, "collections", "bob", personalMount), 0o755))
+
+	c, _ := newTestConfigurator(t, nil)
+	assert.Empty(t, c.occupiedMounts(dataPath, household()),
+		"without .Radicale.props there is no collection there")
+}
+
+// Adding a person must add only their rows. If a new user reordered anything
+// else, the file changes wholesale and Radicale restarts on every directory
+// edit.
+func TestAddingAPersonChangesOnlyTheirRows(t *testing.T) {
+	before := parseRows(renderShares(planCalendars(household(), nil, true, nil)))
+	after := parseRows(renderShares(planCalendars(
+		append(household(), DirectoryUser{Username: "dave"}), nil, true, nil)))
+
+	added := func(rows []parsedRow, user string) []parsedRow {
+		var out []parsedRow
+		for _, r := range rows {
+			if r.mappedTo == "/"+calendarOwner+"/"+peoplePrefix+"/"+user+"/" {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	assert.Len(t, added(after, "dave"), 2, "the new person gets their own mount and the agent's")
+	assert.Subset(t, after, before, "nothing that was already there changed")
+	// Three rows, not two: joining the household also puts the new person in the
+	// family calendar's audience.
+	assert.Len(t, after, len(before)+3, "exactly the new person's rows were added")
 }

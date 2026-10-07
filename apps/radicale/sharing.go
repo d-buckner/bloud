@@ -54,9 +54,9 @@ const (
 // EnabledByOwner and EnabledByUser are both pre-set true. A share that needs
 // the recipient to accept it is a share nobody accepts: Bloud has no screen
 // for that, and the whole point is that the calendars are simply there.
-func shareRow(recipient, mount, owner, owned string, perms string) string {
-	return fmt.Sprintf("map;/%s/%s/;/%s/%s/;none;%s;%s;%s;True;True;False;False;0;0;{};{}\n",
-		recipient, mount, owner, owned, owner, recipient, perms)
+func shareRow(recipient, mount, owner, owned, perms, properties string) string {
+	return fmt.Sprintf("map;/%s/%s/;/%s/%s/;none;%s;%s;%s;True;True;False;False;0;0;%s;{}\n",
+		recipient, mount, owner, owned, owner, recipient, perms, properties)
 }
 
 // shareRecipients composes the full set of principals the shared collections
@@ -118,20 +118,22 @@ func feedComplete(feed configurator.ICSFeedBinding) bool {
 	return feed.Installed && feed.APIKey != "" && feed.Path != "" && feed.BaseURL != "" && feed.CalendarName != ""
 }
 
-// calendarRecipients lists the logins that every shared collection is mounted
-// for: everyone on the instance.
+// calendarRecipients lists the active users on the instance, with the human
+// name each one gets.
 //
-// The identity provider is the only place this answer lives, and its user list
-// already excludes service accounts and its own built-in admin. Inactive
-// accounts are dropped here too: a deactivated account is not somebody's
-// family member, and a share for it is a live grant to a door that is shut for
-// a reason.
+// The same list answers two questions, which is why it is one call: it is who
+// the shared collections are mounted for, and it is the set of people who get
+// a personal calendar. Both come from the identity provider, the only place
+// this answer lives. Its user list already excludes service accounts and its
+// own built-in admin. Inactive accounts are dropped here too: a deactivated
+// account is not somebody's family member, and a share for it is a live grant
+// to a door that is shut for a reason.
 //
 // The bool is the load-bearing part. It separates "there is nobody to share
 // with" from "we could not ask", and the caller must not treat the second as
 // the first: rendering an empty list because the provider was briefly
 // unreachable would strip every user's calendars.
-func (c *Configurator) calendarRecipients(ctx context.Context, state *configurator.AppState) ([]string, bool) {
+func (c *Configurator) calendarRecipients(ctx context.Context, state *configurator.AppState) ([]DirectoryUser, bool) {
 	idp, bound := identityProvider(state)
 	if !bound {
 		c.logger.Info("radicale sharing: no identity provider token, cannot list users")
@@ -149,21 +151,44 @@ func (c *Configurator) calendarRecipients(ctx context.Context, state *configurat
 		return nil, false
 	}
 
-	recipients := make([]string, 0, len(users))
+	recipients := make([]DirectoryUser, 0, len(users))
 	seen := make(map[string]bool, len(users))
 	for _, u := range users {
 		if !u.IsActive {
 			continue
 		}
 		name := strings.TrimSpace(u.Username)
-		if name == "" || name == calendarOwner || name == agentUsername || seen[name] {
+		if !usableUsername(name) || name == calendarOwner || name == agentUsername || seen[name] {
 			continue
 		}
 		seen[name] = true
-		recipients = append(recipients, name)
+		recipients = append(recipients, DirectoryUser{
+			Username:    name,
+			DisplayName: strings.TrimSpace(u.Name),
+		})
 	}
-	sort.Strings(recipients)
+	sort.Slice(recipients, func(i, j int) bool { return recipients[i].Username < recipients[j].Username })
 	return recipients, true
+}
+
+// usableUsername rejects a username that cannot be a collection path segment.
+//
+// The username is the identity a personal calendar is keyed on, so it goes
+// straight into `/calendar-service/people/<username>/`. A slash would escape the
+// prefix and a leading dot would make the directory hidden, and either way the
+// purge boundary stops meaning what it says. Better to skip the person and say so
+// than to provision a collection in the wrong place.
+func usableUsername(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return false
+	}
+	if strings.HasPrefix(name, ".") {
+		return false
+	}
+	return !strings.ContainsAny(name, " \t\n")
 }
 
 // identityProvider picks the resolved `sso` binding that carries an API token,

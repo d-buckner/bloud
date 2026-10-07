@@ -279,24 +279,44 @@ name are effectively the same word. A personal calendar wants them different: th
 agent should read "Bob's calendar" and Bob should read "Personal" in his own
 tree.
 
-That is expressible, and it is not currently used. The share row has a
-`Properties` column, always `{}`, gated by `[sharing]
-permit_properties_overlay`, which lets a share override the display name for
-its recipient. So the design has three options and should pick one explicitly
-rather than discover the mismatch during implementation:
+That is expressible, and the implementation uses it. The share row has a
+`Properties` column, gated by `[sharing] permit_properties_overlay`, which lets
+a share override the display name for its recipient. The three options that
+were on the table:
 
 1. **One name, accept it.** The collection is "Bob's calendar" and Bob sees
    "Bob's calendar" in his own tree. Simplest, mildly redundant.
 2. **Name it "Personal" and let the agent's list be ambiguous.** Bob sees
    "Personal", and the agent disambiguates by URL rather than by name.
-3. **Use the properties overlay.** Different display names per recipient. The
-   most correct and the only option that touches a Radicale feature Bloud does
-   not currently exercise, so it needs its own verification.
+3. **Use the properties overlay.** Different display names per recipient.
 
-Recommendation: start with 1. It costs nothing, it is honest, and the agent's
-resolution already works off the URL. Options 2 and 3 are both reachable later
-without changing the type, because `DisplayName` and `Mount` are already
-separate fields.
+**Built: 3.** The overlay is what makes the mount point carry the
+personal-versus-shared distinction the way the shape section argued it should,
+and it turned out to cost one field on `Grant` and one constant string. Options
+1 and 2 remain reachable later without changing the type, because `DisplayName`
+and `Mount` are already separate fields.
+
+Two things about the overlay are worth recording, because both are the kind of
+thing that reads as a bug in the code and is not.
+
+The value written is `{'D:displayname': 'Personal'}`, with single quotes. That
+is not a style choice. Radicale's csv loader (`sharing/csv.py`, the
+`DB_TYPES_V1[fieldname] is dict` branch) runs a chain of string replacements
+that expects a Python dict repr and converts it toward JSON before calling
+`json.loads`. Proper JSON gets every double quote escaped by the first
+replacement and fails to parse. Verified by running the exact chain from the
+pinned image against both forms.
+
+And the overlaid value is always a constant, never a name from the directory.
+An apostrophe in an overlaid value would break the same replacement chain that
+`Personal` survives, which is why "Bob's calendar" is set on the owned
+collection at `MKCALENDAR` time and only the word `Personal` ever goes through
+the overlay.
+
+`[sharing] permit_properties_overlay` stays at its default of `false`. The
+display path in `app/propfind.py` reads the overlay unconditionally; the flag
+gates whether a recipient may `PROPPATCH` their own overlay, which is not
+something Bloud wants them to be able to do to a provisioned mount.
 
 ## Purging is the same diff, pointed the other way
 
@@ -395,23 +415,47 @@ has no way to know.
 
 Two mitigations:
 
-- **Detect before granting.** PROPFIND the recipient's own mount path during
-  the plan pass; if a collection already sits there and is not the mapped one,
-  skip the grant and warn. Costs one round trip per user per pass, and it turns
-  a silent shadowing into a log line and a missing mount.
+- **Detect before granting.** If a collection already sits at the recipient's
+  mount path and is not the mapped one, skip the grant and record a conflict.
+  Turns a silent shadowing into a missing mount and an assertion in the plan.
 - **Pick a mount name no client would choose.** Less likely to collide, but
   "less likely" is the same class of argument that produced the current note.
 
-Recommendation: detect. The round trip is cheap against the alternative, and it
-is the same PROPFIND the create half already issues.
+**Built: detect, by reading the storage tree rather than the server.** The
+original proposal here was to PROPFIND the recipient's mount path during the
+plan pass. That cannot work, and the reason is the same fact that made the
+service-account ownership necessary: Bloud cannot authenticate as a user over
+DAV. LDAP verifies a credential and never reveals it, and the `owner_only`
+rights backend keeps every principal's tree sealed to that principal. There is
+no identity Bloud holds that can ask the server what is in Alice's tree.
+
+The storage tree is the one place it can see. The mapping is direct --
+`pathutils.path_to_filesystem` joins the sane path onto the storage root with no
+encoding -- so `<storage>/alice/Personal/` *is* alice's collection at
+`/alice/Personal/`. A directory only counts when it carries `.Radicale.props`,
+the marker the server writes for a real collection, because a stray directory
+with the same name shadows nothing and must not cost somebody their mount.
+
+The conflict lands on the plan rather than only in a log line, so it can be
+asserted. The agent keeps its own mount in the collision case: the collision is
+about the person's tree, and their calendar is still reachable by the agent and
+by themselves under whatever they named it. If they later delete the calendar
+they made, the mount reappears on the next pass, which is the whole reason this
+is a per-pass check rather than an install-time one.
 
 ### The `people/` prefix against an account named `people`
 
-A directory account literally named `people` would make
-`/calendar-service/people/` both a user home and the prefix this design treats
-as reserved. Reject it at the plan level with a clear message rather than
-discovering it in the storage tree: the prefix is reserved, and a username that
-collides with it is a directory problem that should say so out loud.
+Checked, and it is not a hazard in this shape. A user literally named `people`
+gets `/calendar-service/people/people/`, which nests cleanly, and their own
+principal home is `/people/` in a tree the purge never reads. The purge boundary
+is `people/` *under the owner*, and only plan-created collections ever land
+there.
+
+What `planCalendars` does reject is a username that cannot be a path segment at
+all: one containing a slash, a leading dot, or whitespace. A slash would escape
+the reserved prefix and put a collection somewhere the purge boundary does not
+mean, and a leading dot hides the directory. Those are skipped at the directory
+read, which is the layer that owns the translation.
 
 ### Rollback leaves residue
 

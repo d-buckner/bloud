@@ -185,8 +185,41 @@ func feedsOf(state *configurator.AppState) []configurator.ICSFeedBinding {
 // the two halves cannot drift apart into disagreeing sets the way a constant and
 // a contract can.
 func (c *Configurator) planFor(ctx context.Context, state *configurator.AppState) Plan {
-	recipients, enumerated := c.calendarRecipients(ctx, state)
-	return planCalendars(recipients, feedsOf(state), enumerated)
+	users, enumerated := c.calendarRecipients(ctx, state)
+	var dataPath string
+	if state != nil {
+		dataPath = state.DataPath
+	}
+	return planCalendars(users, feedsOf(state), enumerated, c.occupiedMounts(dataPath, users))
+}
+
+// occupiedMounts reports which of the plan's own-tree mounts are already taken
+// by a collection the recipient made themselves.
+//
+// It reads the storage tree on disk rather than asking the server, because
+// nobody can ask the server. Bloud cannot authenticate as a user over DAV --
+// LDAP verifies credentials and never reveals them -- and the `owner_only`
+// rights backend keeps every principal's tree sealed to that principal. The
+// storage tree is the one place Bloud can see what is actually there.
+//
+// The mapping is direct: `pathutils.path_to_filesystem` joins the sane path
+// onto the storage root with no encoding, so `<storage>/bob/Personal/` is bob's
+// own collection at `/bob/Personal/`. A directory only counts when it carries
+// `.Radicale.props`, the marker the server writes for a real collection, since
+// a stray directory with the same name shadows nothing.
+func (c *Configurator) occupiedMounts(dataPath string, users []DirectoryUser) map[string]bool {
+	occupied := make(map[string]bool, len(users))
+	if dataPath == "" {
+		return occupied
+	}
+	root := filepath.Join(dataPath, "collections")
+	for _, u := range users {
+		marker := filepath.Join(root, u.Username, personalMount, ".Radicale.props")
+		if _, err := os.Stat(marker); err == nil {
+			occupied[occupiedKey(u.Username, personalMount)] = true
+		}
+	}
+	return occupied
 }
 
 // syncShares renders the csv sharing database and writes it into the writable
