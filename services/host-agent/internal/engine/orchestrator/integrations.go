@@ -282,10 +282,10 @@ func (o *Orchestrator) bindContract(
 		// parameter. The Servarr feed endpoint accepts no header auth, which is
 		// the whole reason the key travels in the URL.
 		out.ICSFeeds = append(out.ICSFeeds, configurator.ICSFeedBinding{
-			ProviderRef: ref,
-			APIKey:      o.publishedSecret(providerID, contract, offer, requires),
-			Path:        offer.Values["path"],
-			DisplayName: offer.Values["displayName"],
+			ProviderRef:  ref,
+			APIKey:       o.publishedSecret(providerID, contract, offer, requires),
+			Path:         offer.Values["path"],
+			CalendarName: offer.Values["calendarName"],
 		})
 	default:
 		// Contracts with no payload (proxy, database) need no consumer input

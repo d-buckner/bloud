@@ -177,6 +177,11 @@ func NewRouter(
 	pub.Get("/auth/login", mods.auth.LoginHandler())
 	pub.Get("/auth/callback", mods.auth.CallbackHandler())
 	pub.Post("/auth/logout", mods.auth.LogoutHandler())
+	// The per-app waiting page. It is public because Traefik's error middleware
+	// fetches it on behalf of a visitor to an app whose container is down,
+	// before that visitor has a Bloud session, and because the page polls it
+	// again to find out when the app is serving.
+	pub.Get("/bloud-loading/{name}", mods.apps.AppLoadingHandler())
 
 	mods.registerRoutes(r)
 

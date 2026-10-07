@@ -159,6 +159,36 @@ rather than a conflict to resolve, and items the feed does not have are
 removed. That is what makes the sync never produce a conflict nobody is around
 to settle.
 
+### Who names the collection
+
+A feed's collection is called what the provider declared under
+`icsFeed.values.calendarName` (Radarr: `Movies`, Sonarr: `Shows`), and Bloud
+creates it, not the sync sidecar.
+
+That is the whole story of why. pimsync cannot set a target display name: its
+webcal storage rejects `display_name`, and the property it does carry as a
+synced value never arrives, because an anonymous ICS document has no display
+name to sync. A collection Radicale creates for itself derives one from the
+path. Both of those land the user in a calendar app reading
+`calendar-service/radarr`, which is the internal service account showing up
+in the thing a family member actually looks at.
+
+The one shape that sticks is a `MKCALENDAR` whose body carries
+`<D:set><D:prop><D:displayname>`. `ensureFeedCalendars` issues it in
+`PostStart` as the calendar-service owner, the same call that makes the
+shared calendar read "Family", and the sidecar then syncs into a collection
+it did not create.
+
+Pre-creating also closes a smaller gap. The share row for a provider renders
+as soon as the provider is installed, and the collection used to appear only
+when the feed produced its first non-empty event. Every user had a calendar
+mounted that pointed at nothing until then.
+
+`calendarName` is validated as a single path segment at load time, because it
+is concatenated into a location. Two providers picking the same name is a
+load error too: the name addresses one collection in one shared tree, and a
+collision in a tree is invisible in each app's own metadata.
+
 ### Why the container runs a sync loop instead of the daemon
 
 `pimsync daemon` with zero configured pairs exits immediately with an error,
@@ -338,7 +368,7 @@ server side: the storage section is Radicale's own `multifilesystem` backend
 with no trace of the retired plugin, and the sharing database is re-rendered on
 every pass.
 `services/host-agent/internal/engine/orchestrator/integration_bindings_test.go`
-asserts the `icsFeed` binding carries the address, path, display name, and the
+asserts the `icsFeed` binding carries the address, path, calendar name, and the
 key only when the consumer required it.
 
 ## Image provenance

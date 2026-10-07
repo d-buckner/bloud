@@ -15,8 +15,15 @@ import (
 )
 
 // Call is one declared HTTP request. Build it with a verb method on Client,
-// add modifiers, then terminate with Do / DoInto / Ensure / Wait. A Call is a
-// value builder; it is not executed until a terminal method is called.
+// add modifiers, then terminate with Do / DoInto / Ensure / Exec / Stream, or
+// turn it into a readiness poll with Wait. A Call is a value builder; it is
+// not executed until a terminal method is called.
+//
+// Everything a Call carries is request-shaped: the verb, the target, the body,
+// the auth position, the per-request deadline, and the outcome contract. The
+// fields a readiness poll needs on top of a request (predicate, cadence,
+// stability, failure tolerance, total budget) live on Wait, not here, so
+// reading a plain call does not require holding the wait state machine.
 type Call struct {
 	c      *Client
 	method string
@@ -28,12 +35,9 @@ type Call struct {
 	headers     map[string]string
 
 	timeoutOverride time.Duration
-	// budgetErr records a declared wait budget the framework cannot honor.
-	// Wait surfaces it instead of letting the wait be truncated in silence.
-	budgetErr    error
-	anonymous    bool
-	buildErr     error
-	tokenRetried bool
+	anonymous       bool
+	buildErr        error
+	tokenRetried    bool
 
 	// Outcome contract (where idempotency is declared).
 	okStatuses       []int
@@ -43,15 +47,9 @@ type Call struct {
 	noRetry          bool
 	declaredContract bool
 
-	// Wait mode.
-	ready            ReadyFunc
-	interval         time.Duration
-	stable           int
-	tolerateFailures bool
-
-	// retryOverride replaces the client's retry policy for this call only.
-	// Used by waits that need a different attempt cap than the client
-	// default (e.g. a short bounded check vs a long readiness poll).
+	// retryOverride replaces the client's retry policy for this call only,
+	// bounding the transient retries of a plain call. A wait's own policy
+	// lives on Wait.
 	retryOverride *RetryPolicy
 }
 
@@ -120,35 +118,13 @@ func (x *Call) Header(k, v string) *Call {
 
 // Timeout sets the per-request deadline for this call: how long a single HTTP
 // exchange may take before it is written off. It is not a wait budget; for the
-// total time a readiness poll may spend, use Within.
+// total time a readiness poll may spend, use Wait.Within.
 //
 // The deadline applies to each attempt separately. Exceeding it is a transient
 // failure, never a terminal one: the caller's own context owns whether the call
 // or wait is over, so one slow poll iteration cannot end a readiness wait.
 func (x *Call) Timeout(d time.Duration) *Call {
 	x.timeoutOverride = d
-	return x
-}
-
-// Within sets the total elapsed budget of a readiness wait, the wall-clock
-// ceiling across all of its polls. It is the counterpart to Timeout, which
-// bounds one request: `Timeout(10s) + Within(5m)` means "each probe may take
-// ten seconds, and the whole wait may take five minutes".
-//
-// It sets the policy Deadline, so it composes with WithRetry and Interval.
-// A value above MaxWaitBudget is reported at Wait time rather than being
-// silently truncated by the framework's own PostStart ceiling.
-func (x *Call) Within(d time.Duration) *Call {
-	if x.retryOverride == nil {
-		wp := WaitPolicy
-		x.retryOverride = &wp
-	}
-	x.retryOverride.Deadline = d
-	if d > MaxWaitBudget {
-		x.budgetErr = fmt.Errorf(
-			"%s: wait budget %s exceeds MaxWaitBudget %s: the framework cancels PostStart at that ceiling, so this wait could never expire on its own",
-			x.c.name, d, MaxWaitBudget)
-	}
 	return x
 }
 
@@ -193,10 +169,9 @@ func (x *Call) NoRetry() *Call {
 	return x
 }
 
-// WithRetry overrides the retry policy for this call. In wait mode it bounds
-// the total poll attempts / deadline; for a plain call it bounds the
-// transient retries. Lets one client serve both a short bounded check and a
-// long readiness poll.
+// WithRetry overrides the retry policy for this call, bounding its transient
+// retries. A readiness wait has its own WithRetry on Wait, which bounds the
+// total poll attempts and deadline rather than the retries of one request.
 func (x *Call) WithRetry(p RetryPolicy) *Call {
 	cp := p
 	x.retryOverride = &cp
@@ -263,14 +238,14 @@ type result struct {
 }
 
 // retriesAllowed implements the verb retry policy (D3): GET/HEAD retry by
-// default; a mutating verb retries only when it declares an outcome contract
-// or is a wait.
+// default; a mutating verb retries only when it declares an outcome contract.
+//
+// Waits do not consult this. A wait retries whatever it can keep polling on and
+// owns its own attempt and deadline budget, which is why the old "or is a wait"
+// arm has no counterpart here.
 func (x *Call) retriesAllowed() bool {
 	if x.noRetry {
 		return false
-	}
-	if x.ready != nil {
-		return true
 	}
 	switch x.method {
 	case http.MethodGet, http.MethodHead:
@@ -422,7 +397,9 @@ func (x *Call) run(ctx context.Context) (result, error) {
 			return result{}, err
 		}
 		attempt++
-		res, err := x.attemptOnce(ctx, attempt)
+		// nil predicate: this is a plain call, not a wait probe, so the body
+		// is read to EOF rather than to the first acceptable chunk.
+		res, err := x.attemptOnce(ctx, attempt, nil)
 		if err == nil {
 			return res, nil
 		}

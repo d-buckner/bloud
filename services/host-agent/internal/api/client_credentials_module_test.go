@@ -219,8 +219,10 @@ func TestRotateReplacesTheValueAndAsksForConvergence(t *testing.T) {
 		"the snippet must carry the new value, not the old one")
 	assert.NotContains(t, rec.Body.String(), ccSecret)
 
-	require.Len(t, orch.intents, 1, "rotate must submit exactly one intent")
-	assert.Equal(t, fmt.Sprintf("%T", orchestrator.ReconcileIntent{}), orch.intents[0],
+	require.Len(t, orch.intents, 2, "rotate must submit a revoke intent and a reconcile intent")
+	assert.Equal(t, fmt.Sprintf("%T", orchestrator.RevokeClientSessionsIntent{}), orch.intents[0],
+		"rotate must revoke sessions first, before the reconcile")
+	assert.Equal(t, fmt.Sprintf("%T", orchestrator.ReconcileIntent{}), orch.intents[1],
 		"rotate must ask for a reconcile so the resync recreates the container")
 }
 
@@ -254,8 +256,10 @@ func TestRotateIsHonestAboutSessions(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
-	assert.Equal(t, true, payload["sessionsSurvive"],
-		"v1 rotation does not end live sessions, and the API must say so")
+	assert.Equal(t, true, payload["endsAllSessions"],
+		"rotation ends every live session, and the API must say so")
+	assert.NotContains(t, rec.Body.String(), "sessionsSurvive",
+		"the old field must not linger: it said the opposite of what rotate now does")
 }
 
 // TestRotateRotatedValueIsRevealableOnce proves the once counter follows the

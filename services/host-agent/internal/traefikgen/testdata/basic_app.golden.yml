@@ -7,7 +7,17 @@ http:
     miniflux:
       rule: "HostRegexp(`^miniflux\\.`)"
       priority: 200
+      middlewares:
+        - miniflux-loading
       service: miniflux
+
+  middlewares:
+    miniflux-loading:
+      errors:
+        status:
+          - "502-504"
+        service: host-agent
+        query: /bloud-loading/miniflux
 
   services:
     miniflux:

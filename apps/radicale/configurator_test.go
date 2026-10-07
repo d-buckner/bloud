@@ -342,7 +342,7 @@ func TestPostStartRestartsWhenSharesChange(t *testing.T) {
 		dataPath, "collections", sharesDirName, sharesFileName,
 	))
 	require.NoError(t, err)
-	assert.Contains(t, string(sharing), "/"+calendarOwner+"/radarr/")
+	assert.Contains(t, string(sharing), "/"+calendarOwner+"/Movies/")
 	assert.Contains(t, string(sharing), ";alice;")
 
 	// Steady state: an unchanged share list must not restart the container.
@@ -384,9 +384,9 @@ func feedBinding() configurator.ICSFeedBinding {
 			Port:      7878,
 			BaseURL:   "http://apps-radarr:7878",
 		},
-		APIKey:      "abc123",
-		Path:        "/feed/v3/calendar/Radarr.ics",
-		DisplayName: "Radarr Movies",
+		APIKey:       "abc123",
+		Path:         "/feed/v3/calendar/Radarr.ics",
+		CalendarName: "Movies",
 	}
 }
 

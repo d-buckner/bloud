@@ -14,6 +14,47 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
+// deprovisionAppSSO removes the identity-provider objects Bloud created for
+// an app on install: its application and, for the strategies that own one,
+// the OAuth2/proxy provider behind it.
+//
+// The strategy is read from the store rather than the catalog. The catalog
+// entry can be refreshed or gone by the time an uninstall converges (a Bloud
+// upgrade between install and uninstall is the normal case), while the stored
+// strategy is the record of what was actually provisioned. It is the same
+// value reconcileSSOStrategy maintains for the strategy-change path.
+//
+// An app that never provisioned anything (no strategy recorded, "none", or no
+// SSO configured at all) is a no-op, so this is safe on every uninstall.
+func (o *Orchestrator) deprovisionAppSSO(ctx context.Context, app *store.InstalledApp) error {
+	if o.sso == nil || o.appStore == nil {
+		return nil
+	}
+	stored, err := o.appStore.GetSSOStrategy(app.CatalogID)
+	if err != nil {
+		return fmt.Errorf("reading stored SSO strategy: %w", err)
+	}
+	if stored == "" || stored == "none" {
+		return nil
+	}
+	// The provider's name embeds the display name the app was provisioned
+	// with, so prefer the catalog's, which is the value ensureSSO passed, and
+	// fall back to the store's when the catalog entry is gone. This only feeds
+	// the name-based fallback in DeleteAppSSO: the primary lookup there is by
+	// application slug, which is why a renamed app cannot strand a provider.
+	displayName := app.DisplayName
+	if o.catalog != nil {
+		if cat, cerr := o.catalog.Get(app.CatalogID); cerr == nil && cat != nil {
+			displayName = cat.DisplayName
+		}
+	}
+	if err := o.sso.Deprovision(ctx, app.CatalogID, displayName, stored); err != nil {
+		return fmt.Errorf("deprovisioning %s SSO: %w", stored, err)
+	}
+	o.logger.Info("uninstall: deprovisioned app SSO", "app", app.CatalogID, "strategy", stored)
+	return nil
+}
+
 // RemoveApp calls a configurator's optional Remover.Remove for the named app
 // (when one is registered and implements teardown), removes containers, then
 // deletes graph node(s).

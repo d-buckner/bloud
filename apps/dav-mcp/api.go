@@ -60,13 +60,11 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *mcpAPI {
 func (a *mcpAPI) waitServing(ctx context.Context, bearer string) error {
 	call := a.cl.POST(mcpEndpoint).
 		Body([]byte(initializeRequest), "application/json").
-		Header("Accept", acceptStreams).
-		Within(30 * time.Second).
-		Ready(mcpHandshakeOK)
+		Header("Accept", acceptStreams)
 	if bearer != "" {
 		call = call.Header("Authorization", "Bearer "+bearer)
 	}
-	return call.Wait(ctx)
+	return call.Wait(mcpHandshakeOK).Within(30 * time.Second).Do(ctx)
 }
 
 // mcpHandshakeOK reports whether the response is a successful MCP `initialize`

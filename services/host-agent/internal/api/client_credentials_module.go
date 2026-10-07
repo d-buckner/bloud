@@ -256,24 +256,29 @@ func (e *notFound) Error() string { return e.msg }
 
 func notFoundf(format string, args ...any) error { return &notFound{msg: fmt.Sprintf(format, args...)} }
 
-// rotateHandler mints a new value and asks the orchestrator to converge so the
-// app picks it up.
+// rotateHandler mints a new value and asks the orchestrator to revoke every
+// live session and then converge, so the app picks the new value up with an
+// emptied session store.
 //
-// It does not restart the container itself. The API submits a reconcile intent
-// and the orchestrator's resync re-runs PreStart, which renders a different
-// config file, reports RestartNeeded, and recreates the container. That is the
-// same path any config change takes, and it is what keeps invariant 1 true: the
-// API writes a credential into the store and asks for convergence, it does not
-// touch a container.
+// It does not restart the container itself. The API submits a revoke intent
+// followed by a reconcile intent, and the orchestrator's resync clears the
+// session store before PreStart renders the new config file, reports
+// RestartNeeded, and recreates the container once. Rotation is therefore
+// revoke-then-issue: the old sessions are gone before the new credential
+// authenticates anything, so a credential that leaked cannot keep a stolen
+// device connected across the rotate. That is the same path any config change
+// takes, and it is what keeps invariant 1 true: the API writes a credential
+// into the store and asks for convergence, it does not touch a container.
 //
 // The new value is returned in the response. A rotate that did not show the new
 // value would be unusable under `reveal: once`, because the only way to see a
 // credential is to reveal it and a fresh one has never been revealed.
 //
-// What rotate does NOT do is end live sessions. The app signs sessions with its
-// own persisted key and records no binding to the credential that minted them,
-// so a client signed in before the rotate keeps working until its TTL. That is
-// the gap the pilot plan records as the follow-up "rotation should revoke".
+// Rotation ends live sessions. The app signs sessions with its own persisted
+// key and records no binding to the credential that minted them, so there is
+// no way to revoke a rotated credential against the sessions that used it;
+// clearing the whole store is the only mechanism, and a rotate that left
+// sessions alive would be a rotate that did not revoke.
 func (m *clientCredentialsModule) rotateHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		appName := chi.URLParam(r, "name")
@@ -308,24 +313,25 @@ func (m *clientCredentialsModule) rotateHandler() http.HandlerFunc {
 			return
 		}
 
-		// Ask for convergence so the resync re-renders the app's config and
-		// recreates the container. Without this the new value sits in the store
-		// while the app keeps authenticating the old one.
 		if m.orch != nil {
+			// Revoke first, then reconcile. The resync runs the session-store
+			// clear before PreStart, so the recreate that installs the new value
+			// comes back with no live sessions.
+			m.orch.Submit(orchestrator.NewRevokeClientSessionsIntent(appName))
 			m.orch.Submit(orchestrator.NewReconcileIntent())
 		}
 
 		m.logger.Warn("client credential rotated",
 			"app", appName,
 			"secret", secretName,
-			"sessionsSurvive", true,
+			"endsAllSessions", true,
 			"remote", r.RemoteAddr)
 
 		respondJSON(w, http.StatusOK, map[string]any{
 			"secret":          secretName,
 			"value":           value,
 			"snippet":         m.renderSnippet(access.Snippet, appName, value),
-			"sessionsSurvive": true,
+			"endsAllSessions": true,
 		})
 	}
 }

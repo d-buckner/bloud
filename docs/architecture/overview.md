@@ -189,6 +189,27 @@ health answers on its own merits from `checkSystemHealth`
 (`internal/api/server.go`): database reachable and the intent loop alive, else
 503 `{"status":"unhealthy"}`.
 
+**An app that is down gets its own waiting page.** The bootstrap gate covers
+Bloud's own catch-all. It does not cover an app domain: `<app>.<domain>` has a
+router of its own, and while the app's container is down during a reconcile, a
+restart, or a crash, that router points at nothing and Traefik answers with a
+raw Bad Gateway. Every routable app therefore gets an `errors` middleware
+(`internal/traefikgen/generator.go`) over the 502-504 range that hands the
+request to host-agent's `GET /bloud-loading/{name}`
+(`internal/api/app_loading.go`), which renders the app's icon, names the app,
+and polls its own URL until the app answers for itself.
+
+Two choices in that chain are load-bearing. The middleware covers 502-504 and
+not 500: those three are "the upstream did not answer", which is what a
+reconciling container produces, while a 500 is the app answering and disliking
+the request, and hiding it behind a page that promises a reload would be a
+lie. And the icon is inlined as a data URI rather than linked, because the
+icon's usual route lives under Bloud's API host and on the app's own domain
+the app's router outranks it, so an `<img>` would point at the very container
+that is not answering. The status the visitor sees stays the upstream's own
+5xx; only the body and headers are replaced, so nothing caches a 200 that is
+really a wait.
+
 ### Configurator Framework (`pkg/configurator/`)
 
 Generic interface for app-specific runtime configuration that can't be expressed in
@@ -236,13 +257,17 @@ code never touches raw `net/http` or hand-rolls downloads, waits, or retries:
 - **`pkg/appclient`**: a typed HTTP surface. A `Client` (built from `deps.HTTP`,
   a shared-transport factory) issues `Call`s with a verb and exactly one
   terminal: `Do` (raw body), `DoInto` (JSON decode), `Ensure` (idempotent
-  create-or-verify), or `Wait` (poll a readiness predicate until ready/deadline).
-  Retries with backoff, per-request timeouts, declarative outcome contracts
-  (`OK`/`AlreadyDone`), auth (`TokenSpec` with 401 refresh covering every header
-  dialect), and "still booting / already done" handling live here rather than in
-  each app. Each configurator phase is bounded by the orchestrator's
-  `AppPhaseBudget` (default 5m per phase, `configurator.PhaseBudget`);
-  configurators use the passed ctx directly and never detach with
+  create-or-verify), `Exec` (side effect only), or `Stream` (hand the body to
+  a reader). Readiness polling is a separate value built from a call,
+  `Call.Wait(predicate)`, which carries the poll-only knobs (`Interval`,
+  `Within`, `Stable`, `TolerateFailures`) and terminates with `Do(ctx)`; a
+  `Call` itself carries no wait state. Retries with backoff, per-request
+  timeouts, declarative outcome contracts (`OK`/`AlreadyDone`), auth
+  (`TokenSpec` with 401 refresh covering every header dialect), and "still
+  booting / already done" handling live here rather than in each app. Each
+  configurator phase is bounded by the orchestrator's `AppPhaseBudget`
+  (default 5m per phase, `configurator.PhaseBudget`); configurators use the
+  passed ctx directly and never detach with
   `context.Background()`/`WithoutCancel`.
 - **`pkg/appasset`**: static-file install. `deps.Assets.Install(ctx, Asset{…})`
   sources bytes remotely, from `go:embed`, or locally into a content-addressed
@@ -265,6 +290,22 @@ configurators.
 Manages the Authentik identity provider via its REST API. Key operations:
 `EnsureLDAPInfrastructure`, `EnsureBloudOAuthApp` (idempotent OIDC bootstrap), SSO
 provisioning, and forward-auth provider creation.
+
+`DeleteAppSSO` is the uninstall counterpart: it removes the application and the
+per-app provider the strategy created (`native-oidc` → OAuth2 provider,
+`forward-auth` → proxy provider; `ldap` and `none` own none). It deletes the
+provider **before** the application on purpose, because deleting the application
+clears the `assigned_application_slug` link the lookup reads.
+
+That link is also why the cleanup survives a rename. A provider's *name* embeds
+the app's display name, so keying the delete on the name strands the credential
+whenever the catalog renames an app: the search asks for a string nothing
+produces any more, finds nothing, and reports success. The application link
+carries the catalog ID, which cannot change, so it is the primary key and the
+name-based delete is only a fallback for a provider Bloud did not create.
+`convergeUninstalls` calls it with the strategy read from the store, which is
+the record of what was provisioned; the catalog entry may be refreshed or gone
+by the time an uninstall converges.
 
 ### App Store (`internal/store/`)
 

@@ -78,43 +78,43 @@ permanently unshowable.
 
 ## Rotate and revoke are different operations
 
-This is the part most likely to be gotten wrong, and the reason they are
-separate controls rather than one button.
+This is the part most likely to be gotten wrong, and the reason they are two
+controls even though rotation also ends sessions.
 
 **Rotate** changes what authenticates future sign-ins. It mints a new value,
-stores it, and submits a reconcile intent; the resync re-runs `PreStart`,
-renders a different config file, reports `RestartNeeded`, and recreates the
-container. The API never touches a container, so the orchestrator stays the
-single writer of side effects.
+stores it, and submits a revoke intent followed by a reconcile intent; the
+resync clears the session store before `PreStart` renders the new config file,
+reports `RestartNeeded`, and recreates the container once. The API never
+naturally touches a container, so the orchestrator stays the single writer of
+side effects.
 
-**Rotate does not end live sessions.** A session is signed under the app's own
+**Rotate also ends live sessions.** A session is signed under the app's own
 persisted key and its stored record carries no reference to the credential that
-created it. There is nothing to join a revoked credential against. The response
-carries `sessionsSurvive: true` so the UI cannot quietly render a rotate as a
-lockout.
+created it, so there is no way to revoke a rotated credential against only the
+sessions that used it. Clearing the whole store is the only mechanism, and a
+rotate that left sessions alive would be a rotate that did not revoke. The
+response carries `endsAllSessions: true` so the UI can render the confirm
+honestly.
 
-**Revoke** ends every live session. `POST .../revoke` submits a
-`RevokeClientSessionsIntent`; the orchestrator calls the configurator's
-`RevokeSessions` through the container exec channel and forces a recreate,
-because the app loaded its sessions into memory at boot and never re-reads the
-file while it runs. The response is 202: the request is not the effect.
+**Revoke** ends every live session without changing the credential.
+`POST .../revoke` submits a `RevokeClientSessionsIntent`; the orchestrator
+calls the configurator's `RevokeSessions` through the container exec channel
+and forces a recreate, because the app loaded its sessions into memory at boot
+and never re-reads the file while it runs. The response is 202: the request is
+not the effect.
 
 | | Rotate | Revoke |
 |---|---|---|
 | New sign-ins with the old value | Rejected | Unchanged |
-| Sessions already running | **Keep working** until TTL | **End** |
-| Use it when | You want a new value | A device must be locked out now |
+| Sessions already running | **End** | **End** |
+| Use it when | You want a new value and a clean slate | A device must be locked out now, keep the password |
 
 ## Why `reveal: once` is survivable
 
-It is survivable only because of the rotate property above. Lose the password
-and the phone keeps working, because its session is signed with the app's
-signing key rather than derived from the password. Need a second device and
-cannot recall the password: rotate, take the new pair, and the first device is
-undisturbed.
-
-Without that independence, reveal-once would be a trap: losing the password
-would mean losing the device.
+It is survivable because the recovery path is rotate, not reveal. Lose the
+password and rotate: you get a new value you can show, and every device signs
+in again with it. That is the price of a one-time reveal, and it is the reason
+rotate says it will log everyone out before it does.
 
 ## `reveal: always` is gated on open debt
 
@@ -135,5 +135,5 @@ with OIDC and a phone signs in with a Bloud-minted password.
 |---|---|---|
 | GET | `/api/apps/{name}/client-credentials` | Descriptors only, never a value |
 | POST | `/api/apps/{name}/client-credentials/{secret}/reveal` | Value and snippet, admin only |
-| POST | `/api/apps/{name}/client-credentials/{secret}/rotate` | New value, 200 with `sessionsSurvive` |
+| POST | `/api/apps/{name}/client-credentials/{secret}/rotate` | New value, 200 with `endsAllSessions` |
 | POST | `/api/apps/{name}/client-credentials/{secret}/revoke` | 202 with `endsAllSessions` |

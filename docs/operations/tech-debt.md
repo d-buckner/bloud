@@ -287,7 +287,7 @@ so "risk×cheapness" here means "how much do they slow the next change".
 | 30 | ~~The invariant "a running app is never downgraded to `installing`" is enforced by two orchestrator callers, each with its own guard and comment, because `AppStore.Install` unconditionally sets `status='installing'` on conflict~~ **FIXED 2026-10-04**: `Install` preserves the running status via a `CASE` in the `ON CONFLICT`; `TestAppStore_Install_RunningAppNotDowngraded` pins it at the store (#205) | P2→closed | `store/apps.go` `Install` |
 | 31 | `AppStoreInterface` is a 15-method single interface consumed by the orchestrator and the API layer, which use different subsets; method names leak table columns rather than caller intent. **DEFERRED 2026-10-04**: the interface is consumed by 7+ modules (orchestrator + apps/home/system/settings) with overlapping subsets, so a clean two-role split does not emerge; forcing one adds churn without a consumer benefit. Revisit only if it grows | P3 | `store/interfaces.go` `AppStoreInterface` |
 | 32 | ~~Store statuses/phases are bare strings compared to literals throughout, while the graph layer already has a typed status; a typo in a status literal is a silent non-convergence~~ **FIXED 2026-10-04**: `apps.status` is now `store.AppStatus` with a closed set of five values (`store/status.go`); `TestAppStatusClosedSet` pins the set. Operation type/phase/status were already typed constants (#203) | P2→closed | `store/status.go`; `store/apps.go` `InstalledApp.Status`; `store/apps.go` `UpdateStatus` |
-| 33 | `appclient.Call` is one struct carrying three modes: plain request, declared-idempotency request, and readiness wait: with fields inert in the modes they do not serve (`ready`/`interval`/`stable`/`tolerateFailures`/`Within`) and invariants spanning modes (`retriesAllowed` reasons over `ready`/`noRetry`/`declaredContract`/verb at once). Split wait mode into a `Wait` builder that wraps a plain `Call` | P3 | `pkg/appclient/call.go` |
+| 33 | ~~`appclient.Call` is one struct carrying three modes: plain request, declared-idempotency request, and readiness wait: with fields inert in the modes they do not serve (`ready`/`interval`/`stable`/`tolerateFailures`/`Within`) and invariants spanning modes (`retriesAllowed` reasons over `ready`/`noRetry`/`declaredContract`/verb at once)~~ **FIXED 2026-10-06**: wait mode is a `Wait` builder over a plain `Call` (`GET(p).Wait(pred).Interval(2s).Within(4m).Do(ctx)`). `Call` carries no wait-only field; the predicate is a required argument of `Call.Wait`, so the "wait with no predicate" runtime error is now a compile error. The idempotency contract (`OK`/`AlreadyDone`/`Ensure`) stays on `Call`, since both the plain and the wait path use it | P3→closed | `pkg/appclient/waits.go` |
 | 34 | The operation recorder keys its row on the owning app (`ownerApp(id)`), one row per app, while `processLevel` dispatches nodes concurrently: so N nodes of a multi-container app contend on one `UPDATE … WHERE app_name=?`. Item 5's `busy_timeout` fix made writes wait instead of fail, but the unit-of-work mismatch and the arbitrary-survivor ambiguity remain. Key per node and aggregate to the app at read time | P2 | `orchestrator/operation_recorder.go:79` `recordOpPhase`; `orchestrator/container_health.go:22` `ownerApp`; `orchestrator/levels.go` `processLevel` |
 | 35 | The provider set still has one copy outside the shared helper: `cli/depgraph_edges.go` `drawnProviders` re-implements it for the README generator, because `cli` is a separate Go module that deliberately parses `metadata.yaml` itself and does not import host-agent. Inside host-agent the rule is now one function (`catalog.DeclaredProviders`, added for #233), read by the resolver, `computeAppDeps`, and the developer graph, with the defunct choice machinery deleted rather than patched. The CLI copy agrees today and is tested, but it is not the same code, so the #227 and #233 divergence can still happen in one and not the other. Repaying it means either giving `cli` a shared catalog module or generating the README from a host-agent-produced `--json` snapshot instead of a second parser | P3 | `catalog/resolution.go`; `cli/depgraph_edges.go` |
 
@@ -355,7 +355,7 @@ registry rather than this table, so the table cannot hide an app.
   `Secrets.GenerateAppAdminPassword`, with a login fast path before a first-run
   create.
 - Declared idempotency (`AlreadyDone`, `AlreadyDoneFunc`, `Ensure`) and
-  declared readiness (`Ready(...).WithRetry(...).Wait(ctx)`).
+  declared readiness (`Wait(pred).WithRetry(...).Do(ctx)`).
 - SSO knowledge split at the provider and consumer boundary: `internal/sso`
   derives the client credentials and redirect URIs and provisions Authentik;
   the configurator only consumes the typed `LDAPOutput`/`OIDCOutput` in
@@ -766,8 +766,8 @@ recreate are gone (the conformance harness caught the mismatch against the
 real manifest).
 
 The appclient half closed the same day. `Call.Timeout` is honored as a
-per-request deadline, `Ready()` defaults to `WaitPolicy` as its own doc
-always claimed, and the total wait budget is a distinct `Within(d)`. The
+per-request deadline, the readiness wait defaults to `WaitPolicy` as its own
+doc always claimed, and the total wait budget is a distinct `Within(d)`. The
 choice between "honor it" and "delete it and fail loudly" turned out not to
 be binary: honoring `Timeout` needed a second method anyway, because
 "how long one probe may take" and "how long the whole wait may take" are
@@ -782,7 +782,7 @@ AFFiNE and Hermes all declared a five-minute budget that did nothing about
 it. The ceiling is now single-sourced (`configurator.PhaseBudget` == the
 orchestrator's `DefaultAppPhaseBudget`, 5m per configurator phase) and the
 harness refuses a declared wait that could not run inside it. `MaxWaitBudget`
-(10m) remains the library ceiling on any single `Within()` wait.
+(10m) remains the library ceiling on any single `Wait.Within()` wait.
 
 ### 4. Durability substrate (P1, item 5): DONE 2026-09-20 (PR 7)
 

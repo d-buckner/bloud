@@ -599,7 +599,7 @@ combined with instance/SSH-target env vars). Instance overrides:
    the single writer: a wedged `PreStart` -- a hung `podman exec`, a
    black-holed app API -- would otherwise hold every install, uninstall, and
    address change queued behind it with nothing to cut it off. An app's
-   declared `appclient.Within` wait must fit inside that budget with room to
+   declared `appclient` `Wait.Within` budget must fit inside that budget with room to
    spare, and `apps/configtest/waitbudget_test.go` fails the build if it does
    not. The resync is
    withheld when a direct dependency is in `ERROR`. Because the resync can
@@ -637,7 +637,13 @@ combined with instance/SSH-target env vars). Instance overrides:
    page (and 503 for `/api` and `/health`) until the orchestrator reports
    ready, so a browser hitting Traefik during bootstrap sees the page instead
    of a 502. The
-   orchestrator manages user apps only.
+   orchestrator manages user apps only. That page covers Bloud's own catch-all
+   and nothing else: an app domain has its own router, so every routable app
+   also gets a Traefik `errors` middleware over 502-504 pointing at
+   `GET /bloud-loading/{name}` (`internal/api/app_loading.go`), which shows
+   that app's icon and name and reloads once the app serves again. A 500 is
+   deliberately outside the range: that is the app answering, not an app that
+   is coming back.
 6. **SSO strategies** are exactly: `native-oidc`, `ldap`, `forward-auth`, `none`
    (Immich + AFFiNE + Hermes + Paperless-ngx: native-oidc, Jellyfin: ldap,
    Navidrome: forward-auth). `none` means the app does not join the identity
@@ -875,11 +881,14 @@ combined with instance/SSH-target env vars). Instance overrides:
 
 - Public: `GET /health`, `GET /auth/login`, `GET /auth/callback`,
   `POST /auth/logout`, `GET /api/health`, `GET /api/setup/status`,
-  `GET /api/auth/me`, plus the public system-info router.
+  `GET /api/auth/me`, `GET /bloud-loading/{name}` (the per-app waiting page
+  Traefik's error middleware serves while an app is down), plus the public
+  system-info router.
 - Until the first convergence pass finishes, `/api/*` and the root `/health`
   probe answer 503 `{"error":"starting"}` (`bootstrapGate`,
-  `internal/api/loading.go`); `/fonts/` and `/favicon.*` pass through so the
-  waiting page renders in the brand. A 200 from `GET /api/health` means the
+  `internal/api/loading.go`); `/fonts/`, `/favicon.*`, and `/bloud-loading/`
+  pass through so the waiting pages render in the brand. A 200 from
+  `GET /api/health` means the
   gate is open, **not** that SSO came up: `close(o.ready)` fires when the first
   convergence pass *returns*, and `converge` reports no error. Confirm with
   `GET /api/setup/status`, whose `authentikReady` is a live probe of the

@@ -51,6 +51,12 @@ type ValueSpec struct {
 	// omitted optional value reads as an empty field on the binding, never as
 	// an error.
 	Optional bool
+	// PathSegment requires a value that is safe to use verbatim as one URL
+	// path segment: no separator, no whitespace, no traversal. Set it on a
+	// value the consumer concatenates into a *location* rather than reads as
+	// a label, because that is where a declared `../..` stops being a typo and
+	// becomes a way out of the tree it was meant to live in.
+	PathSegment bool
 }
 
 // contracts is the integration vocabulary. Order is not significant.
@@ -79,15 +85,21 @@ var contracts = []Contract{
 	// and the storage plugin that stands in for one, cannot set an X-Api-Key
 	// header.
 	//
-	// `displayName` is the name the consumer gives the collection it creates
-	// for the feed. It is a provider fact (Radarr's calendar is "Radarr
-	// Movies"), not something a consumer can derive from the app id.
+	// `calendarName` is the collection the consumer creates for the feed, and
+	// one declaration covers both halves of it: the collection's path segment
+	// and the display name a calendar client shows. Naming them separately is
+	// how the two get edited apart.
+	//
+	// It is a provider fact and not something the consumer may derive from the
+	// app id. Naming the collection after the app is what produced
+	// `calendar-service/radarr` in a family member's calendar: the internal
+	// service account leaking into the thing a person actually reads.
 	{
 		Name:    "icsFeed",
 		Secrets: []string{"apiKey"},
 		Values: []ValueSpec{
 			{Key: "path", AbsolutePath: true},
-			{Key: "displayName"},
+			{Key: "calendarName", PathSegment: true},
 		},
 	},
 

@@ -4,12 +4,15 @@ package catalog
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/slug"
 )
 
 // Loader handles loading app definitions from YAML files
@@ -53,7 +56,35 @@ func (l *Loader) LoadAll() (map[string]*App, error) {
 		apps[app.CatalogID] = app
 	}
 
+	if err := validateSharedNamespaces(apps); err != nil {
+		return nil, err
+	}
+
 	return apps, nil
+}
+
+// validateSharedNamespaces catches the collisions that only exist once more
+// than one app is on the table.
+//
+// An icsFeed `calendarName` is not private to the app that declared it: it
+// names one collection in one shared CalDAV tree. Two providers picking the
+// same name is invisible in either app's own metadata and reads at runtime as
+// one feed quietly absorbing another's events, so it has to fail at load
+// rather than surprise somebody later. Per-app validation cannot see this, and
+// neither can the apps' authors, working one file at a time.
+func validateSharedNamespaces(apps map[string]*App) error {
+	owners := map[string]string{}
+	for _, id := range slices.Sorted(maps.Keys(apps)) {
+		name, ok := apps[id].Provides["icsFeed"].Values["calendarName"]
+		if !ok || name == "" {
+			continue // runtime-supplied, or this app provides no feed at all
+		}
+		if prev, taken := owners[name]; taken {
+			return fmt.Errorf("apps %q and %q both declare icsFeed calendarName %q, which names a single collection in the shared calendar tree", prev, id, name)
+		}
+		owners[name] = id
+	}
+	return nil
 }
 
 // loadAppFromFile loads a single app definition from a YAML file
@@ -493,12 +524,27 @@ func validateContractValues(name string, contract Contract, offer ContractProvid
 			}
 			return fmt.Errorf("provides.%s.values must declare %q, which this contract carries (or list it under runtimeValues if the app mints it at runtime)", name, want.Key)
 		}
-		if want.AbsolutePath && !strings.HasPrefix(value, "/") {
-			return fmt.Errorf("provides.%s.values.%s must be an absolute path (got %q)", name, want.Key, value)
+		if err := checkValueShape(name, want, value); err != nil {
+			return err
 		}
 	}
 	if port <= 0 && len(offer.Values) > 0 {
 		return fmt.Errorf("provides.%s declares values that are resolved against the app's address, so the app needs a port", name)
+	}
+	return nil
+}
+
+// checkValueShape applies one ValueSpec's constraints to a declared value. The
+// shape rules live together so adding a third (a pattern, a length) lands in
+// the place a reader looking for "what may a contract value be" already ends
+// up, rather than in whichever loop happens to read the spec.
+func checkValueShape(name string, want ValueSpec, value string) error {
+	if want.AbsolutePath && !strings.HasPrefix(value, "/") {
+		return fmt.Errorf("provides.%s.values.%s must be an absolute path (got %q)", name, want.Key, value)
+	}
+	if want.PathSegment && !slug.IsPathSegment(value) {
+		return fmt.Errorf("provides.%s.values.%s must be usable as a single path segment: no separator, whitespace, or traversal (got %q)",
+			name, want.Key, value)
 	}
 	return nil
 }

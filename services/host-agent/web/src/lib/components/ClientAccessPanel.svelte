@@ -150,9 +150,16 @@
 		const label = labelFor(name);
 		return window.confirm(
 			`End every active session for ${label}?\n\n` +
-				'Every device signed in to this app will be logged out, including yours. ' +
-				'The current password keeps working for new sign-ins: revoking sessions is ' +
-				'not the same as changing it.'
+				'Every device signed in to this app will be logged out, including yours.'
+		);
+	}
+
+	function confirmRotate(name: string): boolean {
+		const label = labelFor(name);
+		return window.confirm(
+			`Rotate the password for ${label}?\n\n` +
+				'Every device signed in to this app will be logged out. You will get a ' +
+				'new password to sign in with.'
 		);
 	}
 
@@ -193,7 +200,7 @@
 				{#if cred.reveal === 'once'}
 					<p class="hint">
 						This password will not be shown again. If you lose it, rotate to get one
-						that can be shown. Devices already signed in keep working.
+						that can be shown. Rotating logs out every signed-in device.
 					</p>
 				{/if}
 			{:else if revealable(cred) && !cred.revealed}
@@ -209,7 +216,12 @@
 
 			<div class="credential-actions">
 				{#if rotateAllowed(cred)}
-					<Button variant="secondary" size="sm" onclick={() => rotate(cred.secret)} disabled={busy !== null}>
+					<Button
+						variant="secondary"
+						size="sm"
+						onclick={() => confirmRotate(cred.secret) && rotate(cred.secret)}
+						disabled={busy !== null}
+					>
 						{busy === cred.secret ? 'Rotating…' : 'Rotate password'}
 					</Button>
 				{/if}
@@ -224,8 +236,8 @@
 			</div>
 
 			<p class="hint">
-				Rotating changes the password for new sign-ins. Sessions already running are
-				not ended by it: use Revoke sessions for that.
+				Rotating revokes every live session and issues a new password. Devices
+				signed in with the old password must sign in again with the new one.
 			</p>
 		</div>
 	{/each}

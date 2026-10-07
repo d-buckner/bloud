@@ -1,0 +1,261 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex" />
+		<!-- Fallback for a browser with scripting off: it cannot poll, so it
+		     reloads blindly and lands in the app whenever the app is back. -->
+		<noscript>
+			<meta http-equiv="refresh" content="5" />
+		</noscript>
+		<title>{{.DisplayName}}: Re-loading</title>
+		<style>
+			/* The Bloud design tokens, copied from
+			   web/src/lib/styles/variables.css. This page is served on the app's
+			   own domain and cannot import the dashboard bundle. */
+			:root {
+				--color-bg: #faf9f6;
+				--color-text: #1c1917;
+				--color-text-muted: #a8a29e;
+				--color-border: #e7e5e4;
+				--font-serif: "Newsreader", Georgia, "Times New Roman", serif;
+				--font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				--space-sm: 0.5rem;
+				--space-lg: 1.5rem;
+				--space-xl: 2rem;
+			}
+
+			/* Self-hosted brand fonts, the same files the dashboard loads. */
+			@font-face {
+				font-family: "Inter";
+				font-style: normal;
+				font-weight: 400 700;
+				font-display: swap;
+				src: url("/fonts/inter-latin.woff2") format("woff2");
+			}
+			@font-face {
+				font-family: "Newsreader";
+				font-style: normal;
+				font-weight: 400 600;
+				font-display: swap;
+				src: url("/fonts/newsreader-latin.woff2") format("woff2");
+			}
+
+			*,
+			*::before,
+			*::after {
+				box-sizing: border-box;
+			}
+
+			html {
+				font-size: 17px;
+			}
+
+			html,
+			body {
+				height: 100%;
+			}
+
+			body {
+				margin: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: var(--color-bg);
+				color: var(--color-text);
+				font-family: var(--font-serif);
+				line-height: 1.6;
+				-webkit-font-smoothing: antialiased;
+				-moz-osx-font-smoothing: grayscale;
+			}
+
+			.boot {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				text-align: center;
+				padding: var(--space-xl);
+				max-width: 26rem;
+			}
+
+			/* The app's own icon, so the page reads as this app rather than as
+			   a generic proxy error. Inlined as a data URI: this page is served
+			   on the app's domain, where the icon's usual route would hit the
+			   app that is not answering. */
+			.app-icon {
+				width: 64px;
+				height: 64px;
+				margin-bottom: var(--space-lg);
+				border-radius: 14px;
+				object-fit: contain;
+			}
+
+			/* Same fallback the dashboard grid uses when an app ships no icon. */
+			.app-letter {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				width: 64px;
+				height: 64px;
+				margin-bottom: var(--space-lg);
+				border-radius: 14px;
+				background: var(--color-border);
+				color: var(--color-text-muted);
+				font-family: var(--font-sans);
+				font-size: 1.75rem;
+				font-weight: 600;
+			}
+
+			/* Indeterminate spinner: the same recipe as the dashboard's
+			   .step-spinner, at hero size. */
+			.spinner {
+				width: 40px;
+				height: 40px;
+				margin-bottom: var(--space-lg);
+				border: 3px solid var(--color-border);
+				border-top-color: var(--color-text);
+				border-radius: 50%;
+				animation: spin 1s linear infinite;
+			}
+
+			h1 {
+				margin: 0 0 var(--space-sm);
+				font-size: 1.25rem;
+				font-weight: 500;
+				line-height: 1.3;
+				letter-spacing: -0.01em;
+			}
+
+			.message {
+				margin: 0;
+				font-family: var(--font-sans);
+				font-size: 0.9375rem;
+				color: var(--color-text-muted);
+			}
+
+			@keyframes spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+
+			/* With motion off the spinner becomes a plain ring: a frozen spinner
+			   reads as broken, a ring does not. */
+			@media (prefers-reduced-motion: reduce) {
+				.spinner {
+					animation: none;
+					border-top-color: var(--color-border);
+				}
+			}
+		</style>
+	</head>
+	<body>
+			<main class="boot">
+			<div class="app-letter" id="app-avatar" aria-hidden="true">{{.Initial}}</div>
+			<div class="spinner" aria-hidden="true"></div>
+			<h1>{{.DisplayName}} is re-loading</h1>
+			<p class="message" id="wait-message" role="status" aria-live="polite">
+				Waiting for {{.DisplayName}} to come back after an integration or
+				configuration change. This page reloads on its own.
+			</p>
+		</main>
+		<script>
+			(function () {
+				"use strict";
+
+				// The page asks the question directly: is this app answering for
+				// itself yet?
+				//
+				// It re-requests its own URL rather than a status endpoint. While
+				// the app is down, Traefik's error middleware serves this page
+				// again, carrying X-Bloud-Loading. The moment the app serves on
+				// its own, that header is gone and the reload lands where the
+				// user meant to go.
+				//
+				// That is the same condition the user cares about, read from the
+				// same place they would read it from, so the page cannot decide
+				// the app is fine while it is still down. The orchestrator's own
+				// node status is a step behind the container, and a status
+				// endpoint would need its own route on a domain whose catch-all
+				// router already points at the app that is not answering.
+				//
+				// The body is cancelled as soon as the headers are read: this
+				// polls every couple of seconds, and pulling down the app's whole
+				// start page each time would be worse than the spinner.
+				var LOADING_HEADER = "X-Bloud-Loading";
+				var POLL_MS = 2000;
+				var timer = null;
+				var finished = false;
+
+				var message = document.getElementById("wait-message");
+
+				// The icon is assigned here rather than written into an <img src>.
+				// html/template filters a URL attribute down to `#ZgotmplZ` when
+				// the scheme is not one it recognises, and `data:` is not on that
+				// list. A JS string literal goes through the JS escaper instead,
+				// which is the context that keeps a display name containing a
+				// quote from turning into script. Without the icon the letter
+				// avatar the markup already renders stays, which is the same
+				// fallback the dashboard grid uses.
+				var APP_ICON = "{{.IconDataURI}}";
+				if (APP_ICON) {
+					var icon = document.createElement("img");
+					icon.className = "app-icon";
+					icon.alt = "";
+					icon.setAttribute("aria-hidden", "true");
+					icon.src = APP_ICON;
+					document.getElementById("app-avatar").replaceWith(icon);
+				}
+
+				function reload() {
+					if (finished) return;
+					finished = true;
+					if (timer) clearTimeout(timer);
+					message.textContent = "{{.DisplayName}} is up. Opening\u2026";
+					// Reload rather than navigate, so a deep link survives the wait.
+					setTimeout(function () {
+						window.location.reload();
+					}, 400);
+				}
+
+				function schedule() {
+					if (!finished) timer = setTimeout(tick, POLL_MS);
+				}
+
+				function tick() {
+					if (finished) return;
+					var ctrl = new AbortController();
+					fetch(window.location.href, {
+						cache: "no-store",
+						credentials: "same-origin",
+						signal: ctrl.signal,
+					})
+						.then(function (res) {
+							var stillWaiting = res.headers.get(LOADING_HEADER);
+							ctrl.abort();
+							if (stillWaiting) {
+								schedule();
+								return;
+							}
+							reload();
+						})
+						.catch(function () {
+							// A cancelled body read, a dropped connection, or an
+							// opaque cross-origin redirect from an app that is
+							// up and wants a login. In the redirect case the
+							// reload follows it to the sign-in page, which is
+							// where the user was headed anyway; in every other
+							// case waiting and asking again is the only useful
+							// move.
+							schedule();
+						});
+				}
+
+				tick();
+			})();
+		</script>
+	</body>
+</html>

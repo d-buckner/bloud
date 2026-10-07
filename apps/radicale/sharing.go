@@ -67,10 +67,7 @@ func renderShares(recipients []string, feeds []configurator.ICSFeedBinding) stri
 	for _, recipient := range shareRecipients(recipients) {
 		b.WriteString(shareRow(recipient, familyCollection, calendarOwner, familyCollection, writableShare))
 		for _, feed := range sortedFeeds(feeds) {
-			if !feedComplete(feed) {
-				continue
-			}
-			b.WriteString(shareRow(recipient, feed.App, calendarOwner, feed.App, readOnlyShare))
+			b.WriteString(shareRow(recipient, feed.CalendarName, calendarOwner, feed.CalendarName, readOnlyShare))
 		}
 	}
 	return b.String()
@@ -138,8 +135,12 @@ func sortedRecipients(recipients []string) []string {
 // installed, addressed, and holding a published key. A share for a feed with
 // no collection behind it is a calendar that shows up empty forever, which
 // reads as a bug in the feed rather than as a feed that is not ready.
+// feedComplete reports whether a binding has everything needed to mount its
+// collection. The calendar name is part of that: it is the collection's path,
+// so a binding without one names nothing and must render no share rather than
+// one pointing at an empty path.
 func feedComplete(feed configurator.ICSFeedBinding) bool {
-	return feed.Installed && feed.APIKey != "" && feed.Path != "" && feed.BaseURL != ""
+	return feed.Installed && feed.APIKey != "" && feed.Path != "" && feed.BaseURL != "" && feed.CalendarName != ""
 }
 
 // calendarRecipients lists the logins that every shared collection is mounted
@@ -239,6 +240,50 @@ func (c *Configurator) ensureFamilyCalendar(ctx context.Context) error {
 	}
 	c.logger.Info("created the shared family calendar", "path", path, "owner", calendarOwner)
 	return nil
+}
+
+// ensureFeedCalendars pre-creates the collection each installed feed projects
+// into, and names it while doing so.
+//
+// Two problems, one function.
+//
+// The display name: pimsync cannot set one. `display_name` is rejected by its
+// webcal storage, and the value it does carry as a synced property never
+// arrives, because an anonymous ICS document has no display name to sync. A
+// collection Radicale creates for itself derives one from the path, which is
+// how `calendar-service/radarr` ended up in a family member's calendar. The
+// `<D:set>` form used here is the one shape that actually sticks, and it is
+// the same one that makes the shared calendar read "Family".
+//
+// The dangling share: the share row for a provider is rendered as soon as the
+// provider is installed, but the collection used to appear only when the feed
+// produced its first non-empty event. Every user had a calendar mounted that
+// pointed at nothing until then. Creating the collection here closes that gap.
+//
+// Like the family calendar this warns rather than fails: the shares render
+// regardless, and the next pass tries again.
+func (c *Configurator) ensureFeedCalendars(ctx context.Context, feeds []configurator.ICSFeedBinding) {
+	ownerPassword := c.calendarOwnerPassword()
+	if ownerPassword == "" {
+		c.logger.Warn("radicale sharing: no shared-calendar owner credential yet; feed calendars not created")
+		return
+	}
+	for _, feed := range sortedFeeds(feeds) {
+		path := "/" + calendarOwner + "/" + feed.CalendarName + "/"
+		exists, err := c.api.collectionExists(ctx, path, calendarOwner, ownerPassword)
+		if err != nil {
+			c.logger.Warn("radicale sharing: could not check for a feed calendar", "path", path, "err", err)
+			continue
+		}
+		if exists {
+			continue
+		}
+		if err := c.api.createCalendar(ctx, path, calendarOwner, ownerPassword, feed.CalendarName); err != nil {
+			c.logger.Warn("radicale sharing: could not create the feed calendar", "path", path, "err", err)
+			continue
+		}
+		c.logger.Info("created the feed calendar", "path", path, "provider", feed.App, "owner", calendarOwner)
+	}
 }
 
 // calendarOwnerPassword reads the shared-calendar owner credential out of this

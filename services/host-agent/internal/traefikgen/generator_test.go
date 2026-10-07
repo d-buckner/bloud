@@ -523,7 +523,11 @@ func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {
 	}
 }
 
-func TestGenerator_Generate_NoMiddlewaresSection_WhenNoneNeeded(t *testing.T) {
+// Every routable app gets the waiting-page middleware, including a plain app
+// with no forward-auth and no custom headers. That is the whole point: the
+// Bad Gateway page an app with no middleware used to show is exactly the one
+// this replaces.
+func TestGenerator_Generate_EveryAppGetsTheLoadingMiddleware(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
@@ -541,12 +545,33 @@ func TestGenerator_Generate_NoMiddlewaresSection_WhenNoneNeeded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
-
 	contentStr := string(content)
 
-	// Should NOT have middlewares section when no app needs one
-	if strings.Contains(contentStr, "middlewares:") {
-		t.Error("Should NOT have middlewares section when no app needs middleware")
+	if !strings.Contains(contentStr, "- miniflux-loading") {
+		t.Error("the app router does not reference its waiting-page middleware")
+	}
+	if !strings.Contains(contentStr, "query: /bloud-loading/miniflux") {
+		t.Error("the middleware does not point at this app's own waiting page")
+	}
+	if !strings.Contains(contentStr, "service: host-agent") {
+		t.Error("the middleware does not name the host-agent service")
+	}
+}
+
+// A 500 is the app answering and disliking the request, not an app that is
+// coming back. Covering it would hide the app's own error behind a page that
+// promises a reload that will land on the same error.
+func TestGenerator_LoadingMiddlewareCoversOnlyBadGatewayRange(t *testing.T) {
+	g := NewGenerator("/tmp/test.yml")
+	out := g.Preview([]*catalog.App{{CatalogID: "miniflux", Port: 8085}})
+
+	if !strings.Contains(out, `"502-504"`) {
+		t.Error("the loading middleware does not cover the 502-504 range")
+	}
+	for _, wrong := range []string{`"500"`, `"500-`, `"404"`, `"5xx"`} {
+		if strings.Contains(out, wrong) {
+			t.Errorf("the loading middleware covers %s, which is not an upstream-did-not-answer status", wrong)
+		}
 	}
 }
 

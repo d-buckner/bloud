@@ -69,10 +69,10 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *vaultwardenA
 // the database and RSA keys before it listens, so the window is generous.
 func (a *vaultwardenAPI) waitAlive(ctx context.Context) error {
 	return a.cl.GET(alivePath).
+		Wait(appclient.StatusIs(http.StatusOK)).
 		Interval(2 * time.Second).
 		WithRetry(appclient.WaitPolicy).
-		Ready(appclient.StatusIs(http.StatusOK)).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // ssoPrevalidate asks the app whether SSO sign-in is available and returns the

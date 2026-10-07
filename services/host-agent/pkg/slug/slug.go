@@ -22,3 +22,28 @@ func Slugify(s string) string {
 	}
 	return strings.Trim(string(result), "-")
 }
+
+// IsPathSegment reports whether s is safe to use verbatim as one URL path
+// segment: non-empty, no separator, no whitespace, no traversal, and nothing
+// that would have to be percent-encoded to appear in a path.
+//
+// This is the guard a value needs when a declaration becomes a *location*
+// rather than a label. Slugify rewrites anything into a slug; this answers a
+// question about a string somebody chose, because a value that gets
+// concatenated into a path has to be checked rather than normalized.
+// Normalizing `../..` down to `etc` would hide the fact that somebody
+// declared a traversal; rejecting it names the app that did.
+func IsPathSegment(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}

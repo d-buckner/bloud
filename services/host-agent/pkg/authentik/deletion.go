@@ -70,28 +70,130 @@ func (c *Client) deleteProviderByID(ctx context.Context, providerType string, id
 		Exec(ctx)
 }
 
+// providerTypeForStrategy maps an SSO strategy to the Authentik provider type
+// that strategy creates, and reports whether the strategy has a per-app
+// provider at all. "ldap" authenticates through the shared LDAP outpost and
+// "none" joins the provider not at all, so neither owns a provider to delete.
+func providerTypeForStrategy(strategy string) (string, bool) {
+	switch strategy {
+	case "native-oidc":
+		return "oauth2", true
+	case "forward-auth":
+		return "proxy", true
+	default:
+		return "", false
+	}
+}
+
+// providerNameForStrategy builds the provider name the provisioning path uses
+// for a strategy: "<DisplayName> OAuth2 Provider" / "<DisplayName> Proxy
+// Provider", matching the blueprint templates in internal/sso.
+func providerNameForStrategy(strategy, displayName string) string {
+	switch strategy {
+	case "native-oidc":
+		return fmt.Sprintf("%s OAuth2 Provider", displayName)
+	case "forward-auth":
+		return fmt.Sprintf("%s Proxy Provider", displayName)
+	default:
+		return ""
+	}
+}
+
+// findProvidersForApplication returns the PKs of every provider of
+// providerType that is attached to the application named appSlug.
+//
+// This is the lookup that makes uninstall cleanup immune to display-name
+// drift. A provider's name embeds the app's display name, so a catalog update
+// that renames an app strands the provider created under the old name: the
+// name-based delete searches for a string nothing produces any more, finds
+// nothing, and reports success. The application link is keyed on the catalog
+// ID, which never changes, and Authentik reports it on every provider row as
+// `assigned_application_slug`.
+//
+// The filter is client-side because Authentik's `application` query parameter
+// takes the object's UUID, not its slug, and Bloud does not store UUIDs.
+func (c *Client) findProvidersForApplication(ctx context.Context, providerType, appSlug string) ([]int, error) {
+	var result PaginatedResponse
+	if err := c.cl.GET("/api/v3/providers/"+providerType+"/").DoInto(ctx, &result); err != nil {
+		return nil, fmt.Errorf("listing %s providers: %w", providerType, err)
+	}
+	var ids []int
+	for _, p := range result.Results {
+		if p.AssignedApplicationSlug == appSlug {
+			ids = append(ids, p.PK)
+		}
+	}
+	return ids, nil
+}
+
+// deleteProvidersForApplication deletes every provider attached to appSlug.
+// It reports how many it deleted so the caller can tell a real cleanup from a
+// no-op.
+func (c *Client) deleteProvidersForApplication(ctx context.Context, providerType, appSlug string) (int, error) {
+	ids, err := c.findProvidersForApplication(ctx, providerType, appSlug)
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		if err := c.deleteProviderByID(ctx, providerType, id); err != nil {
+			return len(ids), fmt.Errorf("deleting %s provider %d for %q: %w", providerType, id, appSlug, err)
+		}
+	}
+	return len(ids), nil
+}
+
 // DeleteAppSSO deletes both the application and provider for an app.
 // This is the main cleanup function to call during app uninstall.
+//
+// Provider first, application second, and the order is load-bearing: deleting
+// the application clears the `assigned_application_slug` link on the provider
+// it owned, which is the field the find-by-application lookup reads. Delete
+// the application first and the provider stops being findable by the one key
+// that cannot drift.
 func (c *Client) DeleteAppSSO(ctx context.Context, appName, displayName, ssoStrategy string) error {
-	// Delete the application first (by slug)
+	if err := c.deleteAppProvider(ctx, appName, displayName, ssoStrategy); err != nil {
+		return err
+	}
+
+	// Delete the application by slug.
 	if err := c.DeleteApplication(ctx, appName); err != nil {
 		return fmt.Errorf("deleting application: %w", err)
 	}
 
-	// Delete the provider based on strategy
-	switch ssoStrategy {
-	case "native-oidc":
-		providerName := fmt.Sprintf("%s OAuth2 Provider", displayName)
-		if err := c.DeleteOAuth2Provider(ctx, providerName); err != nil {
-			return fmt.Errorf("deleting OAuth2 provider: %w", err)
-		}
-	case "forward-auth":
-		providerName := fmt.Sprintf("%s Proxy Provider", displayName)
-		if err := c.DeleteProxyProvider(ctx, providerName); err != nil {
-			return fmt.Errorf("deleting proxy provider: %w", err)
-		}
+	return nil
+}
+
+// deleteAppProvider removes the per-app provider a strategy created. A
+// strategy with no per-app provider ("ldap", "none") is a no-op.
+func (c *Client) deleteAppProvider(ctx context.Context, appName, displayName, ssoStrategy string) error {
+	providerType, ok := providerTypeForStrategy(ssoStrategy)
+	if !ok {
+		return nil
 	}
 
+	// Primary key: the application link, which is the catalog ID and so is
+	// immune to a display-name change.
+	if _, err := c.deleteProvidersForApplication(ctx, providerType, appName); err != nil {
+		return err
+	}
+
+	// Fallback for a provider that exists but carries no application link,
+	// which is how a provider created outside Bloud's own provisioning path
+	// would look. Idempotent: a name that matches nothing deletes nothing.
+	name := providerNameForStrategy(ssoStrategy, displayName)
+	if name == "" {
+		return nil
+	}
+	var err error
+	switch providerType {
+	case "oauth2":
+		err = c.DeleteOAuth2Provider(ctx, name)
+	case "proxy":
+		err = c.DeleteProxyProvider(ctx, name)
+	}
+	if err != nil {
+		return fmt.Errorf("deleting %s provider: %w", providerType, err)
+	}
 	return nil
 }
 

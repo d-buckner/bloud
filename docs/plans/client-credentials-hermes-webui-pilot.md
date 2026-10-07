@@ -237,81 +237,62 @@ generating and `chmod 0600`-ing it on first use (`_load_key`,
 
 Three consequences, all of them load-bearing for this design:
 
-1. **Rotating the password does not log anyone out.** It changes what a *new*
-   login must present. Existing signed sessions keep verifying against the
-   signing key and live out their TTL.
+1. **Rotating the password does not, by itself, log anyone out.** It changes
+   what a *new* login must present. Existing signed sessions keep verifying
+   against the signing key and live out their TTL.
 2. **Sessions survive a container recreate.** Both keys and the session store
    are files under `STATE_DIR`, which sits on the app's persistent volume.
    This closes the fragility question that would otherwise make SC2 a hollow
    pass.
-3. **Rotation is therefore not revocation.** A stolen phone with a live
-   session keeps working after a password rotation. Killing it is a separate
-   operation on the session store.
+3. **Rotation therefore has to clear the session store explicitly.** A stolen
+   phone with a live session keeps working after a password rotation unless the
+   session store is cleared in the same pass. The shipped behaviour does
+   exactly that: rotate revokes.
 
 ### Lifecycle
 
-In v1 rotate and revoke are separate operations, and the UI must not merge
-them. The follow-up below collapses them.
+Rotate is revoke-then-issue. It clears the session store, writes the new
+password, and recreates the container once, so the app comes back with no live
+sessions and only the new credential.
 
-| Step | v1 effect | Target effect |
-|---|---|---|
-| Mint | Bloud generates a long random password on install and stores it in `secrets.json` | unchanged |
-| Deliver | Written into the app config as `HERMES_WEBUI_PASSWORD` | unchanged |
-| Reveal | Shown once as a ready-made `{URL, password}` pair | unchanged |
-| **Rotate** | New password for future logins. **Existing sessions unaffected.** The working phone keeps working | New password **and** live sessions killed, so the old credential is fully cut off |
-| **Revoke** | Delete the session records so live sessions stop verifying. The only thing that logs a device out in v1 | Stays available as a standalone control |
+| Step | Effect |
+|---|---|
+| Mint | Bloud generates a long random password on install and stores it in `secrets.json` |
+| Deliver | Written into the app config as `HERMES_WEBUI_PASSWORD` |
+| Reveal | Shown once as a ready-made `{URL, password}` pair |
+| **Rotate** | New password **and** live sessions killed, so the old credential is fully cut off |
+| **Revoke** | Kill live sessions without changing the password |
 
-The reveal-once model works in v1 precisely because of the rotate property.
-Lose the password and the phone still works, because its session is signed
-with the signing key rather than the password. Need a second device and cannot
-recall the password: rotate, take the new pair, and the first device is
-undisturbed.
+The reveal-once model is workable because the recovery path is rotate. Lose the
+password and rotate: you get a new value you can show, and every device signs
+in again with it. That is the price of a one-time reveal, and it is the reason
+the rotate confirm says it will log everyone out.
 
 The reveal snippet is the natural mobile shape either way. Hermex needs a
 server URL and a password, so the UI hands over both together rather than a
 bare secret the user has to reassemble.
 
-### Follow-up: rotation should revoke (deferred, not dropped)
+### Rotation revokes (shipped)
 
-**v1 does not revoke on rotate. It should.** This is the single most important
-deferred item in this plan, recorded here so it is not mistaken for the final
-shape of the pattern.
+Rotation is revoke-then-issue. The API mints the new value, stores it, and
+submits a revoke intent followed by a reconcile intent. The resync clears the
+session store before `PreStart` renders the new config, so the recreate that
+installs the new value comes back with no live sessions.
 
-The reason v1 cannot is structural, not lazy: the session layer has no binding
-to the credential that created it. A session record carries `expiry`,
+The reason it has to work this way is structural: the session layer has no
+binding to the credential that created it. A session record carries `expiry`,
 `auth_type`, `username`, and `bound_profile`, and `verify_session` checks the
 signature, store membership, and expiry. Nothing in that path can be compared
 against a rotated credential, because the session never recorded which
-credential was in effect when it was minted.
-
-Target behaviour, **rotate implies revoke**:
-
-1. Generate the new password.
-2. Write it and restart, so the process-lifetime hash cache clears and the
-   old value stops being authoritative for new logins.
-3. Clear the app's persisted session store, so no session established under
-   the old credential survives.
-4. Reveal the new pair, with the confirm stating that every existing client
-   must re-authenticate.
-
-Why it is deferred rather than built now: the pilot's acceptance test is Hermex
-connecting and staying connected, and shipping a rotation that severs the very
-device under test makes the pilot harder to verify without proving anything
-additional. The gap is also not urgent at home scale. The credential is
-Bloud-minted and long, so the realistic reason to rotate is "I want a new
-value", not "I am under attack".
-
-**When this lands, SC4 inverts.** SC4 currently asserts that a pre-rotation
-session survives. That is a v1 assertion, not a permanent property. The
-criterion has to be rewritten to the opposite in the same change that alters
-the behaviour, or the suite ends up asserting something the product no longer
-does.
+credential was in effect when it was minted. So there is no way to revoke a
+rotated credential against only the sessions that used it; clearing the whole
+store is the only mechanism, and a rotate that left sessions alive would be a
+rotate that did not revoke.
 
 This is tracked at the platform level too, in
 [`client-credentials.md`](client-credentials.md). It is a property of the
 pattern rather than of this app: a `rotate` that does not revoke is a weaker
-primitive than the word implies, and every app that adopts `clientAccess`
-inherits the same gap until the pattern itself is strengthened.
+primitive than the word implies.
 
 ## What this costs, honestly
 
@@ -377,16 +358,16 @@ nowhere else. No `GET`, no home snapshot, no app payload, and no polled
 endpoint returns the value. Asserted by a test that walks every response the
 dashboard fetches and fails if the value appears in any of them.
 
-**SC4: Rotation rotates without logging out (v1 only).** After a rotate: the
-old password is rejected at `/api/auth/login`; a fresh Hermex login with the
-new password succeeds; and **the Hermex session established before the rotate
-is still valid and still completes turns.** This is the property that makes
-reveal-once survivable in v1, so it is tested explicitly rather than
-assumed. It is expected to invert when the revoke-on-rotate follow-up lands.
+**SC4: Rotation rotates and revokes.** After a rotate: the old password is
+rejected at `/api/auth/login`; a fresh Hermex login with the new password
+succeeds; and **the Hermex session established before the rotate stops
+verifying and must re-authenticate.** This is what makes rotate mean "cut the
+old credential off completely", so it is tested explicitly rather than assumed.
 
 **SC4b: Revocation actually revokes.** After a revoke, the previously valid
-Hermex session stops verifying and the app must re-authenticate. The control
-states on confirm that it logs out every live session.
+Hermex session stops verifying and the app must re-authenticate, while the
+password is unchanged. The control states on confirm that it logs out every
+live session.
 
 **SC5: No door was opened that was not declared.** Trusted-header auth stays
 disabled: `HERMES_WEBUI_TRUSTED_AUTH_HEADER` unset,
@@ -411,7 +392,7 @@ identical before and after provisioning.
 | **C.** `clientPassword` contract | New contract entry, payload type, and the `url-and-password` snippet shape | `internal/catalog/contracts.go`; `pkg/configurator/interface.go` (binding type beside `AgentAPIBinding`) |
 | **D.** Mint and deliver | Generate on install, store in `secrets.json`, write `HERMES_WEBUI_PASSWORD` in `PreStart`, idempotent under the resync | `apps/hermes-webui/configurator.go`; `internal/secrets/manager.go:344` is the store, unchanged |
 | **E.** Reveal endpoint | `POST` returns value plus snippet and writes an audit record; `GET` returns metadata only. Plus the SC3 non-pollable test | New `internal/api/settings_client_credentials.go` beside `settings_public_url.go`; mount in `registerRoutes` at `internal/api/router.go:342` |
-| **F.** Rotate | Regenerate, rewrite, re-publish. Test that existing sessions survive it (SC4) | Same module as E; `apps/hermes-webui/configurator.go` for the rewrite |
+| **F.** Rotate | Regenerate, rewrite, re-publish, and revoke the session store (SC4) | Same module as E; `apps/hermes-webui/configurator.go` for the rewrite |
 | **G.** Revoke | Clear the app's persisted session records through the container exec channel, plus the SC4b test and the "logs out everyone" confirm copy | Same module as E; exec channel via `pkg/configurator` `Exec` dep |
 | **H.** hermes-webui as a native-oidc app | OIDC client registration, `callbackPath`, the agent connection above, the container spec, and the app's own configurator | New `apps/hermes-webui/{metadata.yaml,configurator.go,registration.go,icon.png}`; register in `apps/registry.go`; add to `validation.yaml` |
 | **I.** UI | Reveal / rotate / revoke surface on the app detail modal, generated from `clientAccess` with zero per-app code | `web/src/lib/components/AppDetailModal.svelte`; new `ClientAccessPanel.svelte` |
@@ -482,7 +463,7 @@ absent.
 
 | Item | Why it waits |
 |---|---|
-| **Revoke on rotate** | The target behaviour. Deferred because it severs the device the pilot is testing, not because it is unwanted. See "Follow-up: rotation should revoke" |
+| **Revoke on rotate** | Shipped: rotate submits a revoke intent before the reconcile, so the recreate installs the new value with an emptied session store |
 | Trusted-header per-user identity | Requires header stripping at the TLS terminator to be safe. The password already solves Hermex |
 | Per-consumer tokens | The answer to "revoke one device"; needs its own design |
 | Persistent reveal (`reveal: always`) | Gated on the forgeable auth-bypass repayment |

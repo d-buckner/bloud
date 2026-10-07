@@ -12,99 +12,187 @@ import (
 // ReadyFunc decides whether an observed response means "ready".
 type ReadyFunc func(status int, body []byte) bool
 
-// Ready switches the call into wait mode with the given readiness predicate.
+// Wait is one readiness poll over a plain Call.
 //
-// A wait defaults to WaitPolicy, not to the client's DefaultRetry: waiting out an
-// app's first-boot migrations is a different job from riding out a network blip,
-// and the short default attempt budget would land a slow-booting app in a
-// terminal ERROR that the orchestrator never retries. An explicit WithRetry, set
-// before or after this call, still wins.
-func (x *Call) Ready(p ReadyFunc) *Call {
-	x.ready = p
-	if x.stable <= 0 {
-		x.stable = 1
-	}
-	if x.retryOverride == nil {
-		wp := WaitPolicy
-		x.retryOverride = &wp
-	}
-	return x
+// The split is by what each value can mean on its own. A Call owns the
+// request: verb, path, body, headers, auth, the per-request Timeout, and the
+// outcome contract (OK / AlreadyDone / Ensure). A Wait owns everything that
+// only has a meaning while polling for a state change: the readiness
+// predicate, the cadence, how many consecutive good reads are required,
+// whether a prior good read makes a later timeout survivable, and the total
+// wall-clock budget.
+//
+// Build one with Call.Wait and terminate it with Do. Modifiers return the Wait,
+// so a wait reads as one chain:
+//
+//	err := cl.GET("/api/health").
+//		Wait(appclient.StatusIs(http.StatusOK)).
+//		Interval(2 * time.Second).
+//		Within(4 * time.Minute).
+//		Do(ctx)
+//
+// A Wait is a value builder like Call: nothing is polled until Do runs.
+type Wait struct {
+	call *Call
+
+	ready            ReadyFunc
+	interval         time.Duration
+	stable           int
+	tolerateFailures bool
+
+	// policy replaces WaitPolicy for this wait. Nil means WaitPolicy.
+	policy *RetryPolicy
+
+	// budgetErr records a declared budget the framework cannot honor. Do
+	// surfaces it instead of letting the wait be truncated in silence.
+	budgetErr error
 }
 
-// Interval sets the poll interval for a wait (overrides the policy backoff).
-func (x *Call) Interval(d time.Duration) *Call {
-	x.interval = d
-	return x
+// Wait starts a readiness wait over this call, polling the request until
+// `ready` holds.
+//
+// The predicate is an argument rather than a modifier because a wait with no
+// predicate is not a wait: previously Wait() returned the runtime error "Wait
+// called without a Ready predicate", which is a build mistake that the type
+// system can catch instead.
+//
+// The wait defaults to WaitPolicy, not to the client's DefaultRetry. Waiting
+// out an app's first-boot migrations is a different job from riding out a
+// network blip, and the short default attempt budget would land a
+// slow-booting app in a terminal ERROR that the orchestrator never retries.
+// An explicit WithRetry still wins.
+func (x *Call) Wait(ready ReadyFunc) *Wait {
+	w := &Wait{call: x, ready: ready, stable: 1}
+	// A policy already declared on the call carries over, so a wait built as
+	// GET(p).WithRetry(p).Wait(pred) behaves as GET(p).Wait(pred).WithRetry(p).
+	// Silently dropping it would be the worse outcome: the caller asked for a
+	// bound and got WaitPolicy instead.
+	if x.retryOverride != nil {
+		cp := *x.retryOverride
+		w.policy = &cp
+	}
+	return w
+}
+
+// Interval sets the poll interval, overriding the policy's backoff starting
+// point. The rest of the policy (cap, factor, jitter) still applies on top.
+func (w *Wait) Interval(d time.Duration) *Wait {
+	w.interval = d
+	return w
 }
 
 // Stable requires the readiness predicate to hold n consecutive polls before
 // the wait returns nil (guards against an oscillating value).
-func (x *Call) Stable(n int) *Call {
-	x.stable = n
-	if x.ready != nil && x.stable < 1 {
-		x.stable = 1
+func (w *Wait) Stable(n int) *Wait {
+	w.stable = n
+	if w.stable < 1 {
+		w.stable = 1
 	}
-	return x
+	return w
 }
 
 // TolerateFailures makes a later timeout non-fatal once a good read has been
 // observed (the jellyfin "keep the last good read and fall through" case).
-func (x *Call) TolerateFailures() *Call {
-	x.tolerateFailures = true
-	return x
+func (w *Wait) TolerateFailures() *Wait {
+	w.tolerateFailures = true
+	return w
 }
 
-// Wait polls until the readiness predicate holds for Stable consecutive polls,
+// Within sets the total elapsed budget of the wait, the wall-clock ceiling
+// across all of its polls. It is the counterpart to Call.Timeout, which
+// bounds one request: `Timeout(10s)` on the call plus `Within(5m)` on the
+// wait means "each probe may take ten seconds, and the whole wait may take
+// five minutes".
+//
+// It sets the policy Deadline, so it composes with WithRetry and Interval.
+// A value above MaxWaitBudget is reported at Do time rather than being
+// silently truncated by the framework's own PostStart ceiling.
+func (w *Wait) Within(d time.Duration) *Wait {
+	if w.policy == nil {
+		wp := WaitPolicy
+		w.policy = &wp
+	}
+	w.policy.Deadline = d
+	if d > MaxWaitBudget {
+		w.budgetErr = fmt.Errorf(
+			"%s: wait budget %s exceeds MaxWaitBudget %s: the framework cancels PostStart at that ceiling, so this wait could never expire on its own",
+			w.call.c.name, d, MaxWaitBudget)
+	}
+	return w
+}
+
+// WithRetry overrides the retry policy for this wait, bounding the total poll
+// attempts and deadline. Lets one client serve both a short bounded check and
+// a long readiness poll.
+func (w *Wait) WithRetry(p RetryPolicy) *Wait {
+	cp := p
+	w.policy = &cp
+	return w
+}
+
+// Do polls until the readiness predicate holds for Stable consecutive polls,
 // an AlreadyDone outcome is seen, or the deadline/ctx expires. In wait mode an
 // unexpected status means "not ready yet" and is retried (surfaced in the
 // final error), never a hard failure.
-func (x *Call) Wait(ctx context.Context) error {
-	if x.ready == nil {
-		return fmt.Errorf("%s: Wait called without a Ready predicate", x.c.name)
-	}
+func (w *Wait) Do(ctx context.Context) error {
 	// A declared budget the framework cannot honor is a caller bug, not a
 	// runtime condition to discover by truncation. Fail loudly here.
-	if x.budgetErr != nil {
-		return x.budgetErr
+	if w.budgetErr != nil {
+		return w.budgetErr
 	}
-	policy := x.effectivePolicy()
-	if x.interval > 0 {
-		policy.Initial = x.interval
-	}
+	policy := w.effectivePolicy()
 	start := time.Now()
 	attempt := 0
 	var st waitState
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return x.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, err)
+			return w.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, err)
 		}
 		attempt++
-		res, err := x.attemptOnce(ctx, attempt)
+		res, err := w.call.attemptOnce(ctx, attempt, w.ready)
 		if err != nil {
 			if errorsIsContext(err) {
-				return x.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, err)
+				return w.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, err)
 			}
 			st.recordFailure(err)
 		} else {
-			st.recordSuccess(res, x.ready(res.status, res.body))
+			st.recordSuccess(res, w.ready(res.status, res.body))
 			if res.alreadyDone {
 				return nil
 			}
-			if st.streak >= x.stable {
-				x.c.logger.Debug("wait converged", "path", x.path, "attempts", attempt)
+			if st.streak >= w.stable {
+				w.call.c.logger.Debug("wait converged", "path", w.call.path, "attempts", attempt)
 				return nil
 			}
 		}
 
 		if policy.MaxAttempts > 0 && attempt >= policy.MaxAttempts {
-			return x.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, fmt.Errorf("exhausted %d attempts", attempt))
+			return w.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, fmt.Errorf("exhausted %d attempts", attempt))
 		}
 		if policy.Deadline > 0 && time.Since(start) >= policy.Deadline {
-			return x.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, fmt.Errorf("deadline exceeded"))
+			return w.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, fmt.Errorf("deadline exceeded"))
 		}
-		x.c.sleeper(x.nextDelay(policy, attempt, st.lastErr))
+		w.call.c.sleeper(w.call.nextDelay(policy, attempt, st.lastErr))
 	}
+}
+
+// effectivePolicy returns the declared policy when set, else WaitPolicy.
+// Defaults are applied so a policy that omits Factor cannot multiply its
+// interval by zero from the second attempt on.
+func (w *Wait) effectivePolicy() RetryPolicy {
+	if w.policy != nil {
+		p := w.policy.withDefaults()
+		if w.interval > 0 {
+			p.Initial = w.interval
+		}
+		return p
+	}
+	p := WaitPolicy.withDefaults()
+	if w.interval > 0 {
+		p.Initial = w.interval
+	}
+	return p
 }
 
 // waitState is what a readiness wait remembers between probes: whether it ever
@@ -142,16 +230,17 @@ func (s *waitState) recordSuccess(res result, ready bool) {
 // conclude decides a wait's terminal return: with TolerateFailures and a prior
 // good read the wait succeeds despite the terminal condition ("keep the last
 // good read and fall through"); otherwise it errors naming the cause.
-func (x *Call) conclude(sawGood bool, attempt, lastStatus int, lastBody []byte, lastErr, cause error) error {
-	if x.tolerateFailures && sawGood {
+func (w *Wait) conclude(sawGood bool, attempt, lastStatus int, lastBody []byte, lastErr, cause error) error {
+	if w.tolerateFailures && sawGood {
 		return nil
 	}
-	return x.waitError(attempt, lastStatus, lastBody, lastErr, cause)
+	return w.waitError(attempt, lastStatus, lastBody, lastErr, cause)
 }
 
 // waitError builds the terminal wait error naming the probe, attempt count, and
 // last observation.
-func (x *Call) waitError(attempt, lastStatus int, lastBody []byte, lastErr error, cause error) error {
+func (w *Wait) waitError(attempt, lastStatus int, lastBody []byte, lastErr error, cause error) error {
+	x := w.call
 	msg := fmt.Sprintf("%s: wait %s %s did not become ready after %d attempts", x.c.name, x.method, x.path, attempt)
 	if lastErr != nil {
 		msg += fmt.Sprintf(" (last error: %v)", lastErr)

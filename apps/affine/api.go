@@ -50,10 +50,10 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *affineAPI {
 // boot runs prisma migrations before the HTTP listener opens.
 func (a *affineAPI) waitServer(ctx context.Context) error {
 	return a.cl.GET("/info").
+		Wait(appclient.StatusIs(http.StatusOK)).
 		Interval(2 * time.Second).
 		Within(4 * time.Minute).
-		Ready(appclient.StatusIs(http.StatusOK)).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // ensureOwner creates the first-run owner account. AFFiNE only accepts the
@@ -77,12 +77,12 @@ func (a *affineAPI) waitForOIDCPreflight(ctx context.Context) error {
 	return a.cl.POST("/api/oauth/preflight").
 		Anonymous().
 		JSON(map[string]string{"provider": "OIDC", "client": "web", "client_nonce": "bloud-poststart-check"}).
-		Interval(3 * time.Second).
-		Within(3 * time.Minute).
-		Ready(func(s int, b []byte) bool {
+		Wait(func(s int, b []byte) bool {
 			return s == http.StatusOK && strings.Contains(string(b), "\"url\"")
 		}).
-		Wait(ctx)
+		Interval(3 * time.Second).
+		Within(3 * time.Minute).
+		Do(ctx)
 }
 
 // signIn establishes the session the GraphQL calls run as. AFFiNE self-host

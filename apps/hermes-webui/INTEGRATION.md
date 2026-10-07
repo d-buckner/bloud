@@ -55,14 +55,16 @@ trusted-header auth. Enabling the password does not turn OIDC off.
 
 A session is an HMAC token signed under the app's own persisted signing key
 (`.signing_key` under the state directory). The stored record carries no
-reference to the password that created it. That independence is what makes
-`reveal: once` survivable: lose the password and a phone that is already signed
-in keeps working.
+reference to the password that created it. That independence is what makes the
+recovery path clear: lose the password and rotate, which issues a new one you
+can reveal and logs every device out in the process.
 
-It is also why **rotate and revoke are different controls**. Rotate changes the
-password for future sign-ins; it does not end live sessions. Revoke clears the
-session store and forces a recreate, which is the only way to end the sessions
-the app has already loaded into memory.
+It is also why **rotate and revoke are different controls** even though
+rotation ends sessions too. Rotate clears the session store and writes a new
+password before the recreate, so the app comes back with no live sessions and
+only the new credential. Revoke clears the session store without changing the
+password, for the case where you want the same password but must lock a device
+out now.
 
 ## Credential delivery
 
