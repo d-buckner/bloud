@@ -4,7 +4,8 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import CatalogAppCard from '$lib/components/CatalogAppCard.svelte';
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
-	import ExternalAppsSection from '$lib/components/ExternalAppsSection.svelte';
+	import ExternalAppModal from '$lib/components/ExternalAppModal.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
 	import { apps as installedApps } from '$lib/stores/apps';
@@ -16,6 +17,7 @@
 	let catalogError = $state('');
 
 	let selectedApp = $state<CatalogApp | null>(null);
+	let showExternalAppModal = $state(false);
 
 	function getAppStatus(name: string): AppStatus | undefined {
 		return $installedApps.find((a) => a.catalog_id === name)?.status;
@@ -103,21 +105,28 @@
 		</div>
 	{:else}
 		<div class="filters">
-			<div class="search-wrapper">
-				<span class="search-icon">
-					<Icon name="search" size={18} />
-				</span>
-				<input
-					type="text"
-					class="search-input"
-					placeholder="Search apps..."
-					bind:value={searchQuery}
-				/>
-				{#if searchQuery}
-					<button class="search-clear" onclick={() => searchQuery = ''} aria-label="Clear search">
-						<Icon name="close" size={16} />
-					</button>
-				{/if}
+			<div class="filters-row">
+				<div class="search-wrapper">
+					<span class="search-icon">
+						<Icon name="search" size={18} />
+					</span>
+					<input
+						type="text"
+						class="search-input"
+						placeholder="Search apps..."
+						bind:value={searchQuery}
+					/>
+					{#if searchQuery}
+						<button class="search-clear" onclick={() => searchQuery = ''} aria-label="Clear search">
+							<Icon name="close" size={16} />
+						</button>
+					{/if}
+				</div>
+
+				<Button variant="secondary" size="sm" onclick={() => (showExternalAppModal = true)}>
+					<Icon name="plus" size={15} />
+					Custom
+				</Button>
 			</div>
 
 			{#if categories.length > 0}
@@ -160,7 +169,7 @@
 		{/if}
 	{/if}
 
-	<ExternalAppsSection />
+	<ExternalAppModal open={showExternalAppModal} onclose={() => (showExternalAppModal = false)} />
 </div>
 
 <AppDetailModal
@@ -232,6 +241,13 @@
 		flex-direction: column;
 		gap: var(--space-md);
 		margin-bottom: var(--space-xl);
+	}
+
+	.filters-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-md);
 	}
 
 	.search-wrapper {
