@@ -22,14 +22,11 @@ const (
 	appName = "seerr"
 
 	// jellyfinAppName is the catalog id of the media-server provider Seerr
-	// onboards against. Its address, port and bootstrap admin password all come
-	// from the resolved `mediaServer` binding; the password is the credential
-	// apps/jellyfin publishes, and that account is never deleted.
+	// onboards against. Its address and its bootstrap admin login all come from
+	// the resolved `mediaServer` binding. Nothing here assumes a name for the
+	// account: a Jellyfin Bloud booted publishes the managed one Bloud named,
+	// and one the operator registered publishes the account they made there.
 	jellyfinAppName = "jellyfin"
-
-	// jellyfinAdminUsername is the Jellyfin account apps/jellyfin creates for
-	// Bloud (apps/jellyfin/configurator.go: bootstrapUsername).
-	jellyfinAdminUsername = "bloud-bootstrap-admin"
 
 	// configDirName holds Seerr's settings.json, SQLite database, logs and
 	// cache; it is mounted at /app/config.
@@ -293,6 +290,45 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // missing provider is never an error: a later reconciliation re-runs
 // PostStart once Jellyfin is installed. (PVR wiring is deferred with it:
 // it needs the admin user the login below creates.)
+// jellyfinOnboardingLogin builds the body of the onboarding call from what the
+// provider published. It reports false, having logged why, when the provider is
+// not ready: a media server that has not published its login yet is a state the
+// next reconciliation resolves, not a failure to report as one.
+//
+// Every field is read off the binding rather than assumed. The account name
+// because a provider Bloud did not boot has an account Bloud did not name; the
+// address because Jellyseerr wants host/port/TLS where the binding has a URL,
+// and that URL is the one thing correct for a container on Bloud's network and
+// for a server it only points at.
+func (c *Configurator) jellyfinOnboardingLogin(jellyfin configurator.MediaServerBinding) (jellyfinLogin, bool) {
+	if jellyfin.AdminPassword == "" {
+		c.logger.Warn("the media server has not published its bootstrap admin password yet; Seerr onboarding is deferred",
+			"mediaServer", jellyfin.App)
+		return jellyfinLogin{}, false
+	}
+	if jellyfin.AdminUsername == "" {
+		c.logger.Warn("the media server has not published its bootstrap admin username yet; Seerr onboarding is deferred",
+			"mediaServer", jellyfin.App)
+		return jellyfinLogin{}, false
+	}
+	host, port, useSSL, err := jellyfinHostPort(jellyfin.BaseURL)
+	if err != nil {
+		c.logger.Warn("the media server published an address Seerr cannot be pointed at; onboarding is deferred",
+			"mediaServer", jellyfin.App, "error", err)
+		return jellyfinLogin{}, false
+	}
+	return jellyfinLogin{
+		Username:   jellyfin.AdminUsername,
+		Password:   jellyfin.AdminPassword,
+		Hostname:   host,
+		Port:       port,
+		UseSSL:     useSSL,
+		URLBase:    "",
+		Email:      adminEmail,
+		ServerType: mediaServerTypeJellyfin,
+	}, true
+}
+
 func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.AppState, settingsPath string) error {
 	// It is not silent, though: an instance that has never completed onboarding
 	// serves its first-run wizard to anyone who can reach it, and whoever
@@ -307,14 +343,8 @@ func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.App
 			"mediaServer", jellyfinAppName)
 		return nil
 	}
-	password := jellyfin.AdminPassword
-	if password == "" {
-		// The provider is installed but has not published its bootstrap
-		// password yet (its PreStart has not run, or it is still converging):
-		// onboarding is deferred rather than failed, and the next
-		// reconciliation finds it.
-		c.logger.Warn("the media server has not published its bootstrap admin password yet; Seerr onboarding is deferred",
-			"mediaServer", jellyfin.App)
+	login, ok := c.jellyfinOnboardingLogin(jellyfin)
+	if !ok {
 		return nil
 	}
 
@@ -323,16 +353,7 @@ func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.App
 		return err
 	}
 
-	if err := c.api.loginWithJellyfin(ctx, jellyfinLogin{
-		Username:   jellyfinAdminUsername,
-		Password:   password,
-		Hostname:   jellyfin.Node,
-		Port:       jellyfin.Port,
-		UseSSL:     false,
-		URLBase:    "",
-		Email:      adminEmail,
-		ServerType: mediaServerTypeJellyfin,
-	}); err != nil {
+	if err := c.api.loginWithJellyfin(ctx, login); err != nil {
 		return fmt.Errorf("creating the Seerr admin from the Jellyfin bootstrap admin: %w", err)
 	}
 	c.logger.Info("created the Seerr admin from the Jellyfin bootstrap admin")

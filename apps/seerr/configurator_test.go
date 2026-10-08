@@ -38,6 +38,11 @@ type fakeSecrets struct {
 
 func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return f.password, nil }
 
+// jellyfinAdminUser is the account name a `mediaServer` provider publishes.
+// The configurator reads it off the binding rather than assuming one, so the
+// tests carry it the way the resolver would.
+const jellyfinAdminUser = "bloud-bootstrap-admin"
+
 func (f *fakeSecrets) GetAppSecret(string, string) string { return "" }
 
 func (f *fakeSecrets) SetAppSecret(string, string, string) error                { return nil }
@@ -198,7 +203,7 @@ func (f *fakeSeerr) serveJellyfinLogin(w http.ResponseWriter) {
 		writeJSON(w, map[string]any{"error": alreadyConfiguredError})
 		return
 	}
-	writeJSON(w, map[string]any{"id": 1, "username": jellyfinAdminUsername})
+	writeJSON(w, map[string]any{"id": 1, "username": jellyfinAdminUser})
 }
 
 // serveJellyfinRoutes handles the three Jellyfin settings routes. The POST is
@@ -534,6 +539,7 @@ func jellyfinBinding(localURL, password string) configurator.MediaServerBinding 
 			BaseURL:   "http://apps-jellyfin:8096",
 			LocalURL:  localURL,
 		},
+		AdminUsername: jellyfinAdminUser,
 		AdminPassword: password,
 	}
 }
@@ -1399,6 +1405,7 @@ func TestPostStart_UsesTheBindingsAddressAndSecrets(t *testing.T) {
 				BaseURL:   "http://media.internal:8097",
 				LocalURL:  jellyfin.server.URL,
 			},
+			AdminUsername: jellyfinAdminUser,
 			AdminPassword: jellyfinPassword,
 		}},
 		PVRs: []configurator.PVRBinding{{

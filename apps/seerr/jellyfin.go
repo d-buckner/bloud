@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -113,21 +115,56 @@ func (c *Configurator) jellyfinKeyValid(ctx context.Context, jellyfin *appclient
 	}
 }
 
+// jellyfinHostPort splits the provider's address into the three fields
+// Jellyseerr's onboarding takes. It reads them off the binding's BaseURL
+// rather than off Node and Port because that is the one field correct from both
+// vantages: a container Bloud put on its own network and a server three rooms
+// away both have a URL, while only the first has a container name.
+func jellyfinHostPort(baseURL string) (host string, port int, useSSL bool, err error) {
+	if baseURL == "" {
+		return "", 0, false, fmt.Errorf("the media server binding carries no address")
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", 0, false, fmt.Errorf("parsing the media server address %q: %w", baseURL, err)
+	}
+	if parsed.Hostname() == "" {
+		return "", 0, false, fmt.Errorf("the media server address %q has no host", baseURL)
+	}
+	useSSL = parsed.Scheme == "https"
+	portText := parsed.Port()
+	if portText == "" {
+		if useSSL {
+			portText = "443"
+		} else if parsed.Scheme == "http" {
+			portText = "80"
+		} else {
+			return "", 0, false, fmt.Errorf("the media server address %q has an unsupported scheme", baseURL)
+		}
+	}
+	port, err = strconv.Atoi(portText)
+	if err != nil {
+		return "", 0, false, fmt.Errorf("the media server address %q has a port that is not a number", baseURL)
+	}
+	return parsed.Hostname(), port, useSSL, nil
+}
+
 // jellyfinAdminToken logs the Jellyfin bootstrap admin in and returns the
-// session token the key-minting call authenticates with. It is the same
-// credential Seerr's onboarding logs in with (bloud-bootstrap-admin, the
-// account apps/jellyfin creates and never deletes).
-func (c *Configurator) jellyfinAdminToken(ctx context.Context, jellyfin *appclient.Client, password string) (string, error) {
+// session token the key-minting call authenticates with. The account is the
+// one the `mediaServer` binding names: the managed bootstrap account for a
+// Jellyfin Bloud booted, or the account the operator registered for one it
+// did not.
+func (c *Configurator) jellyfinAdminToken(ctx context.Context, jellyfin *appclient.Client, username, password string) (string, error) {
 	var login struct {
 		AccessToken string `json:"AccessToken"`
 	}
 	if err := jellyfin.POST(jellyfinAuthPath).
 		Anonymous().
 		Header("Authorization", jellyfinDeviceAuth).
-		JSON(map[string]string{"Username": jellyfinAdminUsername, "Pw": password}).
+		JSON(map[string]string{"Username": username, "Pw": password}).
 		OK(http.StatusOK).
 		DoInto(ctx, &login); err != nil {
-		return "", fmt.Errorf("logging in to Jellyfin as %s: %w", jellyfinAdminUsername, err)
+		return "", fmt.Errorf("logging in to Jellyfin as %s: %w", username, err)
 	}
 	if login.AccessToken == "" {
 		return "", fmt.Errorf("jellyfin answered the admin login without an access token")
@@ -232,7 +269,11 @@ func (c *Configurator) reconcileJellyfinCoupling(
 		c.logger.Warn("cannot repair the Jellyfin connection: the media server has not published its bootstrap admin password")
 		return
 	}
-	adminToken, err := c.jellyfinAdminToken(ctx, jellyfin, password)
+	if binding.AdminUsername == "" {
+		c.logger.Warn("cannot repair the Jellyfin connection: the media server has not published its bootstrap admin username")
+		return
+	}
+	adminToken, err := c.jellyfinAdminToken(ctx, jellyfin, binding.AdminUsername, password)
 	if err != nil {
 		c.logger.Warn("cannot repair the Jellyfin connection", "error", err)
 		return

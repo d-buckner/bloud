@@ -297,7 +297,11 @@ func (o *Orchestrator) bindContract(
 	case "pvr":
 		out.PVRs = append(out.PVRs, configurator.PVRBinding{ProviderRef: ref, APIKey: o.publishedSecret(src, contract, offer, requires)})
 	case "mediaServer":
-		out.MediaServers = append(out.MediaServers, configurator.MediaServerBinding{ProviderRef: ref, AdminPassword: o.publishedSecret(src, contract, offer, requires)})
+		out.MediaServers = append(out.MediaServers, configurator.MediaServerBinding{
+			ProviderRef:   ref,
+			AdminUsername: o.contractValue(src, contract, offer, "adminUsername"),
+			AdminPassword: o.publishedSecret(src, contract, offer, requires),
+		})
 	case "sso":
 		out.SSO = append(out.SSO, configurator.SSOBinding{ProviderRef: ref, APIToken: o.publishedSecret(src, contract, offer, requires)})
 	case "downloadClient":

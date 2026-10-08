@@ -103,9 +103,17 @@ var contracts = []Contract{
 		},
 	},
 
-	// A media server hands the consumer the bootstrap admin password it was
+	// A media server hands the consumer the bootstrap admin login it was
 	// given, so the consumer can log in and mint its own key.
-	{Name: "mediaServer", Secrets: []string{"adminPassword"}},
+	//
+	// The username is a value and the password is the secret, because that is
+	// what they are: one is a label anyone who can see the login screen can
+	// learn, the other is the credential. It is also what makes an off-host
+	// provider usable. A Bloud-booted Jellyfin has the managed bootstrap
+	// account Bloud named for it; a Jellyfin the operator registered from down
+	// the hall has whatever account they made there, and a hardcoded constant
+	// cannot describe both.
+	{Name: "mediaServer", Secrets: []string{"adminPassword"}, Values: []ValueSpec{{Key: "adminUsername"}}},
 
 	// The identity provider hands the consumer the API token it generated for
 	// the host, so an app can mirror its users.
