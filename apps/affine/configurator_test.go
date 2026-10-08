@@ -45,6 +45,7 @@ func (f *fakeSecrets) GetAppSecret(_, _ string) string { return "" }
 func (f *fakeSecrets) SetAppSecret(string, string, string) error                { return nil }
 func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
 func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
+func (f *fakeSecrets) DeleteAppSecrets(string) error                            { return nil }
 
 // configuratorForServer points a configurator at an httptest server so the
 // PostStart admin-bootstrap flow can be exercised without a real server.

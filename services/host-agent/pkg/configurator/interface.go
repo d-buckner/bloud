@@ -38,6 +38,11 @@ type AppSecretsProvider interface {
 	// GetAppContractValue reads back a value published through
 	// SetAppContractValue. Empty means the provider has not published it yet.
 	GetAppContractValue(appName, contract, key string) string
+	// DeleteAppSecrets removes every credential published under one scope. It
+	// is the teardown counterpart of SetAppSecret: when a provider record goes
+	// away, the key that belonged to it goes with it rather than sitting in the
+	// secrets file with nothing left to own it.
+	DeleteAppSecrets(appName string) error
 }
 
 // PreStartResult is what a configurator reports when its PreStart pass ends.

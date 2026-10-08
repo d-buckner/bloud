@@ -69,12 +69,13 @@ func newSystemModule(t *testing.T, opts systemModuleOpts) *systemModule {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	return &systemModule{
-		appStore:    appStore,
-		catalog:     catalogCache,
-		orch:        orch,
-		healthCheck: opts.healthCheck,
-		aiSettings:  opts.aiSettings,
-		logger:      logger,
+		appStore:     appStore,
+		catalog:      catalogCache,
+		orch:         orch,
+		healthCheck:  opts.healthCheck,
+		aiSettings:   opts.aiSettings,
+		externalApps: opts.externalApps,
+		logger:       logger,
 	}
 }
 
@@ -86,6 +87,9 @@ type systemModuleOpts struct {
 	// aiSettings is the store behind Settings -> AI, which decides whether
 	// the developer graph shows the AI Model node.
 	aiSettings store.SettingsStoreInterface
+	// externalApps is the registry the AI upstreams live in, and the read the
+	// AI Model node actually keys off.
+	externalApps store.ExternalAppStoreInterface
 }
 
 // fakeAISettings answers Get from a fixed map, so a test can state exactly
@@ -112,10 +116,45 @@ func (f *fakeAISettings) Set(key, value string) error {
 
 var _ store.SettingsStoreInterface = (*fakeAISettings)(nil)
 
-// aiSettingsWith renders an upstream list for the settings store.
-func aiSettingsWith(upstreamsJSON string) *fakeAISettings {
-	return &fakeAISettings{values: map[string]string{inference.SettingUpstreams: upstreamsJSON}}
+// aiRegistryWith renders a registry holding one enabled AI upstream, so a test
+// can state exactly what Settings -> AI holds.
+func aiRegistryWith(baseURL string) *fakeExternalRegistry {
+	return &fakeExternalRegistry{records: []*store.ExternalApp{
+		inference.ExternalForUpstream(inference.Upstream{
+			ID: "u1", Name: "Main", BaseURL: baseURL, Enabled: true,
+		}),
+	}}
 }
+
+// fakeExternalRegistry is an in-memory external app store. FindAllBySource is
+// the only method the developer graph reads; the rest satisfy the interface.
+type fakeExternalRegistry struct {
+	records []*store.ExternalApp
+	err     error
+}
+
+func (f *fakeExternalRegistry) GetAll() ([]*store.ExternalApp, error) { return f.records, f.err }
+func (f *fakeExternalRegistry) Get(string) (*store.ExternalApp, error) {
+	return nil, f.err
+}
+func (f *fakeExternalRegistry) FindBySource(string) (*store.ExternalApp, error) { return nil, f.err }
+func (f *fakeExternalRegistry) FindAllBySource(source string) ([]*store.ExternalApp, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var out []*store.ExternalApp
+	for _, r := range f.records {
+		if r.Source == source {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+func (f *fakeExternalRegistry) Upsert(*store.ExternalApp) error { return f.err }
+func (f *fakeExternalRegistry) Delete(string) error             { return f.err }
+func (f *fakeExternalRegistry) SetOnChange(func())              {}
+
+var _ store.ExternalAppStoreInterface = (*fakeExternalRegistry)(nil)
 
 // inferenceConsumerDef is the catalog entry of an app that declares the
 // inference contract against the instance, the shape hermes/metadata.yaml
@@ -323,8 +362,7 @@ func installInferenceConsumer(mod *systemModule) {
 // Settings -> AI has something to serve: an enabled upstream.
 func TestSystemHTTP_DeveloperGraph_AINodeShownWhenConfigured(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{
-		aiSettings: aiSettingsWith(
-			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":true}]`),
+		externalApps: aiRegistryWith("https://api.example.com/v1"),
 	})
 	installInferenceConsumer(mod)
 
@@ -341,7 +379,7 @@ func TestSystemHTTP_DeveloperGraph_AINodeShownWhenConfigured(t *testing.T) {
 // headed for it: an edge naming a node that is not in the payload reaches the
 // browser anyway and draws an arrow into empty space.
 func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUnconfigured(t *testing.T) {
-	mod := newSystemModule(t, systemModuleOpts{aiSettings: aiSettingsWith("")})
+	mod := newSystemModule(t, systemModuleOpts{externalApps: &fakeExternalRegistry{}})
 	installInferenceConsumer(mod)
 
 	resp := fetchDeveloperGraph(t, mod)
@@ -355,8 +393,11 @@ func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUnconfigured(t *testing.T) {
 // reversible, but nothing is served.
 func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUpstreamDisabled(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{
-		aiSettings: aiSettingsWith(
-			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":false}]`),
+		externalApps: &fakeExternalRegistry{records: []*store.ExternalApp{
+			inference.ExternalForUpstream(inference.Upstream{
+				ID: "u1", Name: "Main", BaseURL: "https://api.example.com/v1", Enabled: false,
+			}),
+		}},
 	})
 	installInferenceConsumer(mod)
 
@@ -371,7 +412,7 @@ func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUpstreamDisabled(t *testing.T
 // display, and a read error is not a reason to invent a provider.
 func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenStoreFails(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{
-		aiSettings: &fakeAISettings{err: errors.New("database is closed")},
+		externalApps: &fakeExternalRegistry{err: errors.New("database is closed")},
 	})
 	installInferenceConsumer(mod)
 
@@ -402,31 +443,30 @@ func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUnwired(t *testing.T) {
 // and the node would silently never appear.
 func TestSystemHTTP_DeveloperGraph_AINodeRoundTripsThroughRealStore(t *testing.T) {
 	db := testdb.SetupTestDB(t)
-	settings := store.NewSettingsStore(db)
+	extStore := store.NewExternalAppStore(db)
 
 	mod := newSystemModule(t, systemModuleOpts{})
-	mod.aiSettings = settings
+	mod.externalApps = extStore
 	installInferenceConsumer(mod)
 
 	_, ok := graphNodeByID(fetchDeveloperGraph(t, mod).Nodes, AINodeID)
 	require.False(t, ok, "a fresh instance has no AI configured")
 
-	encoded, err := inference.EncodeUpstreams([]inference.Upstream{
-		{ID: "u1", Name: "Main", BaseURL: "https://api.example.com/v1", Enabled: true},
-	})
-	require.NoError(t, err)
-	require.NoError(t, settings.Set(inference.SettingUpstreams, encoded))
+	require.NoError(t, extStore.Upsert(inference.ExternalForUpstream(inference.Upstream{
+		ID: "u1", Name: "Main", BaseURL: "https://api.example.com/v1", Enabled: true,
+	})))
 
 	resp := fetchDeveloperGraph(t, mod)
 	aiNode, ok := graphNodeByID(resp.Nodes, AINodeID)
-	require.True(t, ok, "the settings the API writes must be the settings the graph reads")
+	require.True(t, ok, "the records the settings API writes must be the records the graph reads")
 	assert.Equal(t, "service", aiNode.NodeType)
 	require.True(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
 
 	// Turning the upstream off takes the node and its edge back out, so the
-	// graph tracks the setting rather than remembering that it was once on.
-	require.NoError(t, settings.Set(inference.SettingUpstreams,
-		`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":false}]`))
+	// graph tracks the registry rather than remembering that it was once on.
+	require.NoError(t, extStore.Upsert(inference.ExternalForUpstream(inference.Upstream{
+		ID: "u1", Name: "Main", BaseURL: "https://api.example.com/v1", Enabled: false,
+	})))
 
 	resp = fetchDeveloperGraph(t, mod)
 	assert.False(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
@@ -436,8 +476,7 @@ func TestSystemHTTP_DeveloperGraph_AINodeRoundTripsThroughRealStore(t *testing.T
 
 func TestSystemHTTP_DeveloperGraph_NonConsumerGetsNoAIEdge(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{
-		aiSettings: aiSettingsWith(
-			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":true}]`),
+		externalApps: aiRegistryWith("https://api.example.com/v1"),
 	})
 	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
 		CatalogID: "jellyfin", DisplayName: "Jellyfin", IsSystem: false, Status: "running",
@@ -459,8 +498,7 @@ func TestSystemHTTP_DeveloperGraph_NonConsumerGetsNoAIEdge(t *testing.T) {
 // shape apps/affine/metadata.yaml carries for inference.
 func TestSystemHTTP_DeveloperGraph_InferenceEdgeWithoutDefault(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{
-		aiSettings: aiSettingsWith(
-			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":true}]`),
+		externalApps: aiRegistryWith("https://api.example.com/v1"),
 	})
 	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
 		CatalogID: "affine", DisplayName: "AFFiNE", Status: "running",
@@ -682,8 +720,7 @@ func TestSystemHTTP_DeveloperGraph_RealCatalogWiresInferenceConsumers(t *testing
 	require.NoError(t, cache.Refresh(catalog.NewLoader(filepath.Join("..", "..", "..", "..", "apps"))))
 
 	mod := newSystemModule(t, systemModuleOpts{
-		aiSettings: aiSettingsWith(
-			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":true}]`),
+		externalApps: aiRegistryWith("https://api.example.com/v1"),
 	})
 	mod.catalog = cache
 	for _, id := range []string{"hermes", "affine", "traefik", "authentik"} {

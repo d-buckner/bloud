@@ -41,6 +41,14 @@ func (f *fakeSecrets) SetAppSecret(app, key, value string) error {
 }
 func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
 func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
+func (f *fakeSecrets) DeleteAppSecrets(app string) error {
+	for k := range f.values {
+		if strings.HasPrefix(k, app+"/") {
+			delete(f.values, k)
+		}
+	}
+	return nil
+}
 
 // fakeCatalog serves one app with a fixed set of offers.
 type fakeCatalog struct {

@@ -64,6 +64,17 @@ func ExternalAppSourceForApp(catalogID string) string {
 	return string(ExternalAppSourceKindApp) + ":" + catalogID
 }
 
+// ExternalAppSourceForContract renders the source value for a bare contract
+// provider: an off-host thing that fills one named contract with no catalog
+// app behind it.
+//
+// This is the runtime counterpart of a consumer's `compatible:
+// [{source: setting}]` declaration. The consumer names the role; the record
+// names the contract it fills, and the resolver matches them by that name.
+func ExternalAppSourceForContract(contract string) string {
+	return string(ExternalAppSourceKindContract) + ":" + contract
+}
+
 // ParseExternalAppSource splits a source value into its kind and reference.
 // An empty source (a launcher) and any string without a non-empty reference on
 // both sides report ok=false, so a malformed stored value reads as "not a
@@ -114,6 +125,7 @@ type ExternalAppStoreInterface interface {
 	GetAll() ([]*ExternalApp, error)
 	Get(id string) (*ExternalApp, error)
 	FindBySource(source string) (*ExternalApp, error)
+	FindAllBySource(source string) ([]*ExternalApp, error)
 	Upsert(app *ExternalApp) error
 	Delete(id string) error
 	SetOnChange(fn func())
@@ -193,6 +205,34 @@ func (s *ExternalAppStore) FindBySource(source string) (*ExternalApp, error) {
 		return nil, err
 	}
 	return app, nil
+}
+
+// FindAllBySource returns every record carrying one exact source value.
+//
+// Where FindBySource assumes at most one record per source, this is the read
+// for a contract that any number of off-host providers can fill: every AI
+// upstream is a `contract:inference` record, and the Settings surface lists
+// them all. Ordering by id keeps the list stable across saves so a row does not
+// move under the operator.
+func (s *ExternalAppStore) FindAllBySource(source string) ([]*ExternalApp, error) {
+	if source == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query("SELECT "+externalAppColumns+" FROM external_apps WHERE source = ? ORDER BY id", source)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*ExternalApp
+	for rows.Next() {
+		app, err := scanExternalApp(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, app)
+	}
+	return out, rows.Err()
 }
 
 // Upsert inserts or replaces an external app row, preserving created_at on

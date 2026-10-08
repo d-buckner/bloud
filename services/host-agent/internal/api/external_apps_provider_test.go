@@ -223,3 +223,94 @@ func TestExternalAppsModule_ResponseNeverCarriesSecretValues(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.NotContains(t, w.Body.String(), "the-real-password")
 }
+
+// A `source: contract:<name>` record is a bare off-host provider: it fills one
+// named role with no catalog app behind it, and the contract registry is the
+// whole schema for what the form has to ask for.
+func TestExternalAppsModule_AddContractProviderSubmitsContractSource(t *testing.T) {
+	mod, orch, _ := providerTestModule()
+
+	w := postExternalApp(mod, `{
+		"kind": "provider",
+		"source": "contract:pvr",
+		"name": "Off-host Radarr",
+		"url": "https://radarr.example.com",
+		"secrets": {"pvr": "off-host-key"}
+	}`)
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, orch.intents, 1)
+
+	add, ok := orch.intents[0].(orchestrator.AddExternalAppIntent)
+	require.True(t, ok)
+	assert.Equal(t, "contract:pvr", add.Spec.Source)
+	assert.Equal(t, "https://radarr.example.com", add.Spec.URL)
+	assert.Equal(t, map[string]string{"pvr": "off-host-key"}, add.Spec.Secrets)
+}
+
+// The three contracts that carry the instance's own plumbing cannot be pointed
+// somewhere else. Saying so at the boundary is what stops a form from accepting
+// a record that would resolve into a consumer dialing the wrong thing.
+func TestExternalAppsModule_AddContractProviderRejectsSystemContracts(t *testing.T) {
+	for _, contractName := range []string{"proxy", "database", "sso"} {
+		t.Run(contractName, func(t *testing.T) {
+			mod, orch, _ := providerTestModule()
+
+			w := postExternalApp(mod, `{
+				"kind": "provider",
+				"source": "contract:`+contractName+`",
+				"name": "Off-host thing",
+				"url": "https://example.com",
+				"secrets": {"`+contractName+`": "k"}
+			}`)
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), "cannot be filled externally")
+			assert.Empty(t, orch.intents, "a rejected record never reaches the queue")
+		})
+	}
+}
+
+func TestExternalAppsModule_AddContractProviderRejectsUnknownContract(t *testing.T) {
+	mod, orch, _ := providerTestModule()
+
+	w := postExternalApp(mod, `{
+		"kind": "provider",
+		"source": "contract:nope",
+		"name": "Off-host thing",
+		"url": "https://example.com"
+	}`)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "unknown contract")
+	assert.Empty(t, orch.intents)
+}
+
+func TestExternalAppsModule_AddContractProviderRequiresCredential(t *testing.T) {
+	mod, orch, _ := providerTestModule()
+
+	w := postExternalApp(mod, `{
+		"kind": "provider",
+		"source": "contract:pvr",
+		"name": "Off-host Radarr",
+		"url": "https://radarr.example.com"
+	}`)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "requires a credential")
+	assert.Empty(t, orch.intents)
+}
+
+// A contract that declares no values rejects one the operator invented, so a
+// typo cannot be stored and then silently never reach a consumer.
+func TestExternalAppsModule_AddContractProviderRejectsUndeclaredValue(t *testing.T) {
+	mod, orch, _ := providerTestModule()
+
+	w := postExternalApp(mod, `{
+		"kind": "provider",
+		"source": "contract:pvr",
+		"name": "Off-host Radarr",
+		"url": "https://radarr.example.com",
+		"secrets": {"pvr": "off-host-key"},
+		"values": {"pvr": {"baseUrl": "https://wrong.example.com"}}
+	}`)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "does not declare a value")
+	assert.Empty(t, orch.intents)
+}

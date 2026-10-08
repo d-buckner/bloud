@@ -33,6 +33,11 @@ type aiSettingsModule struct {
 	catalog       catalog.CacheInterface
 	orch          orchestratorCaller
 	logger        *slog.Logger
+	// externalApps holds the upstreams. An AI upstream is an external provider
+	// record that fills the `inference` contract, so the Settings surface reads
+	// and writes the same registry the resolver does rather than a private KV
+	// entry that the two of them have to keep in step.
+	externalApps store.ExternalAppStoreInterface
 }
 
 // aiUpstreamResponse is one upstream as the UI sees it. The credential is never
@@ -176,26 +181,49 @@ func (m *aiSettingsModule) TestAIHandler() http.HandlerFunc {
 	}
 }
 
+// readSettings assembles the AI settings from the two places they live: the
+// upstreams are `contract:inference` records in the external registry, the
+// default model is an instance setting because it names a choice among upstreams
+// rather than a property of any one of them.
 func (m *aiSettingsModule) readSettings() (inference.Settings, error) {
-	if m.settingsStore == nil {
-		return inference.Settings{}, nil
+	defaultModel := ""
+	if m.settingsStore != nil {
+		v, err := m.settingsStore.Get(inference.SettingDefaultModel)
+		if err != nil {
+			return inference.Settings{}, err
+		}
+		defaultModel = v
 	}
-	upstreamsJSON, err := m.settingsStore.Get(inference.SettingUpstreams)
+	if m.externalApps == nil {
+		return inference.Settings{DefaultModel: defaultModel}, nil
+	}
+	records, err := m.externalApps.FindAllBySource(store.ExternalAppSourceForContract(inference.ContractName))
 	if err != nil {
 		return inference.Settings{}, err
 	}
-	defaultModel, err := m.settingsStore.Get(inference.SettingDefaultModel)
-	if err != nil {
-		return inference.Settings{}, err
-	}
-	return inference.DecodeSettings(upstreamsJSON, defaultModel)
+	return inference.Settings{
+		Upstreams:    inference.UpstreamsFromExternal(records),
+		DefaultModel: defaultModel,
+	}, nil
 }
 
+// hasAPIKey reports whether any configured upstream has a stored credential. It
+// drives the "a key is saved" indicator, which is per-upstream state the list
+// response does not carry.
 func (m *aiSettingsModule) hasAPIKey() bool {
-	if m.secrets == nil {
+	if m.secrets == nil || m.externalApps == nil {
 		return false
 	}
-	return m.secrets.GetAppSecret(inference.SecretScope, inference.SecretAPIKey) != ""
+	records, err := m.externalApps.FindAllBySource(store.ExternalAppSourceForContract(inference.ContractName))
+	if err != nil {
+		return false
+	}
+	for _, rec := range records {
+		if m.secrets.GetAppSecret(store.ExternalSecretScope(rec.ID), inference.ContractName) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // servedTo names each installed app that declares the inference contract and how

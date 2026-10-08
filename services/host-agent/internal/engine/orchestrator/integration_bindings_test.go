@@ -11,6 +11,8 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
 )
 
 // fakeSecrets is an in-memory AppSecretsProvider: the published bag the
@@ -41,6 +43,11 @@ func (f *fakeSecrets) GetAppSecret(appName, key string) string {
 
 func (f *fakeSecrets) SetAppSecret(appName, key, value string) error {
 	f.publish(appName, key, value)
+	return nil
+}
+
+func (f *fakeSecrets) DeleteAppSecrets(appName string) error {
+	delete(f.published, appName)
 	return nil
 }
 
@@ -101,16 +108,21 @@ func bindingsOrchestrator(t *testing.T, appStore *FakeAppStore, apps ...*catalog
 		cache.AddApp(app)
 	}
 	secrets := newFakeSecrets()
+	extStore := store.NewExternalAppStore(testdb.SetupTestDB(t))
 	orch := NewOrchestrator(
 		graph.New(graph.NewMapRepository()),
 		new(MockConfiguratorRegistry),
 		cache,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{Stores: StoresConfig{AppStore: appStore, Secrets: secrets}},
+		OrchestratorConfig{Stores: StoresConfig{
+			AppStore:     appStore,
+			Secrets:      secrets,
+			ExternalApps: extStore,
+		}},
 	)
-	// Every binding test gets a settings store so the instance can act as a
-	// contract provider; an empty map reads as "nothing configured".
+	// Every binding test gets a settings store so the instance can still hold
+	// its default model; an empty map reads as "nothing configured".
 	orch.settings = newFakeSettings()
 	return orch, secrets
 }

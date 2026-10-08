@@ -11,6 +11,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
 // The resolution tests cover what a binding says. These cover what a settings
@@ -73,9 +74,13 @@ func TestApplyIntents_DispatchesSetInferenceIntent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, graph.StatusInitializing, node.ActualStatus)
 
-	// And the values it persisted are the canonical ones the API echoed.
+	// And the values it persisted are the canonical ones the API echoed. The
+	// upstream lands in the external registry, not the settings KV.
 	assert.Equal(t, "model-b", settings.values[inference.SettingDefaultModel])
-	assert.Contains(t, settings.values[inference.SettingUpstreams], "two.example.test")
+	records, err := orch.externalApps.FindAllBySource(store.ExternalAppSourceForContract(inference.ContractName))
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, "http://two.example.test/v1", records[0].URL)
 }
 
 // The no-op guard is what keeps the UI from restarting every wired app when a

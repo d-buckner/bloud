@@ -3,6 +3,8 @@
 package orchestrator
 
 import (
+	"fmt"
+
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
@@ -47,10 +49,6 @@ func externalAppSource(id string, record *store.ExternalApp) providerSource {
 	return providerSource{kind: configurator.ProviderKindExternalApp, id: id, external: record}
 }
 
-func settingSource() providerSource {
-	return providerSource{kind: configurator.ProviderKindSetting, id: catalog.SettingProviderSource}
-}
-
 func (s providerSource) isSetting() bool { return s.kind == configurator.ProviderKindSetting }
 
 // isExternal reports whether this provider is a remote install rather than a
@@ -92,38 +90,56 @@ func settingProviderRef(populated bool) configurator.ProviderRef {
 	}
 }
 
-// inferenceSettings reads the AI settings the instance holds as a contract
-// provider. A missing settings store reads as "nothing configured" rather than
-// an error, so a resolver call never fails a convergence pass over an absent
-// optional setting.
-func (o *Orchestrator) inferenceSettings() inference.Settings {
-	if o.settings == nil {
-		return inference.Settings{}
+// settingRecordProviderRef builds the ProviderRef for an off-host record that
+// fills a contract directly, with no catalog app behind it.
+//
+// App carries the record's own ID rather than the literal "setting". A
+// consumer that names its provider in a config file needs something stable to
+// write, and two records for the same contract have to be tellable apart. The
+// Kind stays ProviderKindSetting, which is what says "the operator filled this
+// role" rather than "Bloud booted this app".
+func settingRecordProviderRef(rec *store.ExternalApp) configurator.ProviderRef {
+	return configurator.ProviderRef{
+		Kind:      configurator.ProviderKindSetting,
+		App:       rec.ID,
+		Installed: true,
+		BaseURL:   rec.URL,
+		LocalURL:  rec.URL,
 	}
-	upstreamsJSON, err := o.settings.Get(inference.SettingUpstreams)
-	if err != nil {
-		o.logger.Warn("cannot read AI upstreams; the instance provides no inference", "error", err)
-		return inference.Settings{}
-	}
-	defaultModel, err := o.settings.Get(inference.SettingDefaultModel)
-	if err != nil {
-		o.logger.Warn("cannot read AI default model; consumers fall back to their own", "error", err)
-		defaultModel = ""
-	}
-	settings, err := inference.DecodeSettings(upstreamsJSON, defaultModel)
-	if err != nil {
-		o.logger.Warn("AI upstreams are stored in an unreadable form", "error", err)
-		return inference.Settings{}
-	}
-	return settings
 }
 
-// settingInferenceSource resolves the instance's configured upstream into an
-// inference binding. It returns ok=false when nothing is configured; a parse
-// failure is logged and also reads as not-configured, because a binding built
-// from an endpoint that does not parse would be worse than none.
-func (o *Orchestrator) settingInferenceSource(requires []string) (configurator.InferenceBinding, bool) {
-	settings := o.inferenceSettings()
+// defaultModel reads the instance's default model. It stays a settings key
+// rather than a provider attribute because it names a choice among upstreams,
+// not a property of any one of them.
+func (o *Orchestrator) defaultModel() string {
+	if o.settings == nil {
+		return ""
+	}
+	v, err := o.settings.Get(inference.SettingDefaultModel)
+	if err != nil {
+		o.logger.Warn("cannot read the AI default model; consumers fall back to their own", "error", err)
+		return ""
+	}
+	return v
+}
+
+// settingInferenceSource resolves the operator's own AI upstreams into an
+// inference binding. The upstreams are the external provider records that fill
+// the `inference` contract, and the first enabled one is the active one, which
+// is the same rule the Settings surface has always applied.
+//
+// It returns ok=false when nothing is configured; a parse failure is logged and
+// also reads as not-configured, because a binding built from an endpoint that
+// does not parse would be worse than none.
+func (o *Orchestrator) settingInferenceSource(requires []string, external externalRegistry) (configurator.InferenceBinding, bool) {
+	records := external.externalForContract(inference.ContractName)
+	if len(records) == 0 {
+		return configurator.InferenceBinding{}, false
+	}
+	settings := inference.Settings{
+		Upstreams:    inference.UpstreamsFromExternal(records),
+		DefaultModel: o.defaultModel(),
+	}
 	ep, ok, err := settings.Endpoint()
 	if err != nil {
 		o.logger.Warn("configured AI upstream endpoint does not parse; providing no inference binding", "error", err)
@@ -144,7 +160,7 @@ func (o *Orchestrator) settingInferenceSource(requires []string) (configurator.I
 		ViaGateway: false,
 	}
 	if secretAllowed(requires, "apiKey") && o.secrets != nil {
-		binding.APIKey = o.secrets.GetAppSecret(inference.SecretScope, inference.SecretAPIKey)
+		binding.APIKey = o.secrets.GetAppSecret(store.ExternalSecretScope(upstream.ID), inference.ContractName)
 	}
 	return binding, true
 }
@@ -172,8 +188,8 @@ func secretAllowed(requires []string, name string) bool {
 // key again is not a reason to churn the stack, and not writing one is not a
 // reason to skip storing it.
 func (o *Orchestrator) applySetInferenceIntent(intent SetInferenceIntent) {
-	if o.settings == nil {
-		o.logger.Error("cannot apply inference settings: no settings store")
+	if o.settings == nil || o.externalApps == nil || o.secrets == nil {
+		o.logger.Error("cannot apply inference settings: the settings, external app, or secrets store is missing")
 		return
 	}
 
@@ -189,26 +205,24 @@ func (o *Orchestrator) applySetInferenceIntent(intent SetInferenceIntent) {
 		return
 	}
 
-	current := o.inferenceSettings()
-	if canonicalUpstreams(current.Upstreams) == canonicalUpstreams(settings.Upstreams) &&
-		current.DefaultModel == settings.DefaultModel {
-		o.logger.Info("inference settings unchanged, skipping side effects")
-		// The credential can still need storing or clearing even when nothing
-		// else moved, so it is written before the guard returns.
-		o.storeInferenceAPIKey(intent.APIKey)
-		return
-	}
+	current := inference.UpstreamsFromExternal(o.loadExternalRegistry().externalForContract(inference.ContractName))
+	unchanged := canonicalUpstreams(current) == canonicalUpstreams(settings.Upstreams) &&
+		o.defaultModel() == settings.DefaultModel
 
-	if err := o.settings.Set(inference.SettingUpstreams, canonicalUpstreams(settings.Upstreams)); err != nil {
+	if err := o.syncInferenceUpstreams(settings.Upstreams); err != nil {
 		o.logger.Error("failed to persist inference upstreams", "error", err)
 		return
 	}
 	if err := o.settings.Set(inference.SettingDefaultModel, settings.DefaultModel); err != nil {
-		o.logger.Error("failed to persist inference default model", "error", err)
+		o.logger.Error("failed to persist the AI default model", "error", err)
 		return
 	}
-	o.storeInferenceAPIKey(intent.APIKey)
+	o.storeInferenceAPIKey(settings.Upstreams, intent.APIKey)
 
+	if unchanged {
+		o.logger.Info("inference settings unchanged, skipping side effects")
+		return
+	}
 	o.logger.Info("applied inference settings",
 		"upstreams", len(settings.Upstreams),
 		"defaultModel", settings.DefaultModel)
@@ -216,14 +230,60 @@ func (o *Orchestrator) applySetInferenceIntent(intent SetInferenceIntent) {
 	o.resetInferenceConsumers()
 }
 
-// storeInferenceAPIKey writes or clears the instance-scoped upstream credential.
-// A nil pointer means the caller did not touch the field, so nothing is written.
-func (o *Orchestrator) storeInferenceAPIKey(apiKey *string) {
+// syncInferenceUpstreams makes the `contract:inference` records match the
+// list the operator saved: upsert what is there, delete what is gone, and take
+// the credential of a deleted upstream with it so a removed upstream cannot
+// leave a key behind that nothing owns.
+//
+// The upstream's stable ID is the record ID, so renaming an upstream updates
+// the same row rather than removing one and adding another out from under a
+// consumer that is mid-reconcile.
+func (o *Orchestrator) syncInferenceUpstreams(want []inference.Upstream) error {
+	existing := o.loadExternalRegistry().externalForContract(inference.ContractName)
+	keep := make(map[string]bool, len(want))
+	for _, u := range want {
+		keep[u.ID] = true
+	}
+	for _, rec := range existing {
+		if keep[rec.ID] {
+			continue
+		}
+		if err := o.externalApps.Delete(rec.ID); err != nil {
+			return fmt.Errorf("remove stale inference record %q: %w", rec.ID, err)
+		}
+		if err := o.secrets.DeleteAppSecrets(store.ExternalSecretScope(rec.ID)); err != nil {
+			o.logger.Warn("could not clear the credential of a removed AI upstream",
+				"id", rec.ID, "error", err)
+		}
+	}
+	for _, u := range want {
+		if err := o.externalApps.Upsert(inference.ExternalForUpstream(u)); err != nil {
+			return fmt.Errorf("upsert inference record %q: %w", u.ID, err)
+		}
+	}
+	return nil
+}
+
+// storeInferenceAPIKey writes the credential the operator entered onto the
+// active upstream's own record. A nil pointer means the caller did not touch
+// the field, so nothing is written.
+//
+// It goes to the active upstream alone rather than to every one of them. The
+// Settings page has a single key field, so the value entered describes the
+// upstream that was selected when it was typed; stamping it onto the others
+// would attribute one provider's credential to providers it was never meant
+// for.
+func (o *Orchestrator) storeInferenceAPIKey(upstreams []inference.Upstream, apiKey *string) {
 	if apiKey == nil || o.secrets == nil {
 		return
 	}
-	if err := o.secrets.SetAppSecret(inference.SecretScope, inference.SecretAPIKey, *apiKey); err != nil {
-		o.logger.Error("failed to store the inference API key", "error", err)
+	settings := inference.Settings{Upstreams: upstreams}
+	active, ok := settings.ActiveUpstream()
+	if !ok {
+		return
+	}
+	if err := o.secrets.SetAppSecret(store.ExternalSecretScope(active.ID), inference.ContractName, *apiKey); err != nil {
+		o.logger.Error("failed to store the inference API key", "id", active.ID, "error", err)
 	}
 }
 
