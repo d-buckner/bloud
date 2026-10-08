@@ -4,8 +4,10 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ExternalAppKind names the shape of an external app. A launcher plays no
@@ -28,7 +30,9 @@ type ExternalApp struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
 	// Source is empty for launchers. A provider names what it satisfies:
-	// "app:<catalogID>" or "contract:<name>".
+	// "app:<catalogID>" or "contract:<name>". Build and read it with
+	// ExternalAppSourceForApp / ParseExternalAppSource rather than by
+	// hand-concatenating, so the two halves cannot drift.
 	Source string `json:"source"`
 	Name   string `json:"name"`
 	URL    string `json:"url"`
@@ -40,10 +44,76 @@ type ExternalApp struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+// ExternalAppSourceKind is the discriminator half of an external provider's
+// source string: which way round the reference points.
+type ExternalAppSourceKind string
+
+const (
+	// ExternalAppSourceKindApp names a catalog app: the external record is a
+	// remote install of that app and satisfies every contract the app's
+	// metadata `provides:`.
+	ExternalAppSourceKindApp ExternalAppSourceKind = "app"
+	// ExternalAppSourceKindContract names one contract directly, for an
+	// off-host provider that has no catalog app behind it.
+	ExternalAppSourceKindContract ExternalAppSourceKind = "contract"
+)
+
+// ExternalAppSourceForApp renders the source value for a remote install of the
+// named catalog app.
+func ExternalAppSourceForApp(catalogID string) string {
+	return string(ExternalAppSourceKindApp) + ":" + catalogID
+}
+
+// ParseExternalAppSource splits a source value into its kind and reference.
+// An empty source (a launcher) and any string without a non-empty reference on
+// both sides report ok=false, so a malformed stored value reads as "not a
+// provider" rather than as a provider with an empty name.
+func ParseExternalAppSource(source string) (ExternalAppSourceKind, string, bool) {
+	kind, ref, found := strings.Cut(strings.TrimSpace(source), ":")
+	if !found {
+		return "", "", false
+	}
+	switch ExternalAppSourceKind(kind) {
+	case ExternalAppSourceKindApp, ExternalAppSourceKindContract:
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return "", "", false
+		}
+		return ExternalAppSourceKind(kind), ref, true
+	default:
+		return "", "", false
+	}
+}
+
+// Value reads one operator-supplied, non-secret value out of the record's
+// values JSON for one contract. A missing contract, a missing key, or a body
+// that does not parse all read as empty: the caller cannot tell those apart and
+// does not need to, because an absent value is what an unset field looks like
+// everywhere else in a binding too.
+func (a *ExternalApp) Value(contract, key string) string {
+	if a == nil || a.Values == "" {
+		return ""
+	}
+	var parsed map[string]map[string]string
+	if err := json.Unmarshal([]byte(a.Values), &parsed); err != nil {
+		return ""
+	}
+	return parsed[contract][key]
+}
+
+// ExternalSecretScope is the secrets-manager scope an external app's
+// credentials live under. It is deliberately not the catalog app's own scope:
+// a remote AFFiNE's password must not be readable by, or overwrite, the
+// credentials a local AFFiNE install publishes for itself.
+func ExternalSecretScope(id string) string {
+	return "external/" + id
+}
+
 // ExternalAppStoreInterface is the read/write surface for external apps.
 type ExternalAppStoreInterface interface {
 	GetAll() ([]*ExternalApp, error)
 	Get(id string) (*ExternalApp, error)
+	FindBySource(source string) (*ExternalApp, error)
 	Upsert(app *ExternalApp) error
 	Delete(id string) error
 	SetOnChange(fn func())
@@ -96,6 +166,25 @@ func (s *ExternalAppStore) GetAll() ([]*ExternalApp, error) {
 // Get returns one external app by id, or nil when it does not exist.
 func (s *ExternalAppStore) Get(id string) (*ExternalApp, error) {
 	row := s.db.QueryRow("SELECT "+externalAppColumns+" FROM external_apps WHERE id = ?", id)
+	app, err := scanExternalApp(row.Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return app, nil
+}
+
+// FindBySource returns the first external app whose source matches exactly.
+// The API keeps one record per source (a catalog ID is either run locally or
+// pointed at externally, never both), so a first match is a unique match for
+// every caller; ordering by id makes that deterministic.
+func (s *ExternalAppStore) FindBySource(source string) (*ExternalApp, error) {
+	if source == "" {
+		return nil, nil
+	}
+	row := s.db.QueryRow("SELECT "+externalAppColumns+" FROM external_apps WHERE source = ? ORDER BY id", source)
 	app, err := scanExternalApp(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

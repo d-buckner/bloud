@@ -141,9 +141,10 @@ func (m *homeModuleSimple) clientAccessIDs() map[string]bool {
 	return m.getClientAccess()
 }
 
-// launcherItems pairs each launcher external app with its saved grid position.
-// A provider external app is not a tile, so it is left out of the home payload
-// (it reaches the grid only through the developer graph, in a later PR).
+// launcherItems pairs each tile-worthy external app with its saved grid
+// position. A bare contract provider (an AI endpoint) has nothing to open, so
+// it stays out of the grid; a launcher and a remote catalog app both do, and
+// their tile opens the operator's URL.
 func (m *homeModuleSimple) launcherItems(posMap map[string]store.Position) ([]launcherWithPosition, error) {
 	if m.externalApps == nil {
 		return []launcherWithPosition{}, nil
@@ -154,7 +155,7 @@ func (m *homeModuleSimple) launcherItems(posMap map[string]store.Position) ([]la
 	}
 	items := make([]launcherWithPosition, 0, len(apps))
 	for _, app := range apps {
-		if app.Kind != string(store.ExternalAppKindLauncher) {
+		if !externalRecordIsTile(app) {
 			continue
 		}
 		pos := posMap[app.ID]
@@ -301,4 +302,22 @@ type launcherWithPosition struct {
 	Y    *int   `json:"y"`
 	W    int    `json:"w"`
 	H    int    `json:"h"`
+}
+
+// externalRecordIsTile reports whether an external record earns a grid tile.
+//
+// A launcher always does. A provider does when it stands in for a catalog app,
+// because that remote install has a UI the operator wants to reach with one
+// click; a bare contract provider is an endpoint, not a destination, so it
+// stays off the grid and lives only in the wiring.
+func externalRecordIsTile(app *store.ExternalApp) bool {
+	switch app.Kind {
+	case string(store.ExternalAppKindLauncher):
+		return true
+	case string(store.ExternalAppKindProvider):
+		kind, _, ok := store.ParseExternalAppSource(app.Source)
+		return ok && kind == store.ExternalAppSourceKindApp
+	default:
+		return false
+	}
 }

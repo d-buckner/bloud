@@ -163,37 +163,62 @@ func NewReconcileIntent() ReconcileIntent {
 	return ReconcileIntent{intentBase: newIntentBase()}
 }
 
-// AddExternalAppIntent requests adding an external app. PR 1 adds only
-// launchers: a named tile that opens a URL and wires to nothing. The record's
-// kind/source/values are the applier's to fill, so the intent carries exactly
-// the operator-facing fields and stays forward-compatible with later kinds.
+// ExternalAppSpec is the whole operator-declared record behind an add or
+// update intent. A launcher fills the identity fields and leaves the provider
+// fields zero; a provider also names its source and carries the per-contract
+// values and credentials the operator typed.
+//
+// The shape is the same for both kinds on purpose. One intent type per kind
+// would fork the plumbing for a difference that is only which fields are set,
+// and the applier would end up branching anyway.
+type ExternalAppSpec struct {
+	ID     string
+	Kind   string
+	Source string
+	Name   string
+	URL    string
+	Icon   string
+	// Values holds the operator-supplied non-secret contract values, keyed by
+	// contract name and then by the value key that contract declares. It is
+	// what stands in for the runtime values a local provider's configurator
+	// would have minted.
+	Values map[string]map[string]string
+	// Secrets holds the operator-supplied credentials keyed by the contract
+	// they belong to. The applier writes them into the external scope of the
+	// secrets manager and never into the external_apps row.
+	Secrets map[string]string
+}
+
+// AddExternalAppIntent requests adding an external app: a launcher tile, or a
+// provider record that stands in for a catalog app Bloud does not run.
+//
+// It carries no container, route, or SSO work because there is none to do. The
+// applier persists the record and its credentials and nothing else, which is
+// what keeps an external app out of the convergence layer entirely.
 type AddExternalAppIntent struct {
 	intentBase
-	ID   string
-	Name string
-	URL  string
-	Icon string
+	Spec ExternalAppSpec
 }
 
 func (AddExternalAppIntent) intentMarker() {}
 
-func NewAddExternalAppIntent(id, name, url, icon string) AddExternalAppIntent {
-	return AddExternalAppIntent{intentBase: newIntentBase(), ID: id, Name: name, URL: url, Icon: icon}
+func NewAddExternalAppIntent(spec ExternalAppSpec) AddExternalAppIntent {
+	return AddExternalAppIntent{intentBase: newIntentBase(), Spec: spec}
 }
 
-// UpdateExternalAppIntent requests changing a launcher's name, URL, or icon.
+// UpdateExternalAppIntent requests changing an external app. It carries the
+// full spec rather than a patch, so a provider's credentials and values can be
+// edited through the same call that edits its name, and "field omitted" never
+// has to mean two different things.
 type UpdateExternalAppIntent struct {
 	intentBase
-	ID   string
-	Name string
-	URL  string
-	Icon string
+	Spec ExternalAppSpec
 }
 
 func (UpdateExternalAppIntent) intentMarker() {}
 
-func NewUpdateExternalAppIntent(id, name, url, icon string) UpdateExternalAppIntent {
-	return UpdateExternalAppIntent{intentBase: newIntentBase(), ID: id, Name: name, URL: url, Icon: icon}
+func NewUpdateExternalAppIntent(spec ExternalAppSpec) UpdateExternalAppIntent {
+	return UpdateExternalAppIntent{intentBase: newIntentBase(), Spec: spec}
 }
 
 // RemoveExternalAppIntent requests deleting an external app.

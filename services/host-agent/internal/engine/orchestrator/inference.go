@@ -6,6 +6,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -20,10 +21,30 @@ type providerSource struct {
 	// id is the catalog app ID for an app provider, or
 	// catalog.InstanceProviderSource for the instance.
 	id string
+	// external is the operator-registered record when this provider is a
+	// remote install of the catalog app rather than a local one. Nil for every
+	// local app, for the instance, and for every catalog scan that has not been
+	// consulted against the external registry.
+	//
+	// It travels on the source rather than being looked up at each read so the
+	// registry is consulted once per resolution, and so the three places that
+	// answer "where is this provider" (the ref, the secret, the value) cannot
+	// disagree about which record they resolved.
+	external *store.ExternalApp
 }
 
 func appSource(id string) providerSource {
 	return providerSource{kind: configurator.ProviderKindApp, id: id}
+}
+
+// externalAppSource resolves one declared `app:` provider against the
+// external registry: the record wins over the local install, because the
+// operator registered it precisely to say "this app lives over there".
+func externalAppSource(id string, record *store.ExternalApp) providerSource {
+	if record == nil {
+		return appSource(id)
+	}
+	return providerSource{kind: configurator.ProviderKindExternalApp, id: id, external: record}
 }
 
 func instanceSource() providerSource {
@@ -31,6 +52,30 @@ func instanceSource() providerSource {
 }
 
 func (s providerSource) isInstance() bool { return s.kind == configurator.ProviderKindInstance }
+
+// isExternal reports whether this provider is a remote install rather than a
+// container Bloud runs.
+func (s providerSource) isExternal() bool { return s.external != nil }
+
+// externalAppProviderRef builds the ProviderRef for a remote install of a
+// catalog app.
+//
+// App keeps the catalog ID, which is what makes this different from an
+// instance provider: an instance is anonymous, a remote AFFiNE is still
+// AFFiNE, and a consumer that names AFFiNE in its `compatible:` list should
+// see AFFiNE come back. Node and Port stay empty because there is neither.
+// BaseURL and LocalURL are the same origin: with no container network between
+// them, what the consumer's app stores and what its configurator dials are
+// one address.
+func externalAppProviderRef(catalogID, endpoint string) configurator.ProviderRef {
+	return configurator.ProviderRef{
+		Kind:      configurator.ProviderKindExternalApp,
+		App:       catalogID,
+		Installed: true,
+		BaseURL:   endpoint,
+		LocalURL:  endpoint,
+	}
+}
 
 // instanceProviderRef builds the ProviderRef for the instance as a contract
 // provider.

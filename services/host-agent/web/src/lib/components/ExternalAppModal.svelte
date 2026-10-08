@@ -3,6 +3,7 @@
 	import Modal from './Modal.svelte';
 	import CloseButton from './CloseButton.svelte';
 	import Button from './Button.svelte';
+	import ExternalProviderForm from './ExternalProviderForm.svelte';
 	import {
 		fetchExternalApps,
 		addExternalApp,
@@ -17,19 +18,19 @@
 
 	let { open, onclose }: Props = $props();
 
-	let launchers = $state<ExternalApp[]>([]);
+	let apps = $state<ExternalApp[]>([]);
 	let loading = $state(true);
 	let saving = $state(false);
 	let error = $state('');
+	let kind = $state<'launcher' | 'provider'>('launcher');
 
-	// The add form. A launcher is the only external-app kind today, so the
-	// form is name + URL + optional icon, nothing more.
+	// The add form. A launcher is name + URL + optional icon, nothing more.
 	let name = $state('');
 	let url = $state('');
 	let icon = $state('');
 
-	// Reload on every open so a launcher added or removed elsewhere is
-	// reflected, and a stale list never outlives the visit.
+	// Reload on every open so an app added or removed elsewhere is reflected,
+	// and a stale list never outlives the visit.
 	$effect(() => {
 		if (open) void reload();
 	});
@@ -38,7 +39,7 @@
 		loading = true;
 		error = '';
 		try {
-			launchers = await fetchExternalApps();
+			apps = await fetchExternalApps();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not load external apps';
 		} finally {
@@ -72,6 +73,11 @@
 			error = e instanceof Error ? e.message : 'Could not remove external app';
 		}
 	}
+
+	function kindLabel(app: ExternalApp): string {
+		if (app.kind === 'provider') return `remote ${app.app ?? 'app'}`;
+		return 'launcher';
+	}
 </script>
 
 <Modal {open} {onclose} size="lg">
@@ -79,60 +85,90 @@
 		<div>
 			<h2>External app</h2>
 			<p class="modal-subtitle">
-				A shortcut to a site you already use. It becomes a tile on your dashboard that
-				opens that URL.
+				Something Bloud does not run: a shortcut to a site you already use, or a
+				remote install of a catalog app that keeps wiring to your other apps.
 			</p>
 		</div>
 		<CloseButton onclick={onclose} />
 	</header>
 
 	<div class="modal-body">
-		<form class="add-form" onsubmit={(e) => { e.preventDefault(); handleAdd(); }}>
-			<label for="ext-name">Name</label>
-			<input
-				id="ext-name"
-				type="text"
-				placeholder="e.g. My NAS"
-				bind:value={name}
-				disabled={saving}
-				autocomplete="off"
-			/>
-			<label for="ext-url">URL</label>
-			<input
-				id="ext-url"
-				type="url"
-				placeholder="https://example.com"
-				bind:value={url}
-				disabled={saving}
-				autocomplete="off"
-				spellcheck="false"
-			/>
-			<label for="ext-icon">Icon URL (optional)</label>
-			<input
-				id="ext-icon"
-				type="text"
-				placeholder="https://example.com/icon.png"
-				bind:value={icon}
-				disabled={saving}
-				autocomplete="off"
-				spellcheck="false"
-			/>
-			<Button variant="primary" size="sm" type="submit" disabled={saving || !name.trim() || !url.trim()}>
-				{saving ? 'Adding…' : 'Add'}
-			</Button>
-		</form>
+		<div class="kind-tabs" role="tablist">
+			<button
+				type="button"
+				role="tab"
+				class="kind-tab"
+				class:active={kind === 'launcher'}
+				aria-selected={kind === 'launcher'}
+				onclick={() => (kind = 'launcher')}
+			>
+				Launcher
+			</button>
+			<button
+				type="button"
+				role="tab"
+				class="kind-tab"
+				class:active={kind === 'provider'}
+				aria-selected={kind === 'provider'}
+				onclick={() => (kind = 'provider')}
+			>
+				Remote app
+			</button>
+		</div>
+
+		{#if kind === 'launcher'}
+			<form class="add-form" onsubmit={(e) => { e.preventDefault(); handleAdd(); }}>
+				<label for="ext-name">Name</label>
+				<input
+					id="ext-name"
+					type="text"
+					placeholder="e.g. My NAS"
+					bind:value={name}
+					disabled={saving}
+					autocomplete="off"
+				/>
+				<label for="ext-url">URL</label>
+				<input
+					id="ext-url"
+					type="url"
+					placeholder="https://example.com"
+					bind:value={url}
+					disabled={saving}
+					autocomplete="off"
+					spellcheck="false"
+				/>
+				<label for="ext-icon">Icon URL (optional)</label>
+				<input
+					id="ext-icon"
+					type="text"
+					placeholder="https://example.com/icon.png"
+					bind:value={icon}
+					disabled={saving}
+					autocomplete="off"
+					spellcheck="false"
+				/>
+				<Button variant="primary" size="sm" type="submit" disabled={saving || !name.trim() || !url.trim()}>
+					{saving ? 'Adding…' : 'Add'}
+				</Button>
+			</form>
+		{:else}
+			<ExternalProviderForm onsaved={reload} />
+		{/if}
 
 		{#if loading}
 			<p class="hint">Loading…</p>
-		{:else if launchers.length > 0}
-			<ul class="launcher-list">
-				{#each launchers as launcher (launcher.id)}
-					<li class="launcher-row">
-						<div class="launcher-meta">
-							<span class="launcher-name">{launcher.name}</span>
-							<span class="launcher-url">{launcher.url}</span>
+		{:else if apps.length > 0}
+			<ul class="external-list">
+				{#each apps as app (app.id)}
+					<li class="external-row">
+						<div class="external-meta">
+							<span class="external-name">
+								{app.name}
+								<span class="external-kind">{kindLabel(app)}</span>
+							</span>
+							<span class="external-url">{app.url}</span>
 						</div>
-						<Button variant="ghost" size="sm" onclick={() => handleRemove(launcher.id)}>
+						<Button variant="ghost" size="sm" onclick={() => handleRemove(app.id)}>
 							Remove
 						</Button>
 					</li>
@@ -165,7 +201,7 @@
 		margin: var(--space-xs) 0 0;
 		font-size: 0.8125rem;
 		color: var(--color-text-muted);
-		max-width: 44ch;
+		max-width: 48ch;
 	}
 
 	.modal-body {
@@ -173,6 +209,28 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-md);
+	}
+
+	.kind-tabs {
+		display: flex;
+		gap: var(--space-xs);
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.kind-tab {
+		background: none;
+		border: none;
+		border-bottom: 2px solid transparent;
+		padding: var(--space-sm) var(--space-md);
+		font-family: var(--font-serif);
+		font-size: 0.875rem;
+		color: var(--color-text-muted);
+		cursor: pointer;
+	}
+
+	.kind-tab.active {
+		color: var(--color-text);
+		border-bottom-color: var(--color-accent);
 	}
 
 	.add-form {
@@ -202,7 +260,7 @@
 		border-color: var(--color-accent);
 	}
 
-	.launcher-list {
+	.external-list {
 		list-style: none;
 		margin: 0;
 		padding: 0;
@@ -211,7 +269,7 @@
 		gap: var(--space-sm);
 	}
 
-	.launcher-row {
+	.external-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -222,18 +280,29 @@
 		border-radius: var(--radius-md);
 	}
 
-	.launcher-meta {
+	.external-meta {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
 		min-width: 0;
 	}
 
-	.launcher-name {
+	.external-name {
 		font-weight: 500;
+		display: flex;
+		gap: var(--space-sm);
+		align-items: baseline;
 	}
 
-	.launcher-url {
+	.external-kind {
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--color-text-muted);
+		font-weight: 400;
+	}
+
+	.external-url {
 		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		overflow: hidden;
