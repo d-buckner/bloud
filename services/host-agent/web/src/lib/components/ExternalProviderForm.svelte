@@ -6,6 +6,12 @@
 		addExternalProvider,
 		type ExternalProviderOption
 	} from '$lib/clients/settingsClient';
+	import {
+		buildProviderPayload,
+		deriveProviderInputs,
+		missingProviderInputs,
+		type ProviderFieldValues
+	} from '$lib/utils/providerInputs';
 
 	interface Props {
 		onsaved?: () => void;
@@ -19,13 +25,27 @@
 	let error = $state('');
 
 	let selected = $state('');
-	let name = $state('');
 	let url = $state('');
-	let values = $state<Record<string, Record<string, string>>>({});
-	let secrets = $state<Record<string, string>>({});
+	let fieldValues = $state<ProviderFieldValues>({});
 
 	let current = $derived(options.find((o) => o.app === selected));
 	let selectable = $derived(options.filter((o) => !o.installed));
+
+	// Named for the app, not for where it lives. A remote Jellyfin is still
+	// Jellyfin: the tile wears its icon and carries its name, and nothing on
+	// the grid needs to announce that this one is not a container Bloud
+	// booted. The record keeps the distinction; the dashboard does not. And
+	// because the catalog already answers it, the form does not ask: a field
+	// prefilled with the only thing it can hold is a field that gets skipped,
+	// not read. Renaming is the Configure modal's job.
+	let name = $derived(current?.displayName ?? '');
+
+	// The whole form, derived. Not every field the registry knows, but the
+	// subset this operator actually owns: static catalog facts and optional
+	// values are left out, and one credential covers every contract of the
+	// app that declares the same secret name. For a remote Sonarr that is the
+	// endpoint and one API key, and nothing else.
+	let inputs = $derived(deriveProviderInputs(current?.contracts ?? []));
 
 	$effect(() => {
 		void load();
@@ -42,51 +62,19 @@
 		}
 	}
 
-	// Choosing the app seeds the whole form from the generated schema rather
-	// than from a per-app definition written here: the contract registry says
-	// what a provider must publish, so this component never learns what AFFiNE
-	// is.
+	// Choosing the app seeds the form from the generated schema rather than
+	// from a per-app definition written here: the contract registry says what
+	// a provider must publish, so this component never learns what AFFiNE is.
 	function chooseApp(app: string) {
 		selected = app;
-		const option = options.find((o) => o.app === app);
-		if (!option) return;
-		// Named for the app, not for where it lives. A remote Jellyfin is still
-		// Jellyfin: the tile wears its icon and carries its name, and nothing on
-		// the grid needs to announce that this one is not a container Bloud
-		// booted. The record keeps the distinction; the dashboard does not.
-		name = option.displayName;
-		values = {};
-		secrets = {};
-		for (const contract of option.contracts) {
-			values[contract.name] = {};
-			secrets[contract.name] = '';
-			for (const field of contract.fields) {
-				if (field.kind === 'value') {
-					// Prefill what the catalog already declares. A static fact about
-					// the app is true of a remote copy unchanged, so the operator
-					// sees it filled and only types what this instance owns.
-					values[contract.name][field.key] = field.default ?? '';
-				}
-			}
-		}
+		fieldValues = {};
 	}
 
-	const requiredValueFields = $derived(
-		(current?.contracts ?? []).flatMap((c) => c.fields.filter(
-			(f) => f.kind === 'value' && f.required && !(values[c.name]?.[f.key] ?? '').trim()
-		))
-	);
-	const requiredSecretFields = $derived(
-		(current?.contracts ?? []).flatMap((c) =>
-			c.fields.filter((f) => f.kind === 'secret' && f.required && !(secrets[c.name] ?? '').trim())
-		)
-	);
 	const canSubmit = $derived(
 		!!selected &&
 			!!name.trim() &&
 			!!url.trim() &&
-			requiredValueFields.length === 0 &&
-			requiredSecretFields.length === 0
+			missingProviderInputs(inputs, fieldValues).length === 0
 	);
 
 	async function handleAdd() {
@@ -94,18 +82,17 @@
 		saving = true;
 		error = '';
 		try {
+			const payload = buildProviderPayload(inputs, fieldValues);
 			await addExternalProvider({
 				app: selected,
 				name: name.trim(),
 				url: url.trim(),
-				values,
-				secrets
+				values: payload.values,
+				secrets: payload.secrets
 			});
 			selected = '';
-			name = '';
 			url = '';
-			values = {};
-			secrets = {};
+			fieldValues = {};
 			onsaved?.();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not add the remote app';
@@ -131,14 +118,11 @@
 			{/each}
 		</select>
 
-		<label for="prov-name">Name</label>
-		<input id="prov-name" type="text" bind:value={name} disabled={saving || !selected} autocomplete="off" />
-
 		<label for="prov-url">Endpoint</label>
 		<input
 			id="prov-url"
 			type="text"
-			placeholder="https://affine.example.com"
+			placeholder="https://radarr.example.com"
 			bind:value={url}
 			disabled={saving || !selected}
 			autocomplete="off"
@@ -146,41 +130,20 @@
 		/>
 		<p class="field-help">The origin only, with no path. Bloud appends what each integration needs.</p>
 
-		{#if current}
-			{#each current.contracts as contract (contract.name)}
-				<fieldset class="contract-block">
-					<legend>{contract.name}</legend>
-					{#each contract.fields as field (field.key)}
-						<label for={`prov-${contract.name}-${field.key}`}>
-							{field.label}
-							{#if !field.required}<span class="optional">optional</span>{/if}
-						</label>
-						{#if field.kind === 'secret'}
-							<input
-								id={`prov-${contract.name}-${field.key}`}
-								type="password"
-								bind:value={secrets[contract.name]}
-								disabled={saving}
-								autocomplete="off"
-								spellcheck="false"
-							/>
-						{:else}
-							<input
-								id={`prov-${contract.name}-${field.key}`}
-								type="text"
-								bind:value={values[contract.name][field.key]}
-								disabled={saving}
-								autocomplete="off"
-								spellcheck="false"
-							/>
-						{/if}
-						{#if field.help}
-							<p class="field-help">{field.help}</p>
-						{/if}
-					{/each}
-				</fieldset>
-			{/each}
-		{/if}
+		{#each inputs as input (input.id)}
+			<label for={`prov-${input.id}`}>{input.label}</label>
+			<input
+				id={`prov-${input.id}`}
+				type={input.kind === 'secret' ? 'password' : 'text'}
+				bind:value={fieldValues[input.id]}
+				disabled={saving}
+				autocomplete="off"
+				spellcheck="false"
+			/>
+			{#if input.help}
+				<p class="field-help">{input.help}</p>
+			{/if}
+		{/each}
 
 		{#if error}
 			<p class="error">{error}</p>
@@ -223,30 +186,6 @@
 	.provider-form select:focus {
 		outline: none;
 		border-color: var(--color-accent);
-	}
-
-	.contract-block {
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		margin: var(--space-xs) 0 0;
-	}
-
-	.contract-block legend {
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: var(--color-text-muted);
-		padding: 0 var(--space-xs);
-	}
-
-	.optional {
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
-		font-style: italic;
 	}
 
 	.field-help {

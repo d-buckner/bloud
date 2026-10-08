@@ -222,14 +222,19 @@
 			<h1>Home</h1>
 			<p class="subtitle">{subtitle}</p>
 		</div>
-		<Button variant="secondary" size="sm" onclick={() => (showWidgetPicker = true)}>
-			<Icon name="plus" size={15} />
-			Add widget
-		</Button>
-		<Button variant="secondary" size="sm" onclick={() => (showExternalAppModal = true)}>
-			<Icon name="external-link" size={15} />
-			Add custom app
-		</Button>
+		<!-- Both carry the plus because the glyph names the action, not the kind of
+		     thing added: each button puts something new on the grid, and an
+		     external app is as much an addition as a widget is. -->
+		<div class="header-actions">
+			<Button variant="secondary" size="sm" onclick={() => (showWidgetPicker = true)}>
+				<Icon name="plus" size={15} />
+				Add widget
+			</Button>
+			<Button variant="secondary" size="sm" onclick={() => (showExternalAppModal = true)}>
+				<Icon name="plus" size={15} />
+				Add external app
+			</Button>
+		</div>
 	</header>
 
 	{#if !mounted || $loading}
@@ -335,6 +340,18 @@
 		margin: 0;
 		font-size: 1.75rem;
 		font-weight: 500;
+	}
+
+	/* The two add actions travel together. Without this wrapper the header has
+	   three flex children under `justify-content: space-between`, which puts
+	   one of them in the middle of the row: a button floating out over the
+	   subtitle, unattached to either the title it does not belong to or the
+	   sibling it does. Grouping them is what makes the pair read as one
+	   cluster on the right instead of two strays. */
+	.header-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
 	}
 
 	.subtitle {

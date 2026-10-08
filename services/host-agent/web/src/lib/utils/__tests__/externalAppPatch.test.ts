@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { launcherPatch, missingRequiredFields, providerPatch } from '../externalAppPatch';
+import { launcherPatch, providerPatch } from '../externalAppPatch';
 
 const emptyForm = {
 	name: 'NAS Jellyfin',
@@ -59,50 +59,5 @@ describe('providerPatch', () => {
 		// own icon field does nothing here and should not be written.
 		const patch = providerPatch({ ...emptyForm, icon: 'https://example.com/icon.png' });
 		expect(patch).not.toHaveProperty('icon');
-	});
-});
-
-describe('missingRequiredFields', () => {
-	const required = [
-		{ contract: 'mediaServer', key: 'adminUsername', label: 'Admin username', kind: 'value' as const },
-		{ contract: 'mediaServer', key: 'adminPassword', label: 'Admin password', kind: 'secret' as const }
-	];
-
-	it('names the name and the endpoint before anything else', () => {
-		expect(
-			missingRequiredFields({ ...emptyForm, name: '  ', url: '' }, [], [])
-		).toEqual(['name', 'endpoint']);
-	});
-
-	it('reports an empty required value', () => {
-		const missing = missingRequiredFields({ ...emptyForm, values: {} }, required, []);
-		expect(missing).toContain('Admin username');
-	});
-
-	it('passes a required value that is filled', () => {
-		const form = {
-		...emptyForm,
-		values: { mediaServer: { adminUsername: 'daniel' } },
-		secrets: { mediaServer: 'pw' }
-	};
-		expect(missingRequiredFields(form, required, [])).toEqual([]);
-	});
-
-	// The stored-credential case: the form shows a blank password box because
-	// it cannot read the one on file, and the operator should still be able to
-	// save a name change without touching it.
-	it('treats a stored secret as satisfying its own requirement', () => {
-		const form = { ...emptyForm, values: { mediaServer: { adminUsername: 'daniel' } } };
-		expect(missingRequiredFields(form, required, ['mediaServer'])).toEqual([]);
-	});
-
-	it('still reports a stored secret for a different contract', () => {
-		const form = { ...emptyForm, values: { mediaServer: { adminUsername: 'daniel' } } };
-		expect(missingRequiredFields(form, required, ['appApi'])).toEqual(['Admin password']);
-	});
-
-	it('ignores optional fields', () => {
-		const form = { ...emptyForm, secrets: { other: '' } };
-		expect(missingRequiredFields(form, [], [])).toEqual([]);
 	});
 });

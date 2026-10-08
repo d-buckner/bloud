@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -388,4 +390,61 @@ func TestValidateProviderSecrets_DoesNotShareAcrossDifferentSecretNames(t *testi
 	_, err := validateProviderSecrets(app, map[string]string{"mediaServer": "a-password"}, false)
 	require.Error(t, err, "an apiKey slot must not be filled from an adminPassword")
 	assert.Contains(t, err.Error(), "pvr")
+}
+
+// realProviderCatalogDir points at the checked-in catalog. The test below reads
+// it rather than a fixture because the property it pins lives in the app
+// metadata, not in this package.
+func realProviderCatalogDir(t *testing.T) string {
+	t.Helper()
+	for _, p := range []string{"../../../../apps", "../../apps", "apps"} {
+		if _, err := os.Stat(filepath.Join(p, "sonarr", "metadata.yaml")); err == nil {
+			return p
+		}
+	}
+	t.Skip("real catalog not reachable from the test working directory")
+	return ""
+}
+
+// TestRealCatalogServarrNeedsOnlyEndpointAndKey pins what an operator is
+// actually asked for when they point Bloud at someone else's Sonarr or Radarr:
+// the endpoint and one API key.
+//
+// It reads the real catalog on purpose. The property is a fact about the two
+// apps' `provides:` blocks, so only the metadata can say when it stops being
+// true: a required non-static value added to either icsFeed offer, or a second
+// credential name on either, turns the two-field form back into one that
+// recites the contract registry at a person who has nothing to add.
+func TestRealCatalogServarrNeedsOnlyEndpointAndKey(t *testing.T) {
+	apps, err := catalog.NewLoader(realProviderCatalogDir(t)).LoadAll()
+	require.NoError(t, err)
+
+	for _, name := range []string{"sonarr", "radarr"} {
+		t.Run(name, func(t *testing.T) {
+			app, ok := apps[name]
+			require.True(t, ok, "%s must be in the catalog", name)
+
+			var required []externalProviderField
+			for _, contract := range providerContractFields(app) {
+				for _, field := range contract.Fields {
+					if field.Required {
+						required = append(required, field)
+					}
+				}
+			}
+
+			// Two fields arrive, one input renders: the same apiKey on both the
+			// pvr and the icsFeed offer is one credential, and the form folds
+			// them together the way the resolver shares it.
+			require.Len(t, required, 2)
+			distinct := map[string]bool{}
+			for _, field := range required {
+				assert.Equal(t, "secret", field.Kind,
+					"a required value for %s would put a fact on the form the operator does not own", name)
+				assert.Equal(t, "apiKey", field.Key)
+				distinct[field.Kind+":"+field.Key] = true
+			}
+			assert.Len(t, distinct, 1, "one credential input, not one per contract")
+		})
+	}
 }

@@ -1,14 +1,15 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	// Edit one external app: the launcher's URL, or a remote install's endpoint,
-	// contract values, and credentials. The record's *kind* and *source* are not
-	// editable, because those say what the record is, and changing what it is
-	// means removing it and adding the other thing.
+	// Edit one external app: the launcher's URL, or a remote install's endpoint
+	// and the credentials and values it actually owes. The record's *kind* and
+	// *source* are not editable, because those say what the record is, and
+	// changing what it is means removing it and adding the other thing.
 	//
-	// The form is generated the same way the add form is: from the provider's
-	// `provides:` and the contract registry, never from a per-app definition
-	// written here. What differs is only where each field is seeded from: the
-	// stored record rather than the catalog default.
+	// The form is generated the same way the add form is, from the provider's
+	// `provides:` and the contract registry, and it shows the same trimmed set:
+	// only the fields the operator owns. A value the provider's catalog entry
+	// declares statically is not shown and is not resent either, so the copy on
+	// the record survives a save untouched.
 	import Modal from './Modal.svelte';
 	import CloseButton from './CloseButton.svelte';
 	import Button from './Button.svelte';
@@ -16,14 +17,17 @@
 		fetchExternalProviders,
 		updateExternalApp,
 		type ExternalApp,
+		type ExternalProviderContract,
 		type ExternalProviderOption
 	} from '$lib/clients/settingsClient';
+	import { launcherPatch, providerPatch, type ExternalAppForm } from '$lib/utils/externalAppPatch';
 	import {
-		launcherPatch,
-		missingRequiredFields,
-		providerPatch,
-		type ExternalAppForm
-	} from '$lib/utils/externalAppPatch';
+		buildProviderPayload,
+		deriveProviderInputs,
+		missingProviderInputs,
+		readProviderInput,
+		type ProviderFieldValues
+	} from '$lib/utils/providerInputs';
 
 	interface Props {
 		app: ExternalApp | null;
@@ -40,8 +44,7 @@
 	let name = $state('');
 	let url = $state('');
 	let icon = $state('');
-	let values = $state<Record<string, Record<string, string>>>({});
-	let secrets = $state<Record<string, string>>({});
+	let fieldValues = $state<ProviderFieldValues>({});
 	let providers = $state<ExternalProviderOption[]>([]);
 
 	let isProvider = $derived(app?.kind === 'provider');
@@ -60,35 +63,22 @@
 	 */
 	let schema = $derived(providers.find((option) => option.app === app?.app) ?? null);
 
-	/**
-	 * Required fields still empty. A stored secret counts as satisfying its own
-	 * requirement: the list response never echoes the value back, so the form
-	 * cannot re-supply one it is only being asked to confirm.
-	 */
-	let form = $derived<ExternalAppForm>({ name, url, icon, values, secrets });
+	let inputs = $derived(deriveProviderInputs(schema?.contracts ?? []));
 
-	let requiredFields = $derived(
-		(schema?.contracts ?? []).flatMap((contract) =>
-			contract.fields
-				.filter((field) => field.required)
-				.map((field) => ({
-					contract: contract.name,
-					key: field.key,
-					label: field.label,
-					kind: field.kind
-				}))
-		)
-	);
+	let storedSecrets = $derived(app?.secretContracts ?? []);
 
-	let missing = $derived(
-		missingRequiredFields(form, isProvider ? requiredFields : [], app?.secretContracts ?? [])
-	);
+	let missing = $derived([
+		...(name.trim() ? [] : ['name']),
+		...(url.trim() ? [] : ['endpoint']),
+		...missingProviderInputs(inputs, fieldValues, storedSecrets)
+	]);
 
-	let canSubmit = $derived(missing.length === 0 && !saving);
-
-	function hasStoredSecret(contract: string): boolean {
-		return (app?.secretContracts ?? []).includes(contract);
-	}
+	// The schema has to have landed before a save is offered. Not because the
+	// save would be destructive -- an omitted credential reads as "keep the
+	// one on file", and the server re-validates the values it is sent -- but
+	// because a form that can be submitted before it has rendered its own
+	// fields teaches the operator that the fields are optional.
+	let canSubmit = $derived(missing.length === 0 && !saving && !loadingSchema);
 
 	/**
 	 * A copy-on-write copy of the stored contract values, so editing the form
@@ -108,6 +98,25 @@
 		return copy;
 	}
 
+	/**
+	 * The stored values with the typed ones layered on top, key by key.
+	 *
+	 * The layering is what keeps the fields this form no longer renders honest.
+	 * A static value the catalog answers is not an input here, so it never
+	 * appears in the typed payload, and the copy already on the record carries
+	 * through instead of being overwritten by an absent key.
+	 */
+	function mergeTypedValues(
+		stored: Record<string, Record<string, string>> | undefined,
+		typed: Record<string, Record<string, string>>
+	): Record<string, Record<string, string>> {
+		const merged = cloneValues(stored);
+		for (const [contract, fields] of Object.entries(typed)) {
+			merged[contract] = { ...(merged[contract] ?? {}), ...fields };
+		}
+		return merged;
+	}
+
 	// Seeded from the record, and re-seeded only when the record *identity*
 	// changes. A form that re-seeded on every store refresh would wipe what the
 	// operator is halfway through typing; one that never re-seeded would show
@@ -121,15 +130,16 @@
 		name = record.name;
 		url = record.url;
 		icon = record.icon;
-		values = cloneValues(record.values);
-		secrets = Object.fromEntries(Object.keys(values).map((contract) => [contract, '']));
-		if (record.kind === 'provider' && record.app) void loadSchema();
+		fieldValues = {};
+		if (record.kind === 'provider' && record.app) void loadSchema(record);
 	});
 
-	async function loadSchema() {
+	async function loadSchema(record: ExternalApp) {
 		loadingSchema = true;
 		try {
 			providers = await fetchExternalProviders();
+			const contracts = providers.find((option) => option.app === record.app)?.contracts ?? [];
+			seedContractInputs(record, contracts);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not load the integration schema';
 		} finally {
@@ -137,8 +147,26 @@
 		}
 	}
 
-	function secretPlaceholder(contract: string): string {
-		return hasStoredSecret(contract) ? 'Leave blank to keep the stored credential' : 'Required';
+	/**
+	 * Seed the form from the record's stored values.
+	 *
+	 * Takes the contracts as an argument rather than reading the derived schema
+	 * because it runs in the same turn that writes `providers`, and the seed has
+	 * to match exactly what the form is about to render.
+	 */
+	function seedContractInputs(record: ExternalApp, contracts: ExternalProviderContract[]) {
+		const stored = cloneValues(record.values);
+		const seeded: ProviderFieldValues = {};
+		for (const input of deriveProviderInputs(contracts)) {
+			const value = readProviderInput(input, stored);
+			if (value !== '') seeded[input.id] = value;
+		}
+		fieldValues = seeded;
+	}
+
+	function secretPlaceholder(input: { contracts: string[] }): string {
+		const held = input.contracts.some((contract) => storedSecrets.includes(contract));
+		return held ? 'Leave blank to keep the stored credential' : 'Required';
 	}
 
 	async function handleSave() {
@@ -146,6 +174,14 @@
 		saving = true;
 		error = '';
 		try {
+			const typed = buildProviderPayload(inputs, fieldValues);
+			const form: ExternalAppForm = {
+				name,
+				url,
+				icon,
+				values: mergeTypedValues(app.values, typed.values),
+				secrets: typed.secrets
+			};
 			await updateExternalApp(app.id, isProvider ? providerPatch(form) : launcherPatch(form));
 			onsaved?.();
 			onclose();
@@ -204,39 +240,20 @@
 			{:else if loadingSchema}
 				<p class="hint">Loading the integration schema…</p>
 			{:else if schema}
-				{#each schema.contracts as contract (contract.name)}
-					<fieldset class="contract-block">
-						<legend>{contract.name}</legend>
-						{#each contract.fields as field (field.key)}
-							<label for={`cfg-${contract.name}-${field.key}`}>
-								{field.label}
-								{#if !field.required}<span class="optional">optional</span>{/if}
-							</label>
-							{#if field.kind === 'secret'}
-								<input
-									id={`cfg-${contract.name}-${field.key}`}
-									type="password"
-									placeholder={secretPlaceholder(contract.name)}
-									bind:value={secrets[contract.name]}
-									disabled={saving}
-									autocomplete="off"
-									spellcheck="false"
-								/>
-							{:else}
-								<input
-									id={`cfg-${contract.name}-${field.key}`}
-									type="text"
-									bind:value={values[contract.name][field.key]}
-									disabled={saving}
-									autocomplete="off"
-									spellcheck="false"
-								/>
-							{/if}
-							{#if field.help}
-								<p class="field-help">{field.help}</p>
-							{/if}
-						{/each}
-					</fieldset>
+				{#each inputs as input (input.id)}
+					<label for={`cfg-${input.id}`}>{input.label}</label>
+					<input
+						id={`cfg-${input.id}`}
+						type={input.kind === 'secret' ? 'password' : 'text'}
+						placeholder={input.kind === 'secret' ? secretPlaceholder(input) : ''}
+						bind:value={fieldValues[input.id]}
+						disabled={saving}
+						autocomplete="off"
+						spellcheck="false"
+					/>
+					{#if input.help}
+						<p class="field-help">{input.help}</p>
+					{/if}
 				{/each}
 			{:else}
 				<p class="hint">
@@ -310,30 +327,6 @@
 	.modal-body input:focus {
 		outline: none;
 		border-color: var(--color-accent);
-	}
-
-	.contract-block {
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		margin: var(--space-xs) 0 0;
-	}
-
-	.contract-block legend {
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: var(--color-text-muted);
-		padding: 0 var(--space-xs);
-	}
-
-	.optional {
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
-		font-style: italic;
 	}
 
 	.field-help {
