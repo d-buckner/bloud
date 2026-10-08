@@ -7,9 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -53,9 +51,25 @@ const (
 	// (the Authorization: MediaBrowser Token=… form is equivalent).
 	jellyfinKeyHeader = "X-Emby-Token"
 
+	// jellyfinIdentity is the client/device half of Jellyfin's auth header, shared
+	// by the anonymous-device form and the logged-in-user form so the two can
+	// never disagree about who they claim to be.
+	jellyfinIdentity = `MediaBrowser Client="Bloud", Device="Bloud host agent", DeviceId="bloud-host-agent", Version="1.0.0"`
+
 	// jellyfinDeviceAuth is the device identity Jellyfin requires on an
 	// authenticated request, in the canonical quoted form its own clients send.
-	jellyfinDeviceAuth = `MediaBrowser Client="Bloud", Device="Bloud host agent", DeviceId="bloud-host-agent", Version="1.0.0"`
+	jellyfinDeviceAuth = jellyfinIdentity
+
+	// jellyfinUserAuthFormat is the same identity carrying a user access token.
+	//
+	// The distinction is not stylistic. Jellyfin reads a bare `X-Emby-Token` as
+	// an API key, and an API key is not a user: on the key-administration
+	// endpoint that reads 401 no matter how valid the token is. Verified against
+	// Jellyfin 12.1.0 with the same token: `X-Emby-Token: <t>` → 401, the same
+	// token carried as `Token="<t>"` inside the MediaBrowser header → 204.
+	// Minting Seerr's key therefore has to present the whole identity, token
+	// included, not the token on its own.
+	jellyfinUserAuthFormat = jellyfinIdentity + `, Token="%s"`
 
 	// settingsJellyfinPath is Seerr's media-server settings resource. A POST
 	// merges the body into settings.jellyfin, but only after testing the
@@ -115,40 +129,6 @@ func (c *Configurator) jellyfinKeyValid(ctx context.Context, jellyfin *appclient
 	}
 }
 
-// jellyfinHostPort splits the provider's address into the three fields
-// Jellyseerr's onboarding takes. It reads them off the binding's BaseURL
-// rather than off Node and Port because that is the one field correct from both
-// vantages: a container Bloud put on its own network and a server three rooms
-// away both have a URL, while only the first has a container name.
-func jellyfinHostPort(baseURL string) (host string, port int, useSSL bool, err error) {
-	if baseURL == "" {
-		return "", 0, false, fmt.Errorf("the media server binding carries no address")
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return "", 0, false, fmt.Errorf("parsing the media server address %q: %w", baseURL, err)
-	}
-	if parsed.Hostname() == "" {
-		return "", 0, false, fmt.Errorf("the media server address %q has no host", baseURL)
-	}
-	useSSL = parsed.Scheme == "https"
-	portText := parsed.Port()
-	if portText == "" {
-		if useSSL {
-			portText = "443"
-		} else if parsed.Scheme == "http" {
-			portText = "80"
-		} else {
-			return "", 0, false, fmt.Errorf("the media server address %q has an unsupported scheme", baseURL)
-		}
-	}
-	port, err = strconv.Atoi(portText)
-	if err != nil {
-		return "", 0, false, fmt.Errorf("the media server address %q has a port that is not a number", baseURL)
-	}
-	return parsed.Hostname(), port, useSSL, nil
-}
-
 // jellyfinAdminToken logs the Jellyfin bootstrap admin in and returns the
 // session token the key-minting call authenticates with. The account is the
 // one the `mediaServer` binding names: the managed bootstrap account for a
@@ -177,9 +157,13 @@ func (c *Configurator) jellyfinAdminToken(ctx context.Context, jellyfin *appclie
 // collection (Jellyfin returns tokens in clear there), newest first for the
 // app name Seerr mints under, in case an earlier one survived.
 func (c *Configurator) mintJellyfinKey(ctx context.Context, jellyfin *appclient.Client, adminToken string) (string, error) {
+	// Both calls go out as the logged-in admin, not as a bare token: see
+	// jellyfinUserAuthFormat for why the bare form is read as an API key and
+	// refused here.
+	userAuth := fmt.Sprintf(jellyfinUserAuthFormat, adminToken)
 	if err := jellyfin.POST(jellyfinKeysPath).
 		Query("App", jellyfinKeyApp).
-		Header(jellyfinKeyHeader, adminToken).
+		Header("Authorization", userAuth).
 		OK(http.StatusNoContent).
 		Exec(ctx); err != nil {
 		return "", fmt.Errorf("minting a %s API key in Jellyfin: %w", jellyfinKeyApp, err)
@@ -187,7 +171,7 @@ func (c *Configurator) mintJellyfinKey(ctx context.Context, jellyfin *appclient.
 
 	var keys jellyfinKeyList
 	if err := jellyfin.GET(jellyfinKeysPath).
-		Header(jellyfinKeyHeader, adminToken).
+		Header("Authorization", userAuth).
 		OK(http.StatusOK).
 		DoInto(ctx, &keys); err != nil {
 		return "", fmt.Errorf("listing Jellyfin API keys: %w", err)

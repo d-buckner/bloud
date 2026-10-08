@@ -311,7 +311,7 @@ func (c *Configurator) jellyfinOnboardingLogin(jellyfin configurator.MediaServer
 			"mediaServer", jellyfin.App)
 		return jellyfinLogin{}, false
 	}
-	host, port, useSSL, err := jellyfinHostPort(jellyfin.BaseURL)
+	ep, err := splitEndpoint(jellyfin.BaseURL)
 	if err != nil {
 		c.logger.Warn("the media server published an address Seerr cannot be pointed at; onboarding is deferred",
 			"mediaServer", jellyfin.App, "error", err)
@@ -320,9 +320,9 @@ func (c *Configurator) jellyfinOnboardingLogin(jellyfin configurator.MediaServer
 	return jellyfinLogin{
 		Username:   jellyfin.AdminUsername,
 		Password:   jellyfin.AdminPassword,
-		Hostname:   host,
-		Port:       port,
-		UseSSL:     useSSL,
+		Hostname:   ep.host,
+		Port:       ep.port,
+		UseSSL:     ep.useSSL,
 		URLBase:    "",
 		Email:      adminEmail,
 		ServerType: mediaServerTypeJellyfin,
@@ -453,6 +453,18 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey
 		return c.prunePVR(ctx, pvr, seerrKey)
 	}
 
+	// The address is resolved before anything else, because every part of the
+	// entry is keyed on it: the settings body, and the match that decides which
+	// existing entry is Bloud's. A provider that published no usable URL cannot
+	// be wired, and saying so is better than writing the empty host Seerr would
+	// store and then fail to reach.
+	ep, err := splitEndpoint(pvr.binding.BaseURL)
+	if err != nil {
+		c.logger.Warn("PVR published an address Seerr cannot be pointed at; skipping it",
+			"pvr", pvrID, "error", err)
+		return nil
+	}
+
 	key := pvr.binding.APIKey
 	if key == "" {
 		// The PVR is installed but has not published its key yet (its PreStart
@@ -484,12 +496,32 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey
 		return fmt.Errorf("wiring Seerr to %s: reading Seerr's %s settings: %w", pvrID, pvr.service, err)
 	}
 
-	desired := dvrSettingsFor(pvr, key, profile)
+	return c.applyDvrEntry(ctx, pvr, seerrKey, existing, dvrSettingsFor(pvr, key, profile, ep), ep.host)
+}
+
+// applyDvrEntry makes one Seerr DVR entry match what Bloud wants the PVR to
+// be, against the entries Seerr already has.
+//
+// The match is on the address, not the display name: an entry an admin added by
+// hand (Seerr's own UI defaults to localhost) is theirs to keep, and matching
+// by name would make two different targets look like one.
+func (c *Configurator) applyDvrEntry(
+	ctx context.Context,
+	pvr pvrTarget,
+	seerrKey string,
+	existing []dvrSettings,
+	desired dvrSettings,
+	host string,
+) error {
+	pvrID := pvr.binding.App
 	for _, entry := range existing {
-		if entry.Hostname != pvr.binding.Node {
-			// Not ours: an entry an admin added by hand (Seerr's own UI
-			// defaults to localhost) is theirs to keep, and matching it by
-			// name would make two different targets look like one.
+		if entry.Hostname == "" {
+			if err := c.dropAddresslessDVR(ctx, pvr, seerrKey, entry.ID); err != nil {
+				return err
+			}
+			continue
+		}
+		if entry.Hostname != host {
 			continue
 		}
 		if entry.sameWiring(desired) {
@@ -518,7 +550,24 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey
 		}
 		return fmt.Errorf("wiring Seerr to %s: %w", pvrID, err)
 	}
-	c.logger.Info("added the PVR to Seerr", "pvr", pvrID, "hostname", pvr.binding.Node)
+	c.logger.Info("added the PVR to Seerr", "pvr", pvrID, "hostname", host)
+	return nil
+}
+
+// dropAddresslessDVR removes a DVR entry that has no hostname at all.
+//
+// That shape is Bloud's own orphan, not the admin's: Seerr's UI requires a
+// hostname, so nothing a human wrote looks like this. It is what the pre-fix
+// wiring left behind, when the entry was built from a container's Node and Port
+// while the provider was off-host, so both were empty and Seerr stored the
+// address as `http://:0`. Left alone it sits in the DVR list as a permanently
+// broken server, so it is removed rather than matched past.
+func (c *Configurator) dropAddresslessDVR(ctx context.Context, pvr pvrTarget, seerrKey string, entryID int) error {
+	if err := c.api.deleteDVR(ctx, pvr.service, seerrKey, entryID); err != nil {
+		return fmt.Errorf("wiring Seerr to %s: removing its addressless %s entry: %w", pvr.binding.App, pvr.service, err)
+	}
+	c.logger.Info("removed the addressless Seerr PVR entry left by an earlier wiring",
+		"pvr", pvr.binding.App, "id", entryID)
 	return nil
 }
 
@@ -541,8 +590,14 @@ func (c *Configurator) prunePVR(ctx context.Context, pvr pvrTarget, seerrKey str
 		c.logger.Warn("could not read Seerr's PVR settings to prune a stale entry", "pvr", pvr.binding.App, "error", err)
 		return nil
 	}
+	ep, err := splitEndpoint(pvr.binding.BaseURL)
+	if err != nil {
+		c.logger.Warn("could not read the pruned PVR's address; leaving its Seerr entry alone",
+			"pvr", pvr.binding.App, "error", err)
+		return nil
+	}
 	for _, entry := range existing {
-		if entry.Hostname != pvr.binding.Node {
+		if entry.Hostname != ep.host {
 			continue
 		}
 		if err := c.api.deleteDVR(ctx, pvr.service, seerrKey, entry.ID); err != nil {
@@ -556,13 +611,13 @@ func (c *Configurator) prunePVR(ctx context.Context, pvr pvrTarget, seerrKey str
 // dvrSettingsFor renders the entry Bloud keeps for a PVR. Seerr stores the
 // posted body verbatim (api.go), so this is the whole payload: the fields
 // Seerr's own UI sends for a PVR it manages.
-func dvrSettingsFor(pvr pvrTarget, apiKey string, profile pvrQualityProfile) dvrSettings {
+func dvrSettingsFor(pvr pvrTarget, apiKey string, profile pvrQualityProfile, ep endpoint) dvrSettings {
 	dvr := dvrSettings{
 		Name:              pvr.name,
-		Hostname:          pvr.binding.Node,
-		Port:              pvr.binding.Port,
+		Hostname:          ep.host,
+		Port:              ep.port,
 		APIKey:            apiKey,
-		UseSSL:            false,
+		UseSSL:            ep.useSSL,
 		BaseURL:           "",
 		ActiveProfileID:   profile.ID,
 		ActiveProfileName: profile.Name,
