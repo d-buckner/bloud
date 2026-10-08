@@ -345,6 +345,11 @@ type PVRBinding struct {
 // log in.
 type MediaServerBinding struct {
 	ProviderRef
+	// AdminUsername is the account the paired AdminPassword belongs to. A
+	// Bloud-booted provider publishes the managed bootstrap account it made;
+	// a provider the operator registered from off-host publishes the name they
+	// typed in, because that is the only way anyone downstream can learn it.
+	AdminUsername string
 	// AdminPassword is the bootstrap admin password the host generated for the
 	// provider, published under its `mediaServer` contract. Empty while it has
 	// not been generated yet.

@@ -20,6 +20,9 @@ type externalProviderField struct {
 	Label    string `json:"label"`
 	Kind     string `json:"kind"`
 	Required bool   `json:"required"`
+	// Default is the value the provider's own catalog entry declares. It is
+	// offered prefilled so a static fact about the app never has to be typed.
+	Default string `json:"default,omitempty"`
 	// Help names where the value comes from, because the answer differs by
 	// whether the provider was booted by Bloud or is someone's install down
 	// the hall: a runtime value a configurator would have minted is now
@@ -99,11 +102,18 @@ func providerContractFields(app *catalog.App) []externalProviderContract {
 		}
 		fields := make([]externalProviderField, 0, len(spec.Values)+len(spec.Secrets))
 		for _, vs := range spec.Values {
+			// A value the provider declares statically is a fact about the app,
+			// not about this instance, so the catalog already answers it for a
+			// remote copy. It is offered prefilled rather than demanded: the
+			// operator can override it, but registering a second Radarr should
+			// not require retyping a feed path that never varies.
+			static := offer.Values[vs.Key]
 			fields = append(fields, externalProviderField{
 				Key:      vs.Key,
 				Label:    humanizeFieldKey(vs.Key),
 				Kind:     "value",
-				Required: !vs.Optional,
+				Required: static == "" && !vs.Optional,
+				Default:  static,
 				Help:     runtimeValueHelp(offer, vs.Key),
 			})
 		}
@@ -292,16 +302,18 @@ func validateProviderValues(provider *catalog.App, in map[string]map[string]stri
 			if !info.required {
 				continue
 			}
+			// The catalog already declares this one statically, and a static fact
+			// about the app is true of a remote copy unchanged. Requiring the
+			// operator to retype it is what turned "point Bloud at my Radarr"
+			// into a form asking for a feed path that never varies.
+			if offer.Values[key] != "" {
+				continue
+			}
 			if strings.TrimSpace(supplied[key]) == "" {
 				return nil, fmt.Errorf("contract %q requires a value for %q", contractName, key)
 			}
 		}
-		inner := map[string]string{}
-		for key, value := range supplied {
-			if _, ok := declared[key]; ok {
-				inner[key] = value
-			}
-		}
+		inner := mergeStaticValues(declared, supplied, offer)
 		if len(inner) > 0 {
 			out[contractName] = inner
 		}
@@ -310,6 +322,56 @@ func validateProviderValues(provider *catalog.App, in map[string]map[string]stri
 		return nil, nil
 	}
 	return out, nil
+}
+
+// sharedSecret finds a credential the operator supplied under a *different*
+// contract of this same provider whose spec names the same secret. It is what
+// lets one Radarr API key cover both the `pvr` and `icsFeed` roles without
+// the operator pasting it twice.
+//
+// The match is on the declared secret name, not on "any credential this app
+// was given", because two contracts of one app can carry genuinely different
+// credentials. Sharing those would put a password where a key belongs.
+func sharedSecret(provider *catalog.App, in map[string]string, secrets []string) string {
+	for _, other := range sortedContractNames(provider.Provides) {
+		supplied := strings.TrimSpace(in[other])
+		if supplied == "" {
+			continue
+		}
+		otherSpec, known := catalog.ContractFor(other)
+		if !known {
+			continue
+		}
+		for _, want := range secrets {
+			if containsString(otherSpec.Secrets, want) {
+				return supplied
+			}
+		}
+	}
+	return ""
+}
+
+// mergeStaticValues keeps the operator's declared values and fills every key
+// they left blank from what the provider's catalog entry declares statically.
+// It works per key rather than all-or-nothing: an operator who renames the
+// calendar collection should still inherit the feed path, because that part of
+// the fact was never theirs to restate.
+func mergeStaticValues(declared map[string]valueInfo, supplied map[string]string, offer catalog.ContractProvides) map[string]string {
+	inner := map[string]string{}
+	for key, value := range supplied {
+		if _, ok := declared[key]; ok {
+			inner[key] = value
+		}
+	}
+	for key, value := range offer.Values {
+		if _, ok := declared[key]; !ok {
+			continue
+		}
+		if strings.TrimSpace(inner[key]) == "" {
+			inner[key] = value
+		}
+	}
+	return inner
 }
 
 // validateProviderSecrets checks the operator-supplied credentials. Each
@@ -332,10 +394,18 @@ func validateProviderSecrets(provider *catalog.App, in map[string]string, keepEx
 		if !known || len(spec.Secrets) == 0 {
 			continue
 		}
-		if strings.TrimSpace(in[contractName]) == "" {
+		value := strings.TrimSpace(in[contractName])
+		if value == "" {
+			// One credential can fill several contracts. Radarr's `pvr` and
+			// `icsFeed` offers both publish `apiKey`: it is the same key, and
+			// making the operator paste it twice for one app only invites the two
+			// copies to disagree.
+			value = sharedSecret(provider, in, spec.Secrets)
+		}
+		if value == "" {
 			return nil, fmt.Errorf("contract %q requires a credential", contractName)
 		}
-		out[contractName] = in[contractName]
+		out[contractName] = value
 	}
 	if len(out) == 0 {
 		return nil, nil

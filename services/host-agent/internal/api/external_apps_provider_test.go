@@ -314,3 +314,78 @@ func TestExternalAppsModule_AddContractProviderRejectsUndeclaredValue(t *testing
 	assert.Contains(t, w.Body.String(), "does not declare a value")
 	assert.Empty(t, orch.intents)
 }
+
+// A value the provider's catalog entry declares statically is a fact about the
+// app, not about this instance, so a remote copy inherits it and the operator
+// is not asked to retype it. One endpoint and one key is the whole form for a
+// remote Radarr.
+func TestValidateProviderValues_StaticCatalogValuesAreInherited(t *testing.T) {
+	radarr := &catalog.App{
+		CatalogID: "radarr",
+		Provides: catalog.Provides{
+			"pvr": {Secrets: []string{"apiKey"}},
+			"icsFeed": {Secrets: []string{"apiKey"}, Values: map[string]string{
+				"path":         "/feed/v3/calendar/Radarr.ics",
+				"calendarName": "Movies",
+			}},
+		},
+	}
+
+	values, err := validateProviderValues(radarr, map[string]map[string]string{})
+	require.NoError(t, err, "nothing supplied must still validate: the catalog declares every value")
+	assert.Equal(t, "/feed/v3/calendar/Radarr.ics", values["icsFeed"]["path"])
+	assert.Equal(t, "Movies", values["icsFeed"]["calendarName"])
+
+	// The operator's own value overrides the static one.
+	values, err = validateProviderValues(radarr, map[string]map[string]string{
+		"icsFeed": {"calendarName": "Films"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Films", values["icsFeed"]["calendarName"])
+	assert.Equal(t, "/feed/v3/calendar/Radarr.ics", values["icsFeed"]["path"])
+}
+
+// A required value with no static default is still demanded.
+func TestValidateProviderValues_DemandsWhatTheCatalogCannotSupply(t *testing.T) {
+	affine := &catalog.App{
+		CatalogID: "affine",
+		Provides: catalog.Provides{
+			"appApi": {Secrets: []string{"password"}, Values: map[string]string{}},
+		},
+	}
+	_, err := validateProviderValues(affine, map[string]map[string]string{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "username")
+}
+
+// One credential fills every contract of one app that publishes the same secret
+// name. Radarr's `pvr` and `icsFeed` offers are the same key, and making the
+// operator paste it twice only lets the two copies disagree.
+func TestValidateProviderSecrets_OneKeyFillsEveryContractNamingIt(t *testing.T) {
+	radarr := &catalog.App{
+		CatalogID: "radarr",
+		Provides: catalog.Provides{
+			"pvr":     {Secrets: []string{"apiKey"}},
+			"icsFeed": {Secrets: []string{"apiKey"}},
+		},
+	}
+	secrets, err := validateProviderSecrets(radarr, map[string]string{"pvr": "one-key"}, false)
+	require.NoError(t, err)
+	assert.Equal(t, "one-key", secrets["pvr"])
+	assert.Equal(t, "one-key", secrets["icsFeed"])
+}
+
+// The sharing matches on the declared secret name, so a credential cannot leak
+// between contracts that carry different ones.
+func TestValidateProviderSecrets_DoesNotShareAcrossDifferentSecretNames(t *testing.T) {
+	app := &catalog.App{
+		CatalogID: "mixed",
+		Provides: catalog.Provides{
+			"mediaServer": {Secrets: []string{"adminPassword"}},
+			"pvr":         {Secrets: []string{"apiKey"}},
+		},
+	}
+	_, err := validateProviderSecrets(app, map[string]string{"mediaServer": "a-password"}, false)
+	require.Error(t, err, "an apiKey slot must not be filled from an adminPassword")
+	assert.Contains(t, err.Error(), "pvr")
+}

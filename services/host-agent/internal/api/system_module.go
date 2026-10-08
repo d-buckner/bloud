@@ -213,27 +213,118 @@ func (m *systemModule) StorageHandler() http.HandlerFunc {
 
 // ---- Types ----
 
-// The AI Model node: the instance's own Settings -> AI endpoint, drawn as a
-// provider so an inference consumer's edge has somewhere to land. It is not
-// an app. Nothing installs it, no container backs it, and the orchestrator
-// never gains a lifecycle node for it; this is a display of a wiring that is
-// real but has no installed shape.
+// External provider nodes.
 //
-// The live graph shows it only while an upstream is enabled. The catalog
-// snapshot the README image renders from always shows it, because that
-// picture is the full view of what Bloud can wire rather than of what this
-// instance happens to have configured.
-const (
-	AINodeID    = "ai:instance"
-	AINodeLabel = "AI Model"
-	// AINodeStatus is what the node reads as. "external" rather than a
-	// lifecycle word: the instance never health-checks someone else's server,
-	// so "running" would claim a liveness nobody verified, and it is not a
-	// Bloud-run workload either. It is deliberately absent from the status
-	// color table so the dot falls back to the same neutral gray every other
-	// unprobed status gets.
-	AINodeStatus = "external"
-)
+// An external provider is a wiring that is real but has no installed shape:
+// nothing installs it, no container backs it, and the orchestrator never gains
+// a lifecycle node for it. It renders in the same row as the old "AI Model"
+// node, which was the single special case this generalizes.
+//
+// The node ID is keyed on the record's own ID rather than on its contract, so
+// two upstreams or two off-host PVRs draw as the two separate things they are
+// instead of collapsing into one box that cannot say which it means.
+func externalNodeID(recordID string) string {
+	return "external:" + recordID
+}
+
+// externalNodeStatus is what an external node reads as. "external" rather
+// than a lifecycle word: the instance never health-checks someone else's
+// server, so "running" would claim a liveness nobody verified. It is
+// deliberately absent from the status color table so the dot falls back to the
+// same neutral gray every other unprobed status gets.
+const externalNodeStatus = "external"
+
+// externalIndex is the provider registry read once per graph build, indexed
+// the three ways the display needs it.
+//
+// nodes is one per provider record. byContract maps a contract name to the
+// nodes that fill it, which is what a consumer's `source: setting` edge
+// resolves to. byApp maps a catalog ID to the node standing in for a remote
+// install of it, which is what an `app:` edge resolves to when the app is not
+// installed locally.
+type externalIndex struct {
+	nodes      []graphNode
+	byContract map[string][]string
+	byApp      map[string]string
+}
+
+func (e externalIndex) ids() map[string]bool {
+	out := make(map[string]bool, len(e.nodes))
+	for _, n := range e.nodes {
+		out[n.ID] = true
+	}
+	return out
+}
+
+// externalRecordActive reports whether a provider record represents wiring the
+// display should show as live.
+//
+// Only the inference contract has an on/off switch today: the AI Settings page
+// keeps a disabled upstream so the toggle is reversible, and the resolver will
+// not hand it to anyone. Drawing an edge to a provider nothing dials would be
+// the graph claiming a wiring that does not exist, so a disabled upstream gets
+// no node. Every other contract has no such flag, and a record of one is live
+// by being there.
+func externalRecordActive(rec *store.ExternalApp) bool {
+	kind, ref, ok := store.ParseExternalAppSource(rec.Source)
+	if !ok || kind != store.ExternalAppSourceKindContract || ref != inference.ContractName {
+		return true
+	}
+	return rec.Value(inference.ContractName, inference.ValueEnabled) == "true"
+}
+
+func (m *systemModule) buildExternalIndex() externalIndex {
+	idx := externalIndex{
+		byContract: map[string][]string{},
+		byApp:      map[string]string{},
+	}
+	if m.externalApps == nil {
+		return idx
+	}
+	records, err := m.externalApps.GetAll()
+	if err != nil {
+		m.logger.Warn("cannot read the external provider registry; the graph omits external providers",
+			"error", err)
+		return idx
+	}
+	for _, rec := range records {
+		if rec.Kind != string(store.ExternalAppKindProvider) || !externalRecordActive(rec) {
+			continue
+		}
+		idx.nodes = append(idx.nodes, graphNode{
+			ID:          externalNodeID(rec.ID),
+			DisplayName: rec.Name,
+			Status:      externalNodeStatus,
+			NodeType:    "service",
+		})
+		kind, ref, ok := store.ParseExternalAppSource(rec.Source)
+		if !ok {
+			continue
+		}
+		node := externalNodeID(rec.ID)
+		switch kind {
+		case store.ExternalAppSourceKindContract:
+			idx.byContract[ref] = append(idx.byContract[ref], node)
+		case store.ExternalAppSourceKindApp:
+			idx.byApp[ref] = node
+		}
+	}
+	return idx
+}
+
+// providerNodeIDs maps one declared provider of one contract to the graph
+// nodes an edge may point at. A setting provider fans out to every record
+// filling that contract, because the consumer named the role and the operator
+// may have filled it more than once.
+func (idx externalIndex) providerNodeIDs(contract string, provider catalog.BoundProvider) []string {
+	if provider.IsSetting() {
+		return idx.byContract[contract]
+	}
+	if node, remote := idx.byApp[provider.App]; remote {
+		return []string{node}
+	}
+	return []string{provider.App}
+}
 
 type graphNode struct {
 	ID          string `json:"id"`
@@ -293,8 +384,8 @@ type integrationTarget struct {
 //
 // Every candidate then passes through `present`, so an edge only ever names a
 // node the browser was also given.
-func (m *systemModule) buildGraphEdges(app *store.InstalledApp, present map[string]bool) []graphEdge {
-	targets := m.integrationTargets(app)
+func (m *systemModule) buildGraphEdges(app *store.InstalledApp, present map[string]bool, external externalIndex) []graphEdge {
+	targets := m.integrationTargets(app, external)
 
 	edges := make([]graphEdge, 0, len(targets))
 	for _, target := range targets {
@@ -332,7 +423,7 @@ func (m *systemModule) buildGraphEdges(app *store.InstalledApp, present map[stri
 // An app the catalog does not describe falls back to what its install
 // recorded, which is the only wiring the display can name for an app whose
 // declaration is gone.
-func (m *systemModule) integrationTargets(app *store.InstalledApp) []integrationTarget {
+func (m *systemModule) integrationTargets(app *store.InstalledApp, external externalIndex) []integrationTarget {
 	var targets []integrationTarget
 	seen := make(map[string]bool)
 	add := func(label, node string) {
@@ -360,7 +451,9 @@ func (m *systemModule) integrationTargets(app *store.InstalledApp) []integration
 
 	for _, label := range labels {
 		for _, provider := range catalog.DeclaredProviders(def.Integrations[label]) {
-			add(label, providerNodeID(provider))
+			for _, node := range external.providerNodeIDs(label, provider) {
+				add(label, node)
+			}
 		}
 	}
 	return targets
@@ -382,32 +475,22 @@ func (m *systemModule) catalogDefinition(catalogID string) *catalog.App {
 }
 
 // providerNodes is the set of node IDs an integration edge may point at:
-// every installed app, plus the AI Model node while the instance provides one.
+// every installed app, plus every external provider node.
 //
 // The display filters on this rather than trusting the catalog's compatible
 // list outright because an edge naming a node that is not in the payload still
 // reaches the browser, which draws an arrow into empty space. A compatible
-// entry whose provider is not installed is a possibility the metadata allows,
-// not a wiring that exists.
-func providerNodes(apps []*store.InstalledApp, aiShown bool) map[string]bool {
-	present := make(map[string]bool, len(apps)+1)
+// entry whose provider is neither installed nor registered is a possibility the
+// metadata allows, not a wiring that exists.
+func providerNodes(apps []*store.InstalledApp, external externalIndex) map[string]bool {
+	present := make(map[string]bool, len(apps)+len(external.nodes))
 	for _, app := range apps {
 		present[app.CatalogID] = true
 	}
-	if aiShown {
-		present[AINodeID] = true
+	for id := range external.ids() {
+		present[id] = true
 	}
 	return present
-}
-
-// providerNodeID maps one provider to the graph node that stands for it. A
-// catalog app is its own node; the instance provider is not an app, so it
-// maps to the AI Model node the instance provides.
-func providerNodeID(provider catalog.BoundProvider) string {
-	if provider.Source != "" {
-		return AINodeID
-	}
-	return provider.App
 }
 
 // DeveloperGraphHandler returns the lifecycle graph for the developer dashboard.
@@ -430,11 +513,9 @@ func (m *systemModule) DeveloperGraphHandler() http.HandlerFunc {
 func (m *systemModule) buildDeveloperGraph(
 	apps []*store.InstalledApp,
 ) developerGraph {
-	// Whether the instance provides an AI model is resolved before the edges,
-	// not after: it decides whether an inference edge has anywhere to point.
-	aiShown := m.aiConfigured()
+	external := m.buildExternalIndex()
 
-	nodes, edges, hasTraefik := m.appNodes(apps, providerNodes(apps, aiShown))
+	nodes, edges, hasTraefik := m.appNodes(apps, external)
 	if hasTraefik {
 		nodes = append(nodes, graphNode{
 			ID:          "conn:local",
@@ -445,7 +526,7 @@ func (m *systemModule) buildDeveloperGraph(
 		edges = append(edges, graphEdge{Source: "conn:local", Target: "traefik", Label: "route"})
 	}
 
-	nodes = append(nodes, aiNode(aiShown)...)
+	nodes = append(nodes, external.nodes...)
 
 	var orchStatus *orchestrator.OrchestratorStatus
 	if m.orch != nil {
@@ -460,54 +541,15 @@ func (m *systemModule) buildDeveloperGraph(
 	}
 }
 
-// aiNode returns the AI Model node when the instance provides one, and nothing
-// otherwise.
-//
-// The node is the display's stand-in for a provider with no installed shape:
-// nothing installs it, no container backs it, and the orchestrator never gains
-// a lifecycle node for it. Whether it is in the payload is also what gates the
-// edges that point at it (see providerNodes), so no edge can ever name a node
-// the browser was not given.
-func aiNode(shown bool) []graphNode {
-	if !shown {
-		return nil
-	}
-	return []graphNode{{
-		ID:          AINodeID,
-		DisplayName: AINodeLabel,
-		Status:      AINodeStatus,
-		// Not flagged system: that would add a "system" chip on top of
-		// "external" and a dashed border, and the point of this node is that
-		// it reads as one plain thing the instance points at.
-		IsSystem: false,
-		NodeType: "service",
-	}}
-}
-
-// aiConfigured reports whether Settings -> AI has an enabled upstream. A store
-// that fails to answer reads as unconfigured: the graph is a display, and a
-// read error is not a reason to invent a provider.
-func (m *systemModule) aiConfigured() bool {
-	if m.externalApps == nil {
-		return false
-	}
-	records, err := m.externalApps.FindAllBySource(store.ExternalAppSourceForContract(inference.ContractName))
-	if err != nil {
-		return false
-	}
-	settings := inference.Settings{Upstreams: inference.UpstreamsFromExternal(records)}
-	_, ok := settings.ActiveUpstream()
-	return ok
-}
-
 // appNodes builds one node per installed app, plus one child node per
 // container that app declares, and reports whether traefik is among them
 // (the LAN connection node only means something with a proxy to attach to)
 // alongside each app's integration edges.
 func (m *systemModule) appNodes(
 	apps []*store.InstalledApp,
-	present map[string]bool,
+	external externalIndex,
 ) ([]graphNode, []graphEdge, bool) {
+	present := providerNodes(apps, external)
 	nodes := make([]graphNode, 0, len(apps))
 	edges := make([]graphEdge, 0)
 	hasTraefik := false
@@ -530,7 +572,7 @@ func (m *systemModule) appNodes(
 			hasTraefik = true
 		}
 
-		edges = append(edges, m.buildGraphEdges(app, present)...)
+		edges = append(edges, m.buildGraphEdges(app, present, external)...)
 	}
 
 	return nodes, edges, hasTraefik

@@ -358,8 +358,9 @@ func installInferenceConsumer(mod *systemModule) {
 	mod.catalog.(*FakeCatalogCache).AddApp(inferenceConsumerDef("hermes"))
 }
 
-// The AI Model node is the instance's own provider, so it shows exactly when
-// Settings -> AI has something to serve: an enabled upstream.
+// An external provider renders as its own node, named for the record rather
+// than for the contract it fills, and it carries no container box: nothing
+// installs it and no container backs it.
 func TestSystemHTTP_DeveloperGraph_AINodeShownWhenConfigured(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{
 		externalApps: aiRegistryWith("https://api.example.com/v1"),
@@ -368,11 +369,13 @@ func TestSystemHTTP_DeveloperGraph_AINodeShownWhenConfigured(t *testing.T) {
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	node, ok := graphNodeByID(resp.Nodes, AINodeID)
-	require.True(t, ok, "an enabled upstream should put the AI Model node in the graph")
-	assert.Equal(t, "AI Model", node.DisplayName)
+	node, ok := graphNodeByID(resp.Nodes, externalNodeID("u1"))
+	require.True(t, ok, "an enabled upstream should put its provider node in the graph")
+	assert.Equal(t, "Main", node.DisplayName)
 	assert.Equal(t, "service", node.NodeType)
-	assert.True(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+	assert.Equal(t, "external", node.Status)
+	assert.False(t, node.IsSystem)
+	assert.True(t, graphEdgePresent(resp.Edges, "hermes", externalNodeID("u1")))
 }
 
 // With nothing configured the node is absent, and so is the edge that was
@@ -384,9 +387,9 @@ func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUnconfigured(t *testing.T) {
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	_, ok := graphNodeByID(resp.Nodes, AINodeID)
+	_, ok := graphNodeByID(resp.Nodes, externalNodeID("u1"))
 	assert.False(t, ok)
-	assert.False(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+	assert.False(t, graphEdgePresent(resp.Edges, "hermes", externalNodeID("u1")))
 }
 
 // A disabled upstream is not configured. The entry is kept so the toggle is
@@ -403,9 +406,9 @@ func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUpstreamDisabled(t *testing.T
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	_, ok := graphNodeByID(resp.Nodes, AINodeID)
+	_, ok := graphNodeByID(resp.Nodes, externalNodeID("u1"))
 	assert.False(t, ok)
-	assert.False(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+	assert.False(t, graphEdgePresent(resp.Edges, "hermes", externalNodeID("u1")))
 }
 
 // A settings store that cannot answer reads as unconfigured. The graph is a
@@ -418,7 +421,7 @@ func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenStoreFails(t *testing.T) {
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	_, ok := graphNodeByID(resp.Nodes, AINodeID)
+	_, ok := graphNodeByID(resp.Nodes, externalNodeID("u1"))
 	assert.False(t, ok)
 }
 
@@ -430,7 +433,7 @@ func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUnwired(t *testing.T) {
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	_, ok := graphNodeByID(resp.Nodes, AINodeID)
+	_, ok := graphNodeByID(resp.Nodes, externalNodeID("u1"))
 	assert.False(t, ok)
 }
 
@@ -449,7 +452,7 @@ func TestSystemHTTP_DeveloperGraph_AINodeRoundTripsThroughRealStore(t *testing.T
 	mod.externalApps = extStore
 	installInferenceConsumer(mod)
 
-	_, ok := graphNodeByID(fetchDeveloperGraph(t, mod).Nodes, AINodeID)
+	_, ok := graphNodeByID(fetchDeveloperGraph(t, mod).Nodes, externalNodeID("u1"))
 	require.False(t, ok, "a fresh instance has no AI configured")
 
 	require.NoError(t, extStore.Upsert(inference.ExternalForUpstream(inference.Upstream{
@@ -457,10 +460,10 @@ func TestSystemHTTP_DeveloperGraph_AINodeRoundTripsThroughRealStore(t *testing.T
 	})))
 
 	resp := fetchDeveloperGraph(t, mod)
-	aiNode, ok := graphNodeByID(resp.Nodes, AINodeID)
+	aiNode, ok := graphNodeByID(resp.Nodes, externalNodeID("u1"))
 	require.True(t, ok, "the records the settings API writes must be the records the graph reads")
 	assert.Equal(t, "service", aiNode.NodeType)
-	require.True(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+	require.True(t, graphEdgePresent(resp.Edges, "hermes", externalNodeID("u1")))
 
 	// Turning the upstream off takes the node and its edge back out, so the
 	// graph tracks the registry rather than remembering that it was once on.
@@ -469,8 +472,8 @@ func TestSystemHTTP_DeveloperGraph_AINodeRoundTripsThroughRealStore(t *testing.T
 	})))
 
 	resp = fetchDeveloperGraph(t, mod)
-	assert.False(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
-	_, ok = graphNodeByID(resp.Nodes, AINodeID)
+	assert.False(t, graphEdgePresent(resp.Edges, "hermes", externalNodeID("u1")))
+	_, ok = graphNodeByID(resp.Nodes, externalNodeID("u1"))
 	assert.False(t, ok)
 }
 
@@ -489,7 +492,7 @@ func TestSystemHTTP_DeveloperGraph_NonConsumerGetsNoAIEdge(t *testing.T) {
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	assert.False(t, graphEdgePresent(resp.Edges, "jellyfin", AINodeID))
+	assert.False(t, graphEdgePresent(resp.Edges, "jellyfin", externalNodeID("u1")))
 }
 
 // An optional contract that declares no `default: true` still draws its edge.
@@ -513,7 +516,7 @@ func TestSystemHTTP_DeveloperGraph_InferenceEdgeWithoutDefault(t *testing.T) {
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	assert.True(t, graphEdgePresent(resp.Edges, "affine", AINodeID),
+	assert.True(t, graphEdgePresent(resp.Edges, "affine", externalNodeID("u1")),
 		"a source:instance consumer with no declared default still wires the instance")
 }
 
@@ -731,8 +734,8 @@ func TestSystemHTTP_DeveloperGraph_RealCatalogWiresInferenceConsumers(t *testing
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	assert.True(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
-	assert.True(t, graphEdgePresent(resp.Edges, "affine", AINodeID),
+	assert.True(t, graphEdgePresent(resp.Edges, "hermes", externalNodeID("u1")))
+	assert.True(t, graphEdgePresent(resp.Edges, "affine", externalNodeID("u1")),
 		"affine declares source: setting with no `default: true`; the edge must not depend on the flag")
 }
 
@@ -890,3 +893,93 @@ var _ = chi.NewRouter
 
 // Suppress unused
 var _ = strings.NewReader
+
+// Two off-host providers of two different contracts are two nodes, each with
+// its own edge from the consumer that declared that contract. Collapsing them
+// into one box would lose which wiring is which.
+func TestSystemHTTP_DeveloperGraph_MultipleExternalProvidersEachGetTheirOwnNode(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{
+		externalApps: &fakeExternalRegistry{records: []*store.ExternalApp{
+			{
+				ID: "radarr-off", Kind: string(store.ExternalAppKindProvider),
+				Source: store.ExternalAppSourceForContract("pvr"), Name: "Off-host Radarr",
+				URL: "https://radarr.example.com",
+			},
+			{
+				ID: "arr-off", Kind: string(store.ExternalAppKindProvider),
+				Source: store.ExternalAppSourceForContract("downloadClient"), Name: "Off-host Arr",
+				URL: "https://arr.example.com",
+			},
+		}},
+	})
+	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		CatalogID: "bazarr", DisplayName: "Bazarr", Status: "running",
+	})
+	mod.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		CatalogID:   "bazarr",
+		DisplayName: "Bazarr",
+		Integrations: map[string]catalog.Integration{
+			"pvr":            {Compatible: []catalog.CompatibleApp{{Source: catalog.SettingProviderSource}}},
+			"downloadClient": {Compatible: []catalog.CompatibleApp{{Source: catalog.SettingProviderSource}}},
+		},
+	})
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	require.True(t, graphEdgePresent(resp.Edges, "bazarr", externalNodeID("radarr-off")))
+	require.True(t, graphEdgePresent(resp.Edges, "bazarr", externalNodeID("arr-off")))
+	for _, id := range []string{"radarr-off", "arr-off"} {
+		node, ok := graphNodeByID(resp.Nodes, externalNodeID(id))
+		require.True(t, ok)
+		assert.Equal(t, "service", node.NodeType, "an external provider never gets a container box")
+	}
+}
+
+// A remote install of a catalog app redirects the edge that would have gone to
+// the local app. The consumer declared `app: affine`; the operator said affine
+// lives elsewhere; the edge follows, and no local node is invented for it.
+func TestSystemHTTP_DeveloperGraph_RemoteAppRecordRedirectsTheEdge(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{
+		externalApps: &fakeExternalRegistry{records: []*store.ExternalApp{
+			{
+				ID: "ext-affine", Kind: string(store.ExternalAppKindProvider),
+				Source: store.ExternalAppSourceForApp("affine"), Name: "NAS AFFiNE",
+				URL: "https://affine.example.com",
+			},
+		}},
+	})
+	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		CatalogID: "affine-mcp", DisplayName: "AFFiNE MCP", Status: "running",
+	})
+	mod.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		CatalogID:   "affine-mcp",
+		DisplayName: "AFFiNE MCP",
+		Integrations: map[string]catalog.Integration{
+			"appApi": {Compatible: []catalog.CompatibleApp{{App: "affine"}}},
+		},
+	})
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	assert.True(t, graphEdgePresent(resp.Edges, "affine-mcp", externalNodeID("ext-affine")),
+		"the edge follows the remote record")
+	assert.False(t, graphEdgePresent(resp.Edges, "affine-mcp", "affine"),
+		"no edge to a local affine that does not exist")
+}
+
+// A launcher is not a provider: it opens something and wires nothing, so an
+// edge could never reach it and it gets no node in a wiring graph.
+func TestSystemHTTP_DeveloperGraph_LaunchersGetNoNode(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{
+		externalApps: &fakeExternalRegistry{records: []*store.ExternalApp{
+			{ID: "launch1", Kind: string(store.ExternalAppKindLauncher), Name: "Router", URL: "http://192.168.1.1"},
+		}},
+	})
+	installInferenceConsumer(mod)
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	for _, n := range resp.Nodes {
+		assert.NotEqual(t, externalNodeID("launch1"), n.ID, "a launcher is not a wiring")
+	}
+}

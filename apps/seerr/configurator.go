@@ -22,14 +22,11 @@ const (
 	appName = "seerr"
 
 	// jellyfinAppName is the catalog id of the media-server provider Seerr
-	// onboards against. Its address, port and bootstrap admin password all come
-	// from the resolved `mediaServer` binding; the password is the credential
-	// apps/jellyfin publishes, and that account is never deleted.
+	// onboards against. Its address and its bootstrap admin login all come from
+	// the resolved `mediaServer` binding. Nothing here assumes a name for the
+	// account: a Jellyfin Bloud booted publishes the managed one Bloud named,
+	// and one the operator registered publishes the account they made there.
 	jellyfinAppName = "jellyfin"
-
-	// jellyfinAdminUsername is the Jellyfin account apps/jellyfin creates for
-	// Bloud (apps/jellyfin/configurator.go: bootstrapUsername).
-	jellyfinAdminUsername = "bloud-bootstrap-admin"
 
 	// configDirName holds Seerr's settings.json, SQLite database, logs and
 	// cache; it is mounted at /app/config.
@@ -293,6 +290,45 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // missing provider is never an error: a later reconciliation re-runs
 // PostStart once Jellyfin is installed. (PVR wiring is deferred with it:
 // it needs the admin user the login below creates.)
+// jellyfinOnboardingLogin builds the body of the onboarding call from what the
+// provider published. It reports false, having logged why, when the provider is
+// not ready: a media server that has not published its login yet is a state the
+// next reconciliation resolves, not a failure to report as one.
+//
+// Every field is read off the binding rather than assumed. The account name
+// because a provider Bloud did not boot has an account Bloud did not name; the
+// address because Jellyseerr wants host/port/TLS where the binding has a URL,
+// and that URL is the one thing correct for a container on Bloud's network and
+// for a server it only points at.
+func (c *Configurator) jellyfinOnboardingLogin(jellyfin configurator.MediaServerBinding) (jellyfinLogin, bool) {
+	if jellyfin.AdminPassword == "" {
+		c.logger.Warn("the media server has not published its bootstrap admin password yet; Seerr onboarding is deferred",
+			"mediaServer", jellyfin.App)
+		return jellyfinLogin{}, false
+	}
+	if jellyfin.AdminUsername == "" {
+		c.logger.Warn("the media server has not published its bootstrap admin username yet; Seerr onboarding is deferred",
+			"mediaServer", jellyfin.App)
+		return jellyfinLogin{}, false
+	}
+	ep, err := splitEndpoint(jellyfin.BaseURL)
+	if err != nil {
+		c.logger.Warn("the media server published an address Seerr cannot be pointed at; onboarding is deferred",
+			"mediaServer", jellyfin.App, "error", err)
+		return jellyfinLogin{}, false
+	}
+	return jellyfinLogin{
+		Username:   jellyfin.AdminUsername,
+		Password:   jellyfin.AdminPassword,
+		Hostname:   ep.host,
+		Port:       ep.port,
+		UseSSL:     ep.useSSL,
+		URLBase:    "",
+		Email:      adminEmail,
+		ServerType: mediaServerTypeJellyfin,
+	}, true
+}
+
 func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.AppState, settingsPath string) error {
 	// It is not silent, though: an instance that has never completed onboarding
 	// serves its first-run wizard to anyone who can reach it, and whoever
@@ -307,14 +343,8 @@ func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.App
 			"mediaServer", jellyfinAppName)
 		return nil
 	}
-	password := jellyfin.AdminPassword
-	if password == "" {
-		// The provider is installed but has not published its bootstrap
-		// password yet (its PreStart has not run, or it is still converging):
-		// onboarding is deferred rather than failed, and the next
-		// reconciliation finds it.
-		c.logger.Warn("the media server has not published its bootstrap admin password yet; Seerr onboarding is deferred",
-			"mediaServer", jellyfin.App)
+	login, ok := c.jellyfinOnboardingLogin(jellyfin)
+	if !ok {
 		return nil
 	}
 
@@ -323,16 +353,7 @@ func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.App
 		return err
 	}
 
-	if err := c.api.loginWithJellyfin(ctx, jellyfinLogin{
-		Username:   jellyfinAdminUsername,
-		Password:   password,
-		Hostname:   jellyfin.Node,
-		Port:       jellyfin.Port,
-		UseSSL:     false,
-		URLBase:    "",
-		Email:      adminEmail,
-		ServerType: mediaServerTypeJellyfin,
-	}); err != nil {
+	if err := c.api.loginWithJellyfin(ctx, login); err != nil {
 		return fmt.Errorf("creating the Seerr admin from the Jellyfin bootstrap admin: %w", err)
 	}
 	c.logger.Info("created the Seerr admin from the Jellyfin bootstrap admin")
@@ -432,6 +453,18 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey
 		return c.prunePVR(ctx, pvr, seerrKey)
 	}
 
+	// The address is resolved before anything else, because every part of the
+	// entry is keyed on it: the settings body, and the match that decides which
+	// existing entry is Bloud's. A provider that published no usable URL cannot
+	// be wired, and saying so is better than writing the empty host Seerr would
+	// store and then fail to reach.
+	ep, err := splitEndpoint(pvr.binding.BaseURL)
+	if err != nil {
+		c.logger.Warn("PVR published an address Seerr cannot be pointed at; skipping it",
+			"pvr", pvrID, "error", err)
+		return nil
+	}
+
 	key := pvr.binding.APIKey
 	if key == "" {
 		// The PVR is installed but has not published its key yet (its PreStart
@@ -463,12 +496,32 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey
 		return fmt.Errorf("wiring Seerr to %s: reading Seerr's %s settings: %w", pvrID, pvr.service, err)
 	}
 
-	desired := dvrSettingsFor(pvr, key, profile)
+	return c.applyDvrEntry(ctx, pvr, seerrKey, existing, dvrSettingsFor(pvr, key, profile, ep), ep.host)
+}
+
+// applyDvrEntry makes one Seerr DVR entry match what Bloud wants the PVR to
+// be, against the entries Seerr already has.
+//
+// The match is on the address, not the display name: an entry an admin added by
+// hand (Seerr's own UI defaults to localhost) is theirs to keep, and matching
+// by name would make two different targets look like one.
+func (c *Configurator) applyDvrEntry(
+	ctx context.Context,
+	pvr pvrTarget,
+	seerrKey string,
+	existing []dvrSettings,
+	desired dvrSettings,
+	host string,
+) error {
+	pvrID := pvr.binding.App
 	for _, entry := range existing {
-		if entry.Hostname != pvr.binding.Node {
-			// Not ours: an entry an admin added by hand (Seerr's own UI
-			// defaults to localhost) is theirs to keep, and matching it by
-			// name would make two different targets look like one.
+		if entry.Hostname == "" {
+			if err := c.dropAddresslessDVR(ctx, pvr, seerrKey, entry.ID); err != nil {
+				return err
+			}
+			continue
+		}
+		if entry.Hostname != host {
 			continue
 		}
 		if entry.sameWiring(desired) {
@@ -497,7 +550,24 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey
 		}
 		return fmt.Errorf("wiring Seerr to %s: %w", pvrID, err)
 	}
-	c.logger.Info("added the PVR to Seerr", "pvr", pvrID, "hostname", pvr.binding.Node)
+	c.logger.Info("added the PVR to Seerr", "pvr", pvrID, "hostname", host)
+	return nil
+}
+
+// dropAddresslessDVR removes a DVR entry that has no hostname at all.
+//
+// That shape is Bloud's own orphan, not the admin's: Seerr's UI requires a
+// hostname, so nothing a human wrote looks like this. It is what the pre-fix
+// wiring left behind, when the entry was built from a container's Node and Port
+// while the provider was off-host, so both were empty and Seerr stored the
+// address as `http://:0`. Left alone it sits in the DVR list as a permanently
+// broken server, so it is removed rather than matched past.
+func (c *Configurator) dropAddresslessDVR(ctx context.Context, pvr pvrTarget, seerrKey string, entryID int) error {
+	if err := c.api.deleteDVR(ctx, pvr.service, seerrKey, entryID); err != nil {
+		return fmt.Errorf("wiring Seerr to %s: removing its addressless %s entry: %w", pvr.binding.App, pvr.service, err)
+	}
+	c.logger.Info("removed the addressless Seerr PVR entry left by an earlier wiring",
+		"pvr", pvr.binding.App, "id", entryID)
 	return nil
 }
 
@@ -520,8 +590,14 @@ func (c *Configurator) prunePVR(ctx context.Context, pvr pvrTarget, seerrKey str
 		c.logger.Warn("could not read Seerr's PVR settings to prune a stale entry", "pvr", pvr.binding.App, "error", err)
 		return nil
 	}
+	ep, err := splitEndpoint(pvr.binding.BaseURL)
+	if err != nil {
+		c.logger.Warn("could not read the pruned PVR's address; leaving its Seerr entry alone",
+			"pvr", pvr.binding.App, "error", err)
+		return nil
+	}
 	for _, entry := range existing {
-		if entry.Hostname != pvr.binding.Node {
+		if entry.Hostname != ep.host {
 			continue
 		}
 		if err := c.api.deleteDVR(ctx, pvr.service, seerrKey, entry.ID); err != nil {
@@ -535,13 +611,13 @@ func (c *Configurator) prunePVR(ctx context.Context, pvr pvrTarget, seerrKey str
 // dvrSettingsFor renders the entry Bloud keeps for a PVR. Seerr stores the
 // posted body verbatim (api.go), so this is the whole payload: the fields
 // Seerr's own UI sends for a PVR it manages.
-func dvrSettingsFor(pvr pvrTarget, apiKey string, profile pvrQualityProfile) dvrSettings {
+func dvrSettingsFor(pvr pvrTarget, apiKey string, profile pvrQualityProfile, ep endpoint) dvrSettings {
 	dvr := dvrSettings{
 		Name:              pvr.name,
-		Hostname:          pvr.binding.Node,
-		Port:              pvr.binding.Port,
+		Hostname:          ep.host,
+		Port:              ep.port,
 		APIKey:            apiKey,
-		UseSSL:            false,
+		UseSSL:            ep.useSSL,
 		BaseURL:           "",
 		ActiveProfileID:   profile.ID,
 		ActiveProfileName: profile.Name,

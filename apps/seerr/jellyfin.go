@@ -51,9 +51,25 @@ const (
 	// (the Authorization: MediaBrowser Token=… form is equivalent).
 	jellyfinKeyHeader = "X-Emby-Token"
 
+	// jellyfinIdentity is the client/device half of Jellyfin's auth header, shared
+	// by the anonymous-device form and the logged-in-user form so the two can
+	// never disagree about who they claim to be.
+	jellyfinIdentity = `MediaBrowser Client="Bloud", Device="Bloud host agent", DeviceId="bloud-host-agent", Version="1.0.0"`
+
 	// jellyfinDeviceAuth is the device identity Jellyfin requires on an
 	// authenticated request, in the canonical quoted form its own clients send.
-	jellyfinDeviceAuth = `MediaBrowser Client="Bloud", Device="Bloud host agent", DeviceId="bloud-host-agent", Version="1.0.0"`
+	jellyfinDeviceAuth = jellyfinIdentity
+
+	// jellyfinUserAuthFormat is the same identity carrying a user access token.
+	//
+	// The distinction is not stylistic. Jellyfin reads a bare `X-Emby-Token` as
+	// an API key, and an API key is not a user: on the key-administration
+	// endpoint that reads 401 no matter how valid the token is. Verified against
+	// Jellyfin 12.1.0 with the same token: `X-Emby-Token: <t>` → 401, the same
+	// token carried as `Token="<t>"` inside the MediaBrowser header → 204.
+	// Minting Seerr's key therefore has to present the whole identity, token
+	// included, not the token on its own.
+	jellyfinUserAuthFormat = jellyfinIdentity + `, Token="%s"`
 
 	// settingsJellyfinPath is Seerr's media-server settings resource. A POST
 	// merges the body into settings.jellyfin, but only after testing the
@@ -114,20 +130,21 @@ func (c *Configurator) jellyfinKeyValid(ctx context.Context, jellyfin *appclient
 }
 
 // jellyfinAdminToken logs the Jellyfin bootstrap admin in and returns the
-// session token the key-minting call authenticates with. It is the same
-// credential Seerr's onboarding logs in with (bloud-bootstrap-admin, the
-// account apps/jellyfin creates and never deletes).
-func (c *Configurator) jellyfinAdminToken(ctx context.Context, jellyfin *appclient.Client, password string) (string, error) {
+// session token the key-minting call authenticates with. The account is the
+// one the `mediaServer` binding names: the managed bootstrap account for a
+// Jellyfin Bloud booted, or the account the operator registered for one it
+// did not.
+func (c *Configurator) jellyfinAdminToken(ctx context.Context, jellyfin *appclient.Client, username, password string) (string, error) {
 	var login struct {
 		AccessToken string `json:"AccessToken"`
 	}
 	if err := jellyfin.POST(jellyfinAuthPath).
 		Anonymous().
 		Header("Authorization", jellyfinDeviceAuth).
-		JSON(map[string]string{"Username": jellyfinAdminUsername, "Pw": password}).
+		JSON(map[string]string{"Username": username, "Pw": password}).
 		OK(http.StatusOK).
 		DoInto(ctx, &login); err != nil {
-		return "", fmt.Errorf("logging in to Jellyfin as %s: %w", jellyfinAdminUsername, err)
+		return "", fmt.Errorf("logging in to Jellyfin as %s: %w", username, err)
 	}
 	if login.AccessToken == "" {
 		return "", fmt.Errorf("jellyfin answered the admin login without an access token")
@@ -140,9 +157,13 @@ func (c *Configurator) jellyfinAdminToken(ctx context.Context, jellyfin *appclie
 // collection (Jellyfin returns tokens in clear there), newest first for the
 // app name Seerr mints under, in case an earlier one survived.
 func (c *Configurator) mintJellyfinKey(ctx context.Context, jellyfin *appclient.Client, adminToken string) (string, error) {
+	// Both calls go out as the logged-in admin, not as a bare token: see
+	// jellyfinUserAuthFormat for why the bare form is read as an API key and
+	// refused here.
+	userAuth := fmt.Sprintf(jellyfinUserAuthFormat, adminToken)
 	if err := jellyfin.POST(jellyfinKeysPath).
 		Query("App", jellyfinKeyApp).
-		Header(jellyfinKeyHeader, adminToken).
+		Header("Authorization", userAuth).
 		OK(http.StatusNoContent).
 		Exec(ctx); err != nil {
 		return "", fmt.Errorf("minting a %s API key in Jellyfin: %w", jellyfinKeyApp, err)
@@ -150,7 +171,7 @@ func (c *Configurator) mintJellyfinKey(ctx context.Context, jellyfin *appclient.
 
 	var keys jellyfinKeyList
 	if err := jellyfin.GET(jellyfinKeysPath).
-		Header(jellyfinKeyHeader, adminToken).
+		Header("Authorization", userAuth).
 		OK(http.StatusOK).
 		DoInto(ctx, &keys); err != nil {
 		return "", fmt.Errorf("listing Jellyfin API keys: %w", err)
@@ -232,7 +253,11 @@ func (c *Configurator) reconcileJellyfinCoupling(
 		c.logger.Warn("cannot repair the Jellyfin connection: the media server has not published its bootstrap admin password")
 		return
 	}
-	adminToken, err := c.jellyfinAdminToken(ctx, jellyfin, password)
+	if binding.AdminUsername == "" {
+		c.logger.Warn("cannot repair the Jellyfin connection: the media server has not published its bootstrap admin username")
+		return
+	}
+	adminToken, err := c.jellyfinAdminToken(ctx, jellyfin, binding.AdminUsername, password)
 	if err != nil {
 		c.logger.Warn("cannot repair the Jellyfin connection", "error", err)
 		return

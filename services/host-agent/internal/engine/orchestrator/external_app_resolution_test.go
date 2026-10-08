@@ -543,3 +543,85 @@ func TestExternalContractProviderDoesNotLeakAcrossContracts(t *testing.T) {
 	out := orch.buildIntegrations("consumer", consumer)
 	assert.Empty(t, out.PVRs, "a downloadClient record is not a PVR")
 }
+
+// A remote Jellyfin has whatever admin account the operator made there. The
+// username travels as a contract value so the consumer reads it off the
+// binding instead of assuming the name of the account Bloud would have created,
+// and the address travels as the record's own URL rather than a container name.
+func TestRemoteMediaServerSuppliesItsOwnAdminLoginAndAddress(t *testing.T) {
+	consumer := consumerApp("seerr", "mediaServer", catalog.Integration{
+		Requires: requires("adminPassword"),
+	}, "jellyfin")
+	cache := NewFakeCatalogCache()
+	cache.AddApp(consumer)
+	cache.AddApp(providerApp("jellyfin", 8096, "mediaServer", catalog.ContractProvides{
+		Secrets: []string{"adminPassword"},
+		Values:  map[string]string{"adminUsername": "bloud-bootstrap-admin"},
+	}))
+
+	extStore := store.NewExternalAppStore(testdb.SetupTestDB(t))
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID:     "nas-jellyfin",
+		Kind:   string(store.ExternalAppKindProvider),
+		Source: store.ExternalAppSourceForApp("jellyfin"),
+		Name:   "NAS Jellyfin",
+		URL:    "https://jellyfin.example.com",
+		Values: `{"mediaServer":{"adminUsername":"daniel"}}`,
+	}))
+
+	appStore := NewFakeAppStore()
+	install(t, appStore, "seerr", nil)
+
+	secrets := newFakeSecrets()
+	secrets.publish("external/nas-jellyfin", "mediaServer", "the-remote-password")
+
+	registry := new(MockConfiguratorRegistry)
+	registry.On("Get", mock.Anything).Return(nil).Maybe()
+	orch := NewOrchestrator(
+		graph.New(graph.NewMapRepository()), registry, cache, "/tmp/bloud-test", newTestLogger(),
+		OrchestratorConfig{Stores: StoresConfig{AppStore: appStore, Secrets: secrets, ExternalApps: extStore}},
+	)
+	orch.settings = newFakeSettings()
+
+	out := orch.buildIntegrations("seerr", consumer)
+	require.Len(t, out.MediaServers, 1)
+	got := out.MediaServers[0]
+	assert.Equal(t, "daniel", got.AdminUsername, "the operator's account name, not the local constant")
+	assert.Equal(t, "the-remote-password", got.AdminPassword)
+	assert.Equal(t, "https://jellyfin.example.com", got.BaseURL)
+}
+
+// The local Jellyfin publishes the managed bootstrap account it created, so a
+// locally-installed provider binds with that name rather than nothing.
+func TestLocalMediaServerPublishesItsBootstrapUsername(t *testing.T) {
+	consumer := consumerApp("seerr", "mediaServer", catalog.Integration{
+		Requires: requires("adminPassword"),
+	}, "jellyfin")
+	storeApp := providerApp("jellyfin", 8096, "mediaServer", catalog.ContractProvides{
+		Secrets: []string{"adminPassword"},
+		Values:  map[string]string{"adminUsername": "bloud-bootstrap-admin"},
+	})
+	cache := NewFakeCatalogCache()
+	cache.AddApp(consumer)
+	cache.AddApp(storeApp)
+
+	appStore := NewFakeAppStore()
+	install(t, appStore, "seerr", nil)
+	install(t, appStore, "jellyfin", nil)
+
+	secrets := newFakeSecrets()
+	secrets.publish("jellyfin", "adminPassword", "local-bootstrap-pw")
+
+	registry := new(MockConfiguratorRegistry)
+	registry.On("Get", mock.Anything).Return(nil).Maybe()
+	orch := NewOrchestrator(
+		graph.New(graph.NewMapRepository()), registry, cache, "/tmp/bloud-test", newTestLogger(),
+		OrchestratorConfig{Stores: StoresConfig{AppStore: appStore, Secrets: secrets}},
+	)
+	orch.settings = newFakeSettings()
+
+	out := orch.buildIntegrations("seerr", consumer)
+	require.Len(t, out.MediaServers, 1)
+	assert.Equal(t, "bloud-bootstrap-admin", out.MediaServers[0].AdminUsername)
+	assert.Equal(t, "local-bootstrap-pw", out.MediaServers[0].AdminPassword)
+}
