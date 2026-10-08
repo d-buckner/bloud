@@ -123,13 +123,22 @@ func providerContractFields(app *catalog.App) []externalProviderContract {
 			// second Radarr should not require retyping a feed path that never
 			// varies. The API still accepts an override for a client that wants
 			// one; the dashboard no longer offers the box.
-			static := offer.Values[key]
+			//
+			// An operator-owned key has no default the form may trust. Its static
+			// value names something Bloud minted for the install it booted, and a
+			// prefilled `bloud-bootstrap-admin` on a remote form is a wrong answer
+			// that saves cleanly, so the whole default is withheld and the field
+			// starts blank and required.
+			trusted := offer.Values[key]
+			if operatorOwned(offer, key) {
+				trusted = ""
+			}
 			fields = append(fields, externalProviderField{
 				Key:      key,
 				Label:    humanizeFieldKey(key),
 				Kind:     "value",
-				Required: static == "" && declared[key].required,
-				Default:  static,
+				Required: trusted == "" && declared[key].required,
+				Default:  trusted,
 				Help:     runtimeValueHelp(offer, key),
 			})
 		}
@@ -153,6 +162,15 @@ func runtimeValueHelp(offer catalog.ContractProvides, key string) string {
 		return ""
 	}
 	return "A local install mints this itself; for a remote one, read it from that instance."
+}
+
+// operatorOwned reports whether a statically-declared value is one the operator
+// of a remote install must supply anyway, because the static default describes
+// the install Bloud booted rather than the app. The loader guarantees such a key
+// is declared statically and is not optional, so the only question left is
+// whether the offer claimed it.
+func operatorOwned(offer catalog.ContractProvides, key string) bool {
+	return containsString(offer.OperatorValues, key)
 }
 
 // decodeProvider validates a `kind: provider` request against the catalog and
@@ -321,8 +339,10 @@ func validateProviderValues(provider *catalog.App, in map[string]map[string]stri
 			// The catalog already declares this one statically, and a static fact
 			// about the app is true of a remote copy unchanged. Requiring the
 			// operator to retype it is what turned "point Bloud at my Radarr"
-			// into a form asking for a feed path that never varies.
-			if offer.Values[key] != "" {
+			// into a form asking for a feed path that never varies. An
+			// operator-owned key is the exception the offer declares: its default
+			// is a fact about the install Bloud booted, so nothing is answered here.
+			if offer.Values[key] != "" && !operatorOwned(offer, key) {
 				continue
 			}
 			if strings.TrimSpace(supplied[key]) == "" {
@@ -372,6 +392,12 @@ func sharedSecret(provider *catalog.App, in map[string]string, secrets []string)
 // It works per key rather than all-or-nothing: an operator who renames the
 // calendar collection should still inherit the feed path, because that part of
 // the fact was never theirs to restate.
+//
+// An operator-owned key is never filled in, because the static value it would
+// inherit is the local install's answer. Injecting it is the exact failure
+// `operatorValues` exists to prevent: a record for someone else's app storing a
+// username that account has never had, and the consumer failing at sign-in
+// rather than at the boundary that could have asked.
 func mergeStaticValues(declared map[string]valueInfo, supplied map[string]string, offer catalog.ContractProvides) map[string]string {
 	inner := map[string]string{}
 	for key, value := range supplied {
@@ -381,6 +407,9 @@ func mergeStaticValues(declared map[string]valueInfo, supplied map[string]string
 	}
 	for key, value := range offer.Values {
 		if _, ok := declared[key]; !ok {
+			continue
+		}
+		if operatorOwned(offer, key) {
 			continue
 		}
 		if strings.TrimSpace(inner[key]) == "" {

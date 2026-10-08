@@ -448,3 +448,144 @@ func TestRealCatalogServarrNeedsOnlyEndpointAndKey(t *testing.T) {
 		})
 	}
 }
+
+// remoteIdentityApp is the offer shape Jellyfin and Radicale both have: a
+// credential, plus a static account name Bloud minted for the install it booted
+// and declares the operator of a remote copy owns.
+func remoteIdentityApp() *catalog.App {
+	return &catalog.App{
+		CatalogID:   "jellyfin",
+		DisplayName: "Jellyfin",
+		Description: "media server",
+		Category:    "media",
+		Port:        8096,
+		Provides: catalog.Provides{
+			"mediaServer": catalog.ContractProvides{
+				Secrets:        []string{"adminPassword"},
+				Values:         map[string]string{"adminUsername": "bloud-bootstrap-admin"},
+				OperatorValues: []string{"adminUsername"},
+			},
+		},
+	}
+}
+
+func operatorOwnedTestModule() (*externalAppsModule, *recordingOrchestrator) {
+	cache := NewFakeCatalogCache()
+	cache.AddApp(remoteIdentityApp())
+	orch := &recordingOrchestrator{}
+	mod := &externalAppsModule{
+		appStore: NewFakeAppStore(),
+		catalog:  cache,
+		secrets:  newFakeSecrets(),
+		orch:     orch,
+		logger:   newTestSlogger(),
+	}
+	return mod, orch
+}
+
+const remoteIdentityBody = `{
+	"kind": "provider",
+	"source": "app:jellyfin",
+	"name": "Downstairs Jellyfin",
+	"url": "https://jellyfin.example.com",
+	"values": {"mediaServer": {"adminUsername": "daniel"}},
+	"secrets": {"mediaServer": "hunter2"}
+}`
+
+// TestExternalAppsModule_OperatorOwnedValueHasNoDefaultToTrust is the form half
+// of the rule: a static value the operator owns is asked for, and its local
+// default is withheld rather than prefilled. A box prefilled with
+// `bloud-bootstrap-admin` on a remote form is a wrong answer that saves cleanly,
+// and the failure surfaces as a login error in whichever consumer got it.
+func TestExternalAppsModule_OperatorOwnedValueHasNoDefaultToTrust(t *testing.T) {
+	mod, _ := operatorOwnedTestModule()
+
+	w := httptest.NewRecorder()
+	mod.ProvidersHandler()(w, httptest.NewRequest(http.MethodGet, "/api/external-apps/providers", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var out []externalProviderOption
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 1)
+	require.Len(t, out[0].Contracts, 1)
+
+	byKey := map[string]externalProviderField{}
+	for _, f := range out[0].Contracts[0].Fields {
+		byKey[f.Key] = f
+	}
+	admin, ok := byKey["adminUsername"]
+	require.True(t, ok, "the remote admin's name is the operator's to supply")
+	assert.True(t, admin.Required, "an operator-owned value is a required input")
+	assert.Empty(t, admin.Default, "the local install's account name is no answer for a remote one")
+}
+
+// TestExternalAppsModule_AddProviderRejectsMissingOperatorOwnedValue pins the
+// validator half: the static default does not excuse a blank on the way in, so a
+// record cannot be stored claiming a username nobody typed.
+func TestExternalAppsModule_AddProviderRejectsMissingOperatorOwnedValue(t *testing.T) {
+	for _, body := range []string{
+		strings.Replace(remoteIdentityBody, `{"adminUsername": "daniel"}`, `{}`, 1),
+		strings.Replace(remoteIdentityBody, `"adminUsername": "daniel"`, `"adminUsername": "  "`, 1),
+	} {
+		mod, orch := operatorOwnedTestModule()
+
+		w := postExternalApp(mod, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "a blank admin name must be rejected: %s", w.Body.String())
+		assert.Contains(t, w.Body.String(), "adminUsername")
+		assert.Empty(t, orch.intents, "a rejected request must not submit an intent")
+	}
+}
+
+// TestExternalAppsModule_OperatorOwnedValueSurvivesTheStaticMerge is the other
+// half of the same fact seen from the store: what the operator typed is what the
+// consumer receives, and the catalog's local constant is never merged in under
+// it.
+func TestExternalAppsModule_OperatorOwnedValueSurvivesTheStaticMerge(t *testing.T) {
+	mod, orch := operatorOwnedTestModule()
+
+	w := postExternalApp(mod, remoteIdentityBody)
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, orch.intents, 1)
+
+	add, ok := orch.intents[0].(orchestrator.AddExternalAppIntent)
+	require.True(t, ok)
+	assert.Equal(t, "daniel", add.Spec.Values["mediaServer"]["adminUsername"])
+}
+
+// TestRealCatalogRemoteInstallsAskForTheAccount pins the two catalog apps whose
+// static value is a name Bloud minted for the account it creates. It reads the
+// real catalog because the property is a fact about their `provides:` blocks: an
+// `operatorValues` entry dropped from either, or a third app that declares a
+// Bloud-minted account name statically, fails here rather than shipping a remote
+// record that logs in with a username that account never had.
+func TestRealCatalogRemoteInstallsAskForTheAccount(t *testing.T) {
+	apps, err := catalog.NewLoader(realProviderCatalogDir(t)).LoadAll()
+	require.NoError(t, err)
+
+	for _, tc := range []struct{ app, contract, key string }{
+		{"jellyfin", "mediaServer", "adminUsername"},
+		{"radicale", "appApi", "username"},
+	} {
+		t.Run(tc.app, func(t *testing.T) {
+			app, ok := apps[tc.app]
+			require.True(t, ok, "%s must be in the catalog", tc.app)
+
+			var found *externalProviderField
+			for _, contract := range providerContractFields(app) {
+				if contract.Name != tc.contract {
+					continue
+				}
+				for i, field := range contract.Fields {
+					if field.Key == tc.key {
+						found = &contract.Fields[i]
+					}
+				}
+			}
+			require.NotNil(t, found, "%s must offer a %s field for %s", tc.app, tc.contract, tc.key)
+			assert.True(t, found.Required,
+				"%s's %s is the account Bloud created, so a remote install has to name its own", tc.app, tc.key)
+			assert.Empty(t, found.Default,
+				"%s must not offer %q as a prefilled answer for someone else's install", tc.app, tc.key)
+		})
+	}
+}

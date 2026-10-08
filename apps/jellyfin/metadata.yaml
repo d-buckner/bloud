@@ -30,13 +30,20 @@ integrations:
 # Jellyfin API key.
 #
 # The username is declared as a value rather than a secret because that is what
-# it is, and because a consumer pointed at a Jellyfin Bloud did not boot has to
-# be told the account name rather than assume one.
+# it is: anyone who can reach the sign-in page can learn it.
+#
+# It is also listed under operatorValues, because the name below is only true of a
+# Jellyfin Bloud booted. Point this app at someone else's install and its admin is
+# whatever that operator called theirs, so the remote-install form asks for it and
+# the constant is never copied into the record. Otherwise Seerr knocks on a remote
+# door with a username that account has never had, and the failure reads as a bad
+# password.
 provides:
   mediaServer:
     secrets: [adminPassword]
     values:
       adminUsername: bloud-bootstrap-admin
+    operatorValues: [adminUsername]
 
 # LDAP SSO for TV apps, mobile clients, and other non-web interfaces
 # The web UI could also support OIDC in the future, but LDAP covers more use cases

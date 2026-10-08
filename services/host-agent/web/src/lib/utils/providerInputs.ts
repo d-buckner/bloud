@@ -11,7 +11,12 @@
  * 1. A value the provider's own catalog entry declares statically is a fact
  *    about the app, not about this install. `/feed/v3/calendar/Radarr.ics`
  *    is true of a remote Radarr unchanged, so the form never shows it; the
- *    server merges it back in on save.
+ *    server merges it back in on save. The exception is declared, not guessed:
+ *    a key the offer lists under `operatorValues` has a static default that
+ *    describes the install Bloud booted rather than the app, so the server
+ *    marks it required and withholds the default, and it arrives here like any
+ *    other required field. A prefilled `bloud-bootstrap-admin` on a remote form
+ *    is a wrong answer that saves cleanly.
  * 2. Optional values stay out. An optional field with nothing to say reads
  *    as an empty binding either way, so the input only manufactures a blank.
  * 3. One credential answers every contract of one app that declares the same
