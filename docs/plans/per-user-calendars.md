@@ -653,6 +653,34 @@ reads*. Hermes has persistent memory and a configurable prompt; the
 the place to say "one collection per household member, named after them; the
 username is in the URL".
 
+**Verified live, and the last paragraph above overstates what is left to do.**
+Calling `list_calendars` through the installed `dav-mcp` 4.1.2 returns:
+
+```
+### 1. Family
+- Components: VTODO, VEVENT, VJOURNAL
+- URL: http://apps-radicale:5232/caldav-service/family/
+
+### 2. Admin's calendar
+- Components: VTODO, VEVENT, VJOURNAL
+- URL: http://apps-radicale:5232/caldav-service/person-admin/
+```
+
+The display name and the username-bearing URL arrive together, in a shape an LLM
+reads directly, with no `dav-mcp` change and no added description. Passing that
+URL straight to `create_todo` created the item and the user read it back from
+their own `Personal` mount.
+
+So option A is not "a naming convention plus a prompt convention". The naming
+convention is all of it. The prompt convention is optional polish for nicknames
+and same-name collisions, which is the only failure mode A has and which no
+amount of description text fixes either -- those need option B.
+
+The earlier claim in this plan that Phase 3 needed a `dav-mcp` namespace
+description was wrong, and it is worth keeping the wrongness on the record: it
+came from reasoning about what the agent *would need* instead of calling the
+tool and looking.
+
 ## Trust, attribution, and what is not provable
 
 `docs/features/mcp.md` already states the limit: *one published credential
@@ -788,6 +816,15 @@ What it proves: against a live stack, `list_calendars` as the agent returns one
 entry per household member with a name and a URL that carry the same identity,
 and a `create_todo` against one of them lands where it should. This is the
 phase that turns "the collection exists" into "the agent can find it".
+
+**Satisfied by Phase 2 plus existing `dav-mcp` behavior.** The display names
+and the URL convention shipped with the provisioning slice, and calling
+`list_calendars` through the installed wrapper returns both together without
+any change to `dav-mcp`. The namespace description this phase called for turned
+out to be unnecessary: the tool output already reads the way an LLM needs it.
+See the resolution section for the live transcript. What remains here is
+optional -- a prompt convention for nicknames and same-name collisions, which
+is option B's job and not solved by description text either.
 
 **Phase 4: the consent switch.** The per-user `direct` / `off` preference
 gating the agent's grant in the plan.
