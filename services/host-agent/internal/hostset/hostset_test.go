@@ -89,6 +89,24 @@ func TestParseOriginRoundTrips(t *testing.T) {
 	}
 }
 
+// HostPort is the address without the scheme, which is what a display wants
+// when the scheme is already implied by the picture it sits in. The port shows
+// only when it is not the scheme's own default, so Origin stays the same string
+// read two ways rather than two addresses that differ by a colon.
+func TestPublicURLHostPort(t *testing.T) {
+	for _, tc := range []struct{ url, want string }{
+		{"https://bloud.example.com", "bloud.example.com"},
+		{"https://bloud.example.com:443", "bloud.example.com"},
+		{"https://bloud.example.com:8443", "bloud.example.com:8443"},
+		{"http://bloud.example.com", "bloud.example.com"},
+		{"http://bloud.example.com:80", "bloud.example.com"},
+		{"http://localhost:8080", "localhost:8080"},
+	} {
+		got := mustParse(t, tc.url).HostPort()
+		assert.Equal(t, tc.want, got, tc.url)
+	}
+}
+
 // The public host renders as the configured origin, port carried verbatim:
 // that port is the operator's own statement about where the proxy is dialed.
 // The built-in aliases render on their fixed plain-http mapping.

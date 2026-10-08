@@ -15,7 +15,6 @@
 	let { data }: { data: NodeData } = $props();
 
 	const isConnection = $derived(data.nodeType === 'connection');
-	const label = $derived(data.displayName || window.location.hostname);
 </script>
 
 {#if data.hasIncoming}
@@ -24,7 +23,7 @@
 
 <div class="app-node" class:system={data.isSystem} class:connection={isConnection}>
 	<div class="node-header">
-		<span class="node-name">{label}</span>
+		<span class="node-name">{data.displayName}</span>
 	</div>
 	<div class="node-footer">
 		<span class="status-dot" style="background: {statusColor(data.status)}"></span>

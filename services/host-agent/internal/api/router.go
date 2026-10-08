@@ -284,6 +284,9 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 	// The container DNS diagnostic compares host and container resolution of
 	// the configured public host; nil omits the endpoint.
 	systemMod.SetDNSDiagnostics(cfg.DNSDiagnostics)
+	// The ingress node is labelled with the address the operator configured,
+	// so the graph reads the same live host set the address setting writes.
+	systemMod.SetHostSet(cfg.Hosts)
 
 	return &routerModules{
 		apps: appsMod,
