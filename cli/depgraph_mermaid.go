@@ -30,7 +30,7 @@ func renderDependencyGraph(apps map[string]*AppMetadata) string {
 	}
 
 	// Drawn outside every box: the instance provides it, not an app.
-	fmt.Fprintf(&sb, "\n    %s[\"%s\"]\n", instanceProviderMermaid, instanceProviderLabel)
+	fmt.Fprintf(&sb, "\n    %s[\"%s\"]\n", settingProviderMermaid, settingProviderLabel)
 
 	sb.WriteString("\n    %% Cross-app integration edges\n")
 	for _, edge := range integrationEdges(apps) {

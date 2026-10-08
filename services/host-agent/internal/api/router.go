@@ -280,6 +280,7 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 	// has an enabled upstream, so it reads the same store the settings module
 	// writes.
 	systemMod.SetAISettings(cfg.Settings)
+	systemMod.SetExternalApps(deps.externalApps)
 	// The container DNS diagnostic compares host and container resolution of
 	// the configured public host; nil omits the endpoint.
 	systemMod.SetDNSDiagnostics(cfg.DNSDiagnostics)
@@ -301,6 +302,7 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 			catalog:       deps.catalogCache,
 			orch:          deps.orchCaller,
 			logger:        logger,
+			externalApps:  deps.externalApps,
 		},
 		external: newExternalAppsModule(deps, logger),
 		system:   systemMod,

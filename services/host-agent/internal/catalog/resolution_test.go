@@ -45,18 +45,18 @@ func TestDeclaredProviders_RequiredAndOptionalAreTheSameSet(t *testing.T) {
 	assert.Equal(t, []string{"radarr", "sonarr"}, appsOf(required))
 }
 
-// A `source: instance` entry binds the instance, not an app named ”.
+// A `source: setting` entry binds the instance, not an app named ”.
 func TestDeclaredProviders_MapsInstanceSource(t *testing.T) {
 	integration := Integration{
-		Compatible: []CompatibleApp{{App: "radarr"}, {Source: InstanceProviderSource}},
+		Compatible: []CompatibleApp{{App: "radarr"}, {Source: SettingProviderSource}},
 	}
 
 	providers := DeclaredProviders(integration)
 
 	require.Len(t, providers, 2)
 	assert.Equal(t, "radarr", providers[0].App)
-	assert.False(t, providers[0].IsInstance())
-	assert.True(t, providers[1].IsInstance())
+	assert.False(t, providers[0].IsSetting())
+	assert.True(t, providers[1].IsSetting())
 	assert.Empty(t, providers[1].App,
 		"the instance is not a catalog app, so it must not carry a name to look up")
 }
@@ -74,10 +74,10 @@ func TestDeclaredProviders_Deduplicates(t *testing.T) {
 
 // The instance is a provider the consumer never named, so it must not be
 // mistaken for a catalog app on the way out.
-func TestBoundProvider_IsInstance(t *testing.T) {
-	assert.True(t, BoundProvider{Source: InstanceProviderSource}.IsInstance())
-	assert.False(t, BoundProvider{App: "radarr"}.IsInstance())
-	assert.False(t, BoundProvider{}.IsInstance())
+func TestBoundProvider_IsSetting(t *testing.T) {
+	assert.True(t, BoundProvider{Source: SettingProviderSource}.IsSetting())
+	assert.False(t, BoundProvider{App: "radarr"}.IsSetting())
+	assert.False(t, BoundProvider{}.IsSetting())
 }
 
 // The rule has to hold against the shipped catalog, not just hand-built
@@ -98,7 +98,7 @@ func TestDeclaredProviders_RealCatalogDeclaresEveryMcpProvider(t *testing.T) {
 
 	var names []string
 	for _, p := range providers {
-		require.False(t, p.IsInstance(), "hermes' mcp contract declares no instance provider")
+		require.False(t, p.IsSetting(), "hermes' mcp contract declares no instance provider")
 		names = append(names, p.App)
 	}
 	assert.Equal(t, []string{"affine-mcp", "dav-mcp", "jellyfin-mcp"}, names)

@@ -52,6 +52,7 @@ func (s *storeSecrets) SetAppSecret(_, key, value string) error {
 func (s *storeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
 
 func (s *storeSecrets) GetAppContractValue(string, string, string) string { return "" }
+func (s *storeSecrets) DeleteAppSecrets(string) error                     { return nil }
 
 // stateWithAffine is a pass with the resolved appApi binding AFFiNE publishes.
 func stateWithAffine(dataDir string) *configurator.AppState {

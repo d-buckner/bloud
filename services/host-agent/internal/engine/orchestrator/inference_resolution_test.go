@@ -45,16 +45,19 @@ func inferenceConsumer(id string, compatible ...catalog.CompatibleApp) *catalog.
 	}
 }
 
-var instanceSrc = catalog.CompatibleApp{Source: catalog.InstanceProviderSource}
+var instanceSrc = catalog.CompatibleApp{Source: catalog.SettingProviderSource}
 
-// configureInstance sets the instance's upstream and default model.
-func configureInstance(t *testing.T, s *fakeSettings, baseURL, defaultModel string) {
+// configureInstance sets the instance's upstream and default model. The
+// upstream is an external provider record because that is where the resolver
+// reads it from; the default model stays a settings key.
+func configureInstance(t *testing.T, s *fakeSettings, orch *Orchestrator, baseURL, defaultModel string) {
 	t.Helper()
-	upstreams, err := inference.EncodeUpstreams([]inference.Upstream{
-		{ID: "default", Name: "Primary", BaseURL: baseURL, Enabled: true},
-	})
-	require.NoError(t, err)
-	s.values[inference.SettingUpstreams] = upstreams
+	require.NoError(t, orch.externalApps.Upsert(inference.ExternalForUpstream(inference.Upstream{
+		ID:      "default",
+		Name:    "Primary",
+		BaseURL: baseURL,
+		Enabled: true,
+	})))
 	s.values[inference.SettingDefaultModel] = defaultModel
 }
 
@@ -62,19 +65,19 @@ func configureInstance(t *testing.T, s *fakeSettings, baseURL, defaultModel stri
 // today: the setting is populated, the consumer resolves it, and the binding
 // carries the operator's own credential rather than a gateway-issued one.
 func TestResolveInference_InstanceServesAsProvider(t *testing.T) {
-	store := NewFakeAppStore()
-	install(t, store, "hermes", nil)
+	appStore := NewFakeAppStore()
+	install(t, appStore, "hermes", nil)
 
 	consumer := inferenceConsumer("hermes", instanceSrc)
-	orch, secrets := bindingsOrchestrator(t, store, consumer)
-	secrets.publish("ai", "apiKey", "operator-key")
-	configureInstance(t, orch.settings.(*fakeSettings), "https://api.example.com/v1", "gpt-4o-mini")
+	orch, secrets := bindingsOrchestrator(t, appStore, consumer)
+	secrets.publish(store.ExternalSecretScope("default"), inference.ContractName, "operator-key")
+	configureInstance(t, orch.settings.(*fakeSettings), orch, "https://api.example.com/v1", "gpt-4o-mini")
 
 	out := orch.buildIntegrations("hermes", consumer)
 
 	require.Len(t, out.Inference, 1)
 	b := out.Inference[0]
-	assert.Equal(t, catalog.InstanceProviderSource, b.App)
+	assert.Equal(t, catalog.SettingProviderSource, b.App)
 	assert.Equal(t, configurator.ProviderKindSetting, b.Kind)
 	assert.True(t, b.Installed, "the setting being populated is the instance analogue of an installed provider")
 	assert.Equal(t, "https://api.example.com/v1", b.Endpoint)
@@ -107,7 +110,7 @@ func TestResolveInference_DefaultModelIsNeverValidated(t *testing.T) {
 
 	consumer := inferenceConsumer("hermes", instanceSrc)
 	orch, _ := bindingsOrchestrator(t, store, consumer)
-	configureInstance(t, orch.settings.(*fakeSettings), "https://api.example.com/v1", "a-model-that-no-longer-exists")
+	configureInstance(t, orch.settings.(*fakeSettings), orch, "https://api.example.com/v1", "a-model-that-no-longer-exists")
 
 	out := orch.buildIntegrations("hermes", consumer)
 
@@ -132,7 +135,7 @@ func TestResolveInference_RequiresGatesTheCredential(t *testing.T) {
 	}
 	orch, secrets := bindingsOrchestrator(t, store, consumer)
 	secrets.publish("ai", "apiKey", "operator-key")
-	configureInstance(t, orch.settings.(*fakeSettings), "https://api.example.com/v1", "gpt-4o")
+	configureInstance(t, orch.settings.(*fakeSettings), orch, "https://api.example.com/v1", "gpt-4o")
 
 	out := orch.buildIntegrations("hermes", consumer)
 
@@ -153,21 +156,21 @@ func TestComputeAppDeps_InstanceProviderCreatesNoEdge(t *testing.T) {
 	deps := computeAppDeps(apps, cache)
 
 	for _, dep := range deps["hermes"] {
-		assert.NotEqual(t, catalog.InstanceProviderSource, dep,
+		assert.NotEqual(t, catalog.SettingProviderSource, dep,
 			"the instance is never a graph dependency")
 		assert.NotEmpty(t, dep, "an empty provider id must never become an edge")
 	}
 }
 
 // The instance provider must not leak into non-inference contracts: a consumer
-// declaring `source: instance` for some other contract gets no binding rather
+// declaring `source: setting` for some other contract gets no binding rather
 // than a half-populated one.
 func TestBuildIntegrations_InstanceSourceOnlyResolvesInference(t *testing.T) {
 	consumer := &catalog.App{
 		CatalogID: "something",
 		Integrations: map[string]catalog.Integration{
 			"pvr": {Required: false, Compatible: []catalog.CompatibleApp{
-				{Source: catalog.InstanceProviderSource},
+				{Source: catalog.SettingProviderSource},
 			}},
 		},
 	}

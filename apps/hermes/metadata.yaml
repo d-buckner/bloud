@@ -20,7 +20,7 @@ integrations:
       - app: authentik
         default: true
   # Hermes is an inference consumer, and the provider is the instance itself.
-  # `source: instance` is not an app: the resolver reads Bloud's own AI
+  # `source: setting` is not an app: the resolver reads Bloud's own AI
   # settings (Settings -> AI), so there is nothing to install or uninstall and
   # no container to order on the graph. The graph still shows the wiring, as an
   # edge to the AI Model node.
@@ -30,7 +30,7 @@ integrations:
     requires:
       - apiKey
     compatible:
-      - source: instance
+      - source: setting
         default: true
   # MCP servers Bloud wires into the agent. `multi: true` because the whole
   # point is that a harness takes as many tool namespaces as the instance

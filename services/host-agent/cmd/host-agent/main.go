@@ -20,6 +20,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
@@ -183,6 +184,16 @@ func buildAgentStack(logger *slog.Logger) *agentStack {
 func openAgentStoresInto(st *agentStack, logger *slog.Logger) {
 	st.app = store.NewAppStore(st.database)
 	st.externalApps = store.NewExternalAppStore(st.database)
+	// AI upstreams used to live in the settings KV with one instance-scoped key.
+	// They are external provider records now, and the move happens before the
+	// orchestrator builds because that is the first thing to read the new
+	// location.
+	if err := inference.MigrateUpstreamsToExternal(
+		store.NewSettingsStore(st.database), st.externalApps, st.cfg.Secrets, logger,
+	); err != nil {
+		logger.Error("failed to migrate AI upstreams into the external provider registry", "error", err)
+		os.Exit(1)
+	}
 	st.catalog = catalog.NewMemoryCache()
 	if err := st.catalog.Refresh(catalog.NewLoader(st.cfg.AppsDir)); err != nil {
 		logger.Error("failed to load the app catalog", "apps_dir", st.cfg.AppsDir, "error", err)

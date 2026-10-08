@@ -1141,6 +1141,7 @@ func (s *contractStore) SetAppContractValue(_, contract, key, value string) erro
 func (s *contractStore) GetAppContractValue(_, contract, key string) string {
 	return s.values[contract+":"+key]
 }
+func (s *contractStore) DeleteAppSecrets(string) error { return nil }
 
 func TestPublishAgentModelName(t *testing.T) {
 	store := newContractStore()

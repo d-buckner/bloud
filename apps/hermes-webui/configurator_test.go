@@ -60,6 +60,7 @@ func (s *storeSecrets) GetAppContractValue(_, contract, key string) string {
 	defer s.mu.Unlock()
 	return s.secrets[contract+"/"+key]
 }
+func (s *storeSecrets) DeleteAppSecrets(string) error { return nil }
 
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))

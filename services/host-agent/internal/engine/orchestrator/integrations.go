@@ -8,6 +8,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
@@ -80,14 +81,14 @@ func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) co
 		return out
 	}
 	installed := installedSet(installedApps)
-	external := o.externalProvidersByApp()
+	external := o.loadExternalRegistry()
 
 	for contract, integration := range catalogApp.Integrations {
 		if contract == "inference" {
 			// Inference has its own resolution because it is the one contract
 			// that can be served by a provider the consumer never named: a
-			// gateway app, the instance setting, or promotion from an
-			// installed modelSource.
+			// gateway app, the operator's own upstream setting, or promotion
+			// from an installed modelSource.
 			if binding, ok := o.resolveInference(integration, installed, app, external); ok {
 				out.Inference = append(out.Inference, binding)
 			}
@@ -98,29 +99,52 @@ func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) co
 	return out
 }
 
-// externalProvidersByApp indexes the external registry by the catalog ID each
-// record stands in for, so one resolution pass reads the table once rather than
-// once per declared provider per contract. A record whose source is not an
-// `app:` source is not indexed here; it reaches resolution through the
-// contract-source path, not by standing in for a catalog ID.
-func (o *Orchestrator) externalProvidersByApp() map[string]*store.ExternalApp {
+// externalRegistry is the external app table read once per resolution pass,
+// indexed the two ways resolution needs it.
+//
+// byApp answers "did the operator register a remote copy of this catalog
+// app". byContract answers "did the operator declare something that fills
+// this role", which is what a consumer's `compatible: [{source: setting}]`
+// is asking. A record can appear in both only if it were both kinds, which the
+// source grammar makes impossible, so the two indexes never disagree.
+type externalRegistry struct {
+	byApp      map[string]*store.ExternalApp
+	byContract map[string][]*store.ExternalApp
+}
+
+// externalForContract returns the records that fill one contract. Order is the
+// registry's own; where exactly one is wanted the caller picks the first
+// enabled, which is the same rule the AI Settings already used.
+func (r externalRegistry) externalForContract(contract string) []*store.ExternalApp {
+	return r.byContract[contract]
+}
+
+func (o *Orchestrator) loadExternalRegistry() externalRegistry {
+	reg := externalRegistry{
+		byApp:      map[string]*store.ExternalApp{},
+		byContract: map[string][]*store.ExternalApp{},
+	}
 	if o.externalApps == nil {
-		return nil
+		return reg
 	}
 	apps, err := o.externalApps.GetAll()
 	if err != nil {
 		o.logger.Warn("cannot read the external app registry; resolving every provider as local", "error", err)
-		return nil
+		return reg
 	}
-	out := make(map[string]*store.ExternalApp, len(apps))
 	for _, app := range apps {
 		kind, ref, ok := store.ParseExternalAppSource(app.Source)
-		if !ok || kind != store.ExternalAppSourceKindApp {
+		if !ok {
 			continue
 		}
-		out[ref] = app
+		switch kind {
+		case store.ExternalAppSourceKindApp:
+			reg.byApp[ref] = app
+		case store.ExternalAppSourceKindContract:
+			reg.byContract[ref] = append(reg.byContract[ref], app)
+		}
 	}
-	return out
+	return reg
 }
 
 // installedSet is the set of catalog IDs that have an installed app row.
@@ -135,14 +159,20 @@ func installedSet(apps []*store.InstalledApp) map[string]bool {
 // bindAppProviders binds every declared provider of one contract that is a
 // real, non-self app: a local install, or an external record standing in for
 // one.
-func (o *Orchestrator) bindAppProviders(out *configurator.Integrations, contract string, integration catalog.Integration, installed map[string]bool, app string, external map[string]*store.ExternalApp) {
-	for _, src := range resolveProviders(integration, external) {
+func (o *Orchestrator) bindAppProviders(out *configurator.Integrations, contract string, integration catalog.Integration, installed map[string]bool, app string, external externalRegistry) {
+	for _, src := range resolveProviders(contract, integration, external) {
 		// An app cannot be its own provider: a self-edge would also make
 		// the graph order the node after itself.
 		if src.kind == configurator.ProviderKindApp && src.id == app {
 			continue
 		}
 		if src.isSetting() {
+			// A setting source is an off-host record that fills the role. There is
+			// no catalog app behind it, so the address is the record's own and the
+			// offer is the contract's declared shape with nothing runtime-filled:
+			// the operator is the runtime.
+			o.bindContract(out, contract, settingRecordProviderRef(src.external),
+				catalog.ContractProvides{}, src, integration.Requires)
 			continue
 		}
 		provider, err := o.catalog.Get(src.id)
@@ -177,8 +207,8 @@ func (o *Orchestrator) refFor(src providerSource, provider *catalog.App, install
 // One binding, not several: a consumer dialing two inference endpoints has no
 // defined meaning, so the multi case is resolved here rather than pushed onto
 // every configurator.
-func (o *Orchestrator) resolveInference(integration catalog.Integration, installed map[string]bool, consumer string, external map[string]*store.ExternalApp) (configurator.InferenceBinding, bool) {
-	for _, src := range resolveProviders(integration, external) {
+func (o *Orchestrator) resolveInference(integration catalog.Integration, installed map[string]bool, consumer string, external externalRegistry) (configurator.InferenceBinding, bool) {
+	for _, src := range resolveProviders(inference.ContractName, integration, external) {
 		if src.isSetting() || src.id == consumer || (!installed[src.id] && !src.isExternal()) {
 			continue
 		}
@@ -190,12 +220,12 @@ func (o *Orchestrator) resolveInference(integration catalog.Integration, install
 			ProviderRef:  ref,
 			Endpoint:     ref.BaseURL + offer.Values["path"],
 			APIKey:       o.publishedSecret(src, "inference", offer, integration.Requires),
-			DefaultModel: o.inferenceSettings().DefaultModel,
+			DefaultModel: o.defaultModel(),
 			ViaGateway:   true,
 		}, true
 	}
 
-	if binding, ok := o.settingInferenceSource(integration.Requires); ok {
+	if binding, ok := o.settingInferenceSource(integration.Requires, external); ok {
 		return binding, true
 	}
 
@@ -214,7 +244,7 @@ func (o *Orchestrator) resolveInference(integration catalog.Integration, install
 		return configurator.InferenceBinding{
 			ProviderRef:  ref,
 			Endpoint:     ref.BaseURL + offer.Values["path"],
-			DefaultModel: o.inferenceSettings().DefaultModel,
+			DefaultModel: o.defaultModel(),
 			// Promoted from a keyless source: the consumer is talking to
 			// the raw upstream, not a gateway, and holds no gateway key.
 			ViaGateway: false,
@@ -490,19 +520,30 @@ func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installe
 // wired is the caller's question, answered by whether it is installed (or,
 // for the instance, configured).
 //
-// A `source: instance` entry becomes an instance providerSource. It carries no
-// node and produces no graph edge, which is why computeAppDeps filters on kind.
+// A `source: setting` entry becomes one setting providerSource per external
+// record that fills this contract. That is the generalization the rename was
+// for: the consumer named a role, and any off-host thing the operator declared
+// for that role satisfies it. With no such record the entry resolves to
+// nothing, which reads to the consumer as "no provider", the same way an
+// uninstalled app does.
+//
 // An `app:` entry is resolved against the external registry the caller loaded,
 // so a remote install of a catalog app arrives as an external providerSource
 // rather than a local one.
-func resolveProviders(integration catalog.Integration, external map[string]*store.ExternalApp) []providerSource {
+func resolveProviders(contract string, integration catalog.Integration, external externalRegistry) []providerSource {
 	var out []providerSource
 	for _, declared := range catalog.DeclaredProviders(integration) {
-		if declared.IsInstance() {
-			out = append(out, settingSource())
+		if declared.IsSetting() {
+			for _, rec := range external.externalForContract(contract) {
+				out = append(out, providerSource{
+					kind:     configurator.ProviderKindSetting,
+					id:       catalog.SettingProviderSource,
+					external: rec,
+				})
+			}
 			continue
 		}
-		out = append(out, externalAppSource(declared.App, external[declared.App]))
+		out = append(out, externalAppSource(declared.App, external.byApp[declared.App]))
 	}
 	return out
 }

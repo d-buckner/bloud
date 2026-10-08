@@ -39,7 +39,7 @@ integrations:
     requires:
       - apiKey
     compatible:
-      - source: instance
+      - source: setting
   # AFFiNE 0.27 ships a built-in CalDAV client: the server syncs a DAV account
   # on the user's behalf and serves the events to its own frontend. Declaring
   # the contract gets the DAV server's address and orders the install; the

@@ -63,6 +63,7 @@ func (s *storeSecrets) GetAppContractValue(_, contract, key string) string {
 	defer s.mu.Unlock()
 	return s.values[contract+"/"+key]
 }
+func (s *storeSecrets) DeleteAppSecrets(string) error { return nil }
 
 // fakeAffine is a stand-in for the slice of AFFiNE the configurator touches:
 // the owner sign-in that issues the session and CSRF cookies, the GraphQL

@@ -446,3 +446,100 @@ func TestUpdateExternalAppCanReplaceValues(t *testing.T) {
 	assert.Equal(t, "someone@else.com", binding.Username)
 	assert.Equal(t, "ws-99", binding.WorkspaceID)
 }
+
+// The generalization the `source: setting` rename was for: a consumer that
+// declares a role gets any off-host record the operator declared for that
+// role, with no catalog app in between. This is the `contract:<name>` path on
+// a contract other than inference, which is where it will be used next.
+func TestExternalContractProviderResolvesForASettingConsumer(t *testing.T) {
+	consumer := &catalog.App{
+		CatalogID: "consumer",
+		Integrations: map[string]catalog.Integration{
+			"pvr": {
+				Requires:   []string{"apiKey"},
+				Compatible: []catalog.CompatibleApp{{Source: catalog.SettingProviderSource}},
+			},
+		},
+	}
+	cache := NewFakeCatalogCache()
+	cache.AddApp(consumer)
+
+	appStore := NewFakeAppStore()
+	install(t, appStore, "consumer", nil)
+
+	extStore := store.NewExternalAppStore(testdb.SetupTestDB(t))
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID:     "ext-radarr",
+		Kind:   string(store.ExternalAppKindProvider),
+		Source: store.ExternalAppSourceForContract("pvr"),
+		Name:   "Off-host Radarr",
+		URL:    "https://radarr.example.com",
+	}))
+
+	secrets := newFakeSecrets()
+	secrets.publish(store.ExternalSecretScope("ext-radarr"), "pvr", "off-host-key")
+
+	orch := NewOrchestrator(
+		graph.New(graph.NewMapRepository()),
+		new(MockConfiguratorRegistry),
+		cache,
+		"/tmp/bloud-test",
+		newTestLogger(),
+		OrchestratorConfig{Stores: StoresConfig{
+			AppStore:     appStore,
+			Secrets:      secrets,
+			ExternalApps: extStore,
+		}},
+	)
+
+	out := orch.buildIntegrations("consumer", consumer)
+
+	require.Len(t, out.PVRs, 1, "the off-host record fills the role the consumer declared")
+	binding := out.PVRs[0]
+	assert.Equal(t, "ext-radarr", binding.App)
+	assert.Equal(t, configurator.ProviderKindSetting, binding.Kind)
+	assert.True(t, binding.Installed)
+	assert.Equal(t, "https://radarr.example.com", binding.BaseURL)
+	assert.Equal(t, "off-host-key", binding.APIKey)
+}
+
+// A record declared for one contract must not satisfy a consumer of another.
+// The match is on the contract name, not on "the operator put something in
+// the registry".
+func TestExternalContractProviderDoesNotLeakAcrossContracts(t *testing.T) {
+	consumer := &catalog.App{
+		CatalogID: "consumer",
+		Integrations: map[string]catalog.Integration{
+			"pvr": {Compatible: []catalog.CompatibleApp{{Source: catalog.SettingProviderSource}}},
+		},
+	}
+	cache := NewFakeCatalogCache()
+	cache.AddApp(consumer)
+
+	appStore := NewFakeAppStore()
+	install(t, appStore, "consumer", nil)
+
+	extStore := store.NewExternalAppStore(testdb.SetupTestDB(t))
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID:     "ext-other",
+		Kind:   string(store.ExternalAppKindProvider),
+		Source: store.ExternalAppSourceForContract("downloadClient"),
+		Name:   "Off-host download client",
+		URL:    "https://downloads.example.com",
+	}))
+
+	orch := NewOrchestrator(
+		graph.New(graph.NewMapRepository()),
+		new(MockConfiguratorRegistry),
+		cache,
+		"/tmp/bloud-test",
+		newTestLogger(),
+		OrchestratorConfig{Stores: StoresConfig{
+			AppStore:     appStore,
+			ExternalApps: extStore,
+		}},
+	)
+
+	out := orch.buildIntegrations("consumer", consumer)
+	assert.Empty(t, out.PVRs, "a downloadClient record is not a PVR")
+}

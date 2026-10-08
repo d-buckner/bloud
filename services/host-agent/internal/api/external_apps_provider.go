@@ -134,7 +134,10 @@ func runtimeValueHelp(offer catalog.ContractProvides, key string) string {
 func (m *externalAppsModule) decodeProvider(name, rawURL, icon string, req setExternalAppRequest, id string) (orchestrator.ExternalAppSpec, error) {
 	kind, ref, ok := store.ParseExternalAppSource(req.Source)
 	if !ok {
-		return orchestrator.ExternalAppSpec{}, fmt.Errorf("source must be app:<catalog app>")
+		return orchestrator.ExternalAppSpec{}, fmt.Errorf("source must be app:<catalog app> or contract:<contract name>")
+	}
+	if kind == store.ExternalAppSourceKindContract {
+		return m.decodeContractProvider(ref, name, rawURL, icon, req, id)
 	}
 	if kind != store.ExternalAppSourceKindApp {
 		return orchestrator.ExternalAppSpec{}, fmt.Errorf("source %q is not selectable yet; only app:<catalog app> is", strings.TrimSpace(req.Source))
@@ -178,6 +181,82 @@ func (m *externalAppsModule) decodeProvider(name, rawURL, icon string, req setEx
 		ID:      id,
 		Kind:    string(store.ExternalAppKindProvider),
 		Source:  store.ExternalAppSourceForApp(ref),
+		Name:    name,
+		URL:     endpoint,
+		Icon:    icon,
+		Values:  values,
+		Secrets: secrets,
+	}, nil
+}
+
+// Contracts that cannot be filled from off-host through this mechanism.
+//
+// Each is load-bearing inside the instance in a way a pointer cannot carry.
+// `proxy` is the thing the instance itself is reached through; `database` is
+// wired into app containers as a credential minted at install; `sso` is the
+// identity boundary, and pointing it somewhere else would hand a third party
+// the keys to every app on the box. A consumer that needs one of those gets
+// the local provider or nothing.
+var nonExternalizableContracts = map[string]string{
+	"proxy":    "Bloud's own reverse proxy cannot be replaced by a remote one",
+	"database": "database credentials are minted per app at install time",
+	"sso":      "the identity provider is the instance's own trust boundary",
+}
+
+// decodeContractProvider validates a `source: contract:<name>` request: a bare
+// off-host provider that fills one named role with no catalog app behind it.
+//
+// The contract registry is the whole schema here. The operator is the runtime,
+// so the values a provider would mint at install are the values this form asks
+// for, validated against the same `Values` spec the catalog loader applies to a
+// provider's own declaration.
+func (m *externalAppsModule) decodeContractProvider(
+	contractName, name, rawURL, icon string,
+	req setExternalAppRequest,
+	id string,
+) (orchestrator.ExternalAppSpec, error) {
+	if reason, blocked := nonExternalizableContracts[contractName]; blocked {
+		return orchestrator.ExternalAppSpec{}, fmt.Errorf("contract %q cannot be filled externally: %s", contractName, reason)
+	}
+	spec, known := catalog.ContractFor(contractName)
+	if !known {
+		return orchestrator.ExternalAppSpec{}, fmt.Errorf("unknown contract %q", contractName)
+	}
+	endpoint, err := validateEndpointURL(rawURL)
+	if err != nil {
+		return orchestrator.ExternalAppSpec{}, err
+	}
+
+	declared := declaredValueKeys(spec, catalog.ContractProvides{})
+	supplied := req.Values[contractName]
+	for key := range supplied {
+		if _, ok := declared[key]; !ok {
+			return orchestrator.ExternalAppSpec{}, fmt.Errorf("contract %q does not declare a value %q", contractName, key)
+		}
+	}
+	values := map[string]map[string]string{}
+	for key, info := range declared {
+		if info.required && strings.TrimSpace(supplied[key]) == "" {
+			return orchestrator.ExternalAppSpec{}, fmt.Errorf("contract %q requires a value for %q", contractName, key)
+		}
+	}
+	if len(supplied) > 0 {
+		values[contractName] = supplied
+	}
+
+	secrets := map[string]string{}
+	keepExistingSecrets := id != "" && len(req.Secrets) == 0
+	if len(spec.Secrets) > 0 && !keepExistingSecrets {
+		if strings.TrimSpace(req.Secrets[contractName]) == "" {
+			return orchestrator.ExternalAppSpec{}, fmt.Errorf("contract %q requires a credential", contractName)
+		}
+		secrets[contractName] = req.Secrets[contractName]
+	}
+
+	return orchestrator.ExternalAppSpec{
+		ID:      id,
+		Kind:    string(store.ExternalAppKindProvider),
+		Source:  store.ExternalAppSourceForContract(contractName),
 		Name:    name,
 		URL:     endpoint,
 		Icon:    icon,

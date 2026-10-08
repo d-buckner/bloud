@@ -49,6 +49,10 @@ type systemModule struct {
 	// stays out of the picture instead of showing a provider that answers
 	// nothing. Wired by the router; nil means never shown.
 	aiSettings store.SettingsStoreInterface
+	// externalApps holds the AI upstreams as `contract:inference` records. The
+	// developer graph reads it rather than a settings key so the node reflects
+	// the same registry the resolver reads.
+	externalApps store.ExternalAppStoreInterface
 	// dnsDiagnostics answers /system/diagnostics. Wired by the router; nil
 	// omits the endpoint.
 	dnsDiagnostics *system.DNSDiagnostics
@@ -82,6 +86,12 @@ func (m *systemModule) SetHealthCheck(check func() error) {
 // model. Unwired, the graph never shows the AI Model node.
 func (m *systemModule) SetAISettings(settingsStore store.SettingsStoreInterface) {
 	m.aiSettings = settingsStore
+}
+
+// SetExternalApps wires the registry the AI upstreams live in. Unwired, the
+// graph never shows the AI Model node.
+func (m *systemModule) SetExternalApps(registry store.ExternalAppStoreInterface) {
+	m.externalApps = registry
 }
 
 // SetDNSDiagnostics wires the container DNS diagnostic behind
@@ -277,7 +287,7 @@ type integrationTarget struct {
 // answers below.
 //
 // The instance's own AI provider reaches the graph without a `default: true`
-// anywhere: an app that declares `source: instance` declares a wiring that
+// anywhere: an app that declares `source: setting` declares a wiring that
 // exists the moment the setting is populated, and a display keyed on the
 // default flag would hide it.
 //
@@ -474,21 +484,18 @@ func aiNode(shown bool) []graphNode {
 	}}
 }
 
-// aiConfigured reports whether Settings -> AI has an enabled upstream. A
-// store that fails to answer reads as unconfigured: the graph is a display,
-// and a settings read error is not a reason to invent a provider.
+// aiConfigured reports whether Settings -> AI has an enabled upstream. A store
+// that fails to answer reads as unconfigured: the graph is a display, and a
+// read error is not a reason to invent a provider.
 func (m *systemModule) aiConfigured() bool {
-	if m.aiSettings == nil {
+	if m.externalApps == nil {
 		return false
 	}
-	upstreamsJSON, err := m.aiSettings.Get(inference.SettingUpstreams)
+	records, err := m.externalApps.FindAllBySource(store.ExternalAppSourceForContract(inference.ContractName))
 	if err != nil {
 		return false
 	}
-	settings, err := inference.DecodeSettings(upstreamsJSON, "")
-	if err != nil {
-		return false
-	}
+	settings := inference.Settings{Upstreams: inference.UpstreamsFromExternal(records)}
 	_, ok := settings.ActiveUpstream()
 	return ok
 }

@@ -38,6 +38,11 @@ type AppSecretsProvider interface {
 	// GetAppContractValue reads back a value published through
 	// SetAppContractValue. Empty means the provider has not published it yet.
 	GetAppContractValue(appName, contract, key string) string
+	// DeleteAppSecrets removes every credential published under one scope. It
+	// is the teardown counterpart of SetAppSecret: when a provider record goes
+	// away, the key that belonged to it goes with it rather than sitting in the
+	// secrets file with nothing left to own it.
+	DeleteAppSecrets(appName string) error
 }
 
 // PreStartResult is what a configurator reports when its PreStart pass ends.
@@ -217,8 +222,8 @@ const (
 	// there was exactly one such thing, the AI Settings. Once a declared
 	// contract can name any provider source, the accurate word is "setting".
 	// The value changes with the name because nothing outside this package
-	// reads it as a string; the separate `source: instance` metadata value and
-	// the reserved catalog.InstanceProviderSource are a catalog-compatibility
+	// reads it as a string; the separate `source: setting` metadata value and
+	// the reserved catalog.SettingProviderSource are a catalog-compatibility
 	// question and are untouched here.
 	ProviderKindSetting ProviderKind = "setting"
 	// ProviderKindExternalApp is a remote install of a catalog app: the
@@ -239,7 +244,7 @@ const (
 type ProviderRef struct {
 	// Kind distinguishes an installed catalog app from a remote one and from an
 	// operator-declared setting. It is the discriminator behind
-	// `compatible: [{app: ...}]` versus `compatible: [{source: instance}]`.
+	// `compatible: [{app: ...}]` versus `compatible: [{source: setting}]`.
 	//
 	// A consumer must not branch on it. Every field below carries a usable
 	// value for a local app and for an external one, which is the whole point
@@ -247,7 +252,7 @@ type ProviderRef struct {
 	// business.
 	Kind ProviderKind
 	// App is the provider's catalog ID, e.g. "sonarr". For a setting provider
-	// it is catalog.InstanceProviderSource ("instance"), which is a reserved
+	// it is catalog.SettingProviderSource ("setting"), which is a reserved
 	// value and never a real catalog ID.
 	App string
 	// Installed reports whether the provider is installed. It mirrors the

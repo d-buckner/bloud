@@ -60,14 +60,14 @@ func buildCatalogGraph(apps map[string]*AppMetadata) catalogGraph {
 	}
 
 	// Always present, whatever the catalog declares: see the note on
-	// instanceProviderNodeID.
+	// settingProviderNodeID.
 	nodes = append(nodes, catalogGraphNode{
-		ID:          instanceProviderNodeID,
-		DisplayName: instanceProviderLabel,
-		Status:      instanceProviderStatus,
+		ID:          settingProviderNodeID,
+		DisplayName: settingProviderLabel,
+		Status:      settingProviderStatus,
 		IsSystem:    false,
 		NodeType:    "service",
-		Category:    instanceProviderCategory,
+		Category:    settingProviderCategory,
 	})
 
 	for _, edge := range integrationEdges(apps) {
