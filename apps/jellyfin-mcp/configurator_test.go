@@ -61,6 +61,20 @@ func (f *fakeSecrets) SetAppSecret(app, k, v string) error {
 func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
 func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
 
+// DeleteAppSecrets drops every key stored under one scope, the same teardown
+// the real manager performs when a provider record goes away.
+func (f *fakeSecrets) DeleteAppSecrets(app string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	prefix := app + "/"
+	for k := range f.values {
+		if strings.HasPrefix(k, prefix) {
+			delete(f.values, k)
+		}
+	}
+	return nil
+}
+
 func (f *fakeSecrets) writes() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
