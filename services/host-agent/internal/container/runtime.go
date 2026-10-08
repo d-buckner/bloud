@@ -48,6 +48,13 @@ type Spec struct {
 	Entrypoint    []string
 	Command       []string
 	RestartPolicy string
+	// ShmSize is the size in bytes of the container's /dev/shm tmpfs. Zero
+	// leaves the runtime default, which is 64MB under podman. It is a byte
+	// count rather than the metadata's size string for two reasons: that is
+	// what the create API takes, and this struct is what the spec revision
+	// hashes, so canonicalising here makes "256m" and "268435456" the same
+	// desired state instead of a spurious recreate.
+	ShmSize int64
 }
 
 type Port struct {
@@ -275,6 +282,9 @@ func validateSpec(spec Spec) error {
 	if spec.Image == "" {
 		return fmt.Errorf("container image is required")
 	}
+	if spec.ShmSize < 0 {
+		return fmt.Errorf("container %q: shm size must not be negative", spec.Name)
+	}
 	return nil
 }
 
@@ -371,6 +381,7 @@ func toPodmanConfig(spec Spec, revision string) podman.ContainerConfig {
 		Entrypoint:    spec.Entrypoint,
 		Command:       spec.Command,
 		RestartPolicy: spec.RestartPolicy,
+		ShmSize:       spec.ShmSize,
 	}
 	for _, port := range spec.Ports {
 		config.Ports = append(config.Ports, podman.PortMapping{

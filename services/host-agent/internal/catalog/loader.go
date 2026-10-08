@@ -120,6 +120,9 @@ func (l *Loader) validateApp(app *App) error {
 	if err := validateProvides(app); err != nil {
 		return err
 	}
+	if err := validateContainers(app); err != nil {
+		return err
+	}
 	return validateIntegrations(app)
 }
 
@@ -136,6 +139,21 @@ func validateIdentity(app *App) error {
 	}
 	if app.Category == "" {
 		return fmt.Errorf("category is required")
+	}
+	return nil
+}
+
+// validateContainers checks the per-container fields the runtime cannot
+// recover from later. shmSize is the one that matters: podman's create API
+// ignores a field it does not understand rather than failing the create, so a
+// malformed size would ship as a container quietly left on the 64MB /dev/shm
+// default, which is the condition #267 turns into a SIGBUS crash loop. Failing
+// here puts the error on the file that was written instead.
+func validateContainers(app *App) error {
+	for _, c := range app.Containers {
+		if _, err := c.ShmSizeBytes(); err != nil {
+			return fmt.Errorf("container %q: shmSize: %w", c.Name, err)
+		}
 	}
 	return nil
 }

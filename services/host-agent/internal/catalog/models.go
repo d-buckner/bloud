@@ -55,12 +55,25 @@ type ContainerDef struct {
 	// receives, and the two are not interchangeable: an image whose entrypoint
 	// is a supervision script cannot be redirected by passing it arguments.
 	// Unset means keep whatever the image declares.
-	Entrypoint    []string          `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
-	Command       []string          `yaml:"command,omitempty" json:"command,omitempty"`
-	Network       string            `yaml:"network,omitempty" json:"network,omitempty"`
-	Networks      []string          `yaml:"networks,omitempty" json:"networks,omitempty"`
-	RestartPolicy string            `yaml:"restartPolicy,omitempty" json:"restartPolicy,omitempty"`
-	Environment   map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Entrypoint    []string `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
+	Command       []string `yaml:"command,omitempty" json:"command,omitempty"`
+	Network       string   `yaml:"network,omitempty" json:"network,omitempty"`
+	Networks      []string `yaml:"networks,omitempty" json:"networks,omitempty"`
+	RestartPolicy string   `yaml:"restartPolicy,omitempty" json:"restartPolicy,omitempty"`
+	// ShmSize raises the container's /dev/shm tmpfs above podman's 64MB
+	// default. That default is a correctness limit, not a comfort one: a
+	// process that mmaps shared memory and finds the tmpfs full is sent SIGBUS
+	// on the next write to a mapped page. The worker dies and the container
+	// does not, so `restartPolicy: always` never fires. Authentik's gunicorn
+	// workers fail that way in a self-reinforcing loop that takes SSO down for
+	// every app (issue #267).
+	//
+	// Written as a size string: "256m", "1g", "268435456". ParseByteSize
+	// defines what is accepted, and Loader validation rejects what is not, so
+	// a typo fails catalog load instead of turning into a container silently
+	// left on the default. Unset means leave the runtime default alone.
+	ShmSize     string            `yaml:"shmSize,omitempty" json:"shmSize,omitempty"`
+	Environment map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
 	// EnvFile names a host path holding additional `KEY=value` lines for the
 	// container's environment. It exists for an image that takes its whole
 	// configuration through process environment variables and nothing else,
@@ -92,6 +105,16 @@ type ContainerHealthCheck struct {
 	Interval int      `yaml:"interval" json:"interval"` // seconds between checks
 	Timeout  int      `yaml:"timeout" json:"timeout"`   // seconds before check is considered failed
 	Retries  int      `yaml:"retries" json:"retries"`   // consecutive failures before marking unhealthy
+}
+
+// ShmSizeBytes renders the declared shmSize as the byte count the runtime
+// takes. An undeclared size is 0, which means "leave the runtime default", not
+// "ask for zero bytes".
+func (c ContainerDef) ShmSizeBytes() (int64, error) {
+	if strings.TrimSpace(c.ShmSize) == "" {
+		return 0, nil
+	}
+	return ParseByteSize(c.ShmSize)
 }
 
 // ContainerDefs returns the app's container definitions.

@@ -420,3 +420,25 @@ func TestBuildContainerSpec_DefaultNetwork(t *testing.T) {
 	assert.NotContains(t, spec, "netns")
 	assert.NotContains(t, spec, "networks")
 }
+
+// TestBuildContainerSpec_ShmSize pins the create-body key and its unit. Podman
+// decodes this body with unknown fields allowed, so a wrong key is not an error:
+// it is a container silently created at the 64MB default. Verified against
+// podman 5.4, where `shm_size` lands in HostConfig.ShmSize and a made-up key
+// leaves it at 65536000.
+func TestBuildContainerSpec_ShmSize(t *testing.T) {
+	spec := buildContainerSpec(ContainerConfig{
+		Name:    "apps-authentik-server",
+		Image:   "ghcr.io/goauthentik/server:2025.10.3",
+		ShmSize: 256 << 20,
+	})
+	assert.Equal(t, int64(256<<20), spec["shm_size"], "bytes, under podman's own specgen key")
+}
+
+// TestBuildContainerSpec_OmitsUnsetShmSize keeps an undeclared size out of the
+// body entirely. Zero is "leave the runtime default", and sending 0 would be a
+// request for a zero-byte tmpfs rather than an absence of request.
+func TestBuildContainerSpec_OmitsUnsetShmSize(t *testing.T) {
+	spec := buildContainerSpec(ContainerConfig{Name: "apps-x", Image: "img"})
+	assert.NotContains(t, spec, "shm_size")
+}

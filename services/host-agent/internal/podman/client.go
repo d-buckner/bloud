@@ -39,6 +39,15 @@ type ContainerConfig struct {
 	Entrypoint    []string          `json:"entrypoint,omitempty"`
 	Command       []string          `json:"command,omitempty"`
 	RestartPolicy string            `json:"restart_policy,omitempty"`
+	// ShmSize is the size in bytes of the container's /dev/shm tmpfs. Zero
+	// leaves podman's 64MB default.
+	//
+	// The key is podman's own specgen name and the unit is bytes, not a size
+	// string. That matters because the create body decodes with unknown fields
+	// allowed: a wrong key is not an error, it is a container silently created
+	// at 64MB. Checked against podman 5.4, where `shm_size` lands in
+	// HostConfig.ShmSize and a made-up key leaves it at the 65536000 default.
+	ShmSize int64 `json:"shm_size,omitempty"`
 }
 
 // PortMapping maps container port to host
@@ -535,6 +544,13 @@ func buildContainerSpec(config ContainerConfig) map[string]any {
 	}
 	if config.RestartPolicy != "" {
 		spec["restart_policy"] = config.RestartPolicy
+	}
+	// Shared-memory size. A process that mmaps /dev/shm and finds the tmpfs
+	// full is sent SIGBUS on the next write, which kills its worker without
+	// the container exiting, so nothing downstream (the restart policy
+	// included) ever notices. See catalog.ContainerDef.ShmSize.
+	if config.ShmSize > 0 {
+		spec["shm_size"] = config.ShmSize
 	}
 
 	return spec
