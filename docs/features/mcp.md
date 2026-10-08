@@ -1,9 +1,9 @@
 # Bloud MCP
 
-**Status:** Shipped. Two providers today: `apps/affine-mcp` and
-`apps/dav-mcp`, both consumed by Hermes. AFFiNE's own MCP server is
+**Status:** Shipped. Three providers today: `apps/affine-mcp`, `apps/dav-mcp`,
+and `apps/jellyfin-mcp`, all consumed by Hermes. AFFiNE's own MCP server is
 deliberately not exposed.
-**Last updated:** 2026-10-11
+**Last updated:** 2026-10-14
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md)
 
 ---
@@ -16,8 +16,8 @@ each provider as a tool namespace.
 
 ```
 affine-mcp  (provides mcp)  <──┐
-                               ├──  hermes (integrates mcp, optional + multi)
-dav-mcp  (provides mcp)  <──┘
+dav-mcp  (provides mcp)    <──┼──  hermes (integrates mcp, optional + multi)
+jellyfin-mcp  (provides mcp) <──┘
 ```
 
 Dependencies are a set, not a menu: the resolver binds every compatible
@@ -56,6 +56,28 @@ from the target's API. It buys the tool surface the built-in server does not
 have. Those trade-offs are recorded here rather than hidden:
 [plans/mcp-integrations.md](../plans/mcp-integrations.md) carries the decision
 history, including the point where the built-in provider was removed.
+
+### What the third provider changed about the shape
+
+`apps/jellyfin-mcp` is the third provider and the first whose target is not a
+document store. It is still the same wrapper shape, with one difference worth
+naming: the credential it needs is one **it mints inside the target**, not one
+the target hands over.
+
+The `appApi` contract gives a wrapper an existing account's username and
+password. Jellyfin has a better primitive than that, an API key that appears in
+its own Security screen under the agent's name and can be revoked without
+touching any password. So `jellyfin-mcp` consumes `mediaServer` (address plus
+the bootstrap admin credential) and spends that credential on exactly one call:
+the login that creates its own key. The key is then cached and used, and the
+admin password stays out of the wrapper's environment.
+
+Its inbound bearer is also a different kind of thing. The other two wrappers
+were handed an opaque string to compare against. This one is configured with an
+HMAC key Bloud generated and verifies a signed token against it, with a
+required issuer and audience. Same contract field, `httpToken`, stronger
+enforcement, and nothing across the boundary changed: the consumer still gets
+one opaque string it cannot inspect.
 
 ### What removing the built-in server also removed
 

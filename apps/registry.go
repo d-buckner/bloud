@@ -30,6 +30,7 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/homeassistant"
 	_ "codeberg.org/d-buckner/bloud/apps/immich"
 	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
+	_ "codeberg.org/d-buckner/bloud/apps/jellyfin-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
 	_ "codeberg.org/d-buckner/bloud/apps/paperless-ngx"
 	_ "codeberg.org/d-buckner/bloud/apps/prowlarr"
@@ -62,6 +63,7 @@ func NodeNames() []string {
 		"apps-homeassistant",
 		"apps-immich-server",
 		"apps-jellyfin",
+		"apps-jellyfin-mcp",
 		"apps-navidrome",
 		"apps-paperless-ngx",
 		"apps-prowlarr",
