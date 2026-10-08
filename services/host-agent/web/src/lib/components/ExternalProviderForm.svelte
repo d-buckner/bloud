@@ -50,7 +50,11 @@
 		selected = app;
 		const option = options.find((o) => o.app === app);
 		if (!option) return;
-		name = `${option.displayName} (remote)`;
+		// Named for the app, not for where it lives. A remote Jellyfin is still
+		// Jellyfin: the tile wears its icon and carries its name, and nothing on
+		// the grid needs to announce that this one is not a container Bloud
+		// booted. The record keeps the distinction; the dashboard does not.
+		name = option.displayName;
 		values = {};
 		secrets = {};
 		for (const contract of option.contracts) {

@@ -123,6 +123,8 @@ export interface Launcher {
 	name: string;
 	url: string;
 	icon: string;
+	/** Catalog ID a remote install stands in for; lets the tile borrow that app's icon. */
+	app?: string;
 	x: number | null;
 	y: number | null;
 	w: number;

@@ -304,3 +304,34 @@ func TestHomeModule_ExternalRecordGridRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, home.Launchers)
 }
+
+// A remote install of a catalog app carries the catalog ID on its tile so the
+// dashboard can borrow that app's icon. A launcher has no catalog entry to
+// borrow from and so carries none.
+func TestHomeModule_RemoteInstallTileCarriesItsCatalogApp(t *testing.T) {
+	extStore := store.NewExternalAppStore(testdb.SetupTestDB(t))
+	mod := NewHomeModule(NewFakePositionStore(), NewFakeAppStore(),
+		func() map[string]string { return nil },
+		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+	mod.SetExternalApps(extStore)
+
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID: "remote-jf", Kind: string(store.ExternalAppKindProvider),
+		Source: store.ExternalAppSourceForApp("jellyfin"),
+		Name:   "Jellyfin", URL: "https://media.example.com",
+	}))
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID: "plain-launch", Kind: string(store.ExternalAppKindLauncher),
+		Name: "Router", URL: "http://192.168.1.1",
+	}))
+
+	home, err := mod.GetLayout("alice")
+	require.NoError(t, err)
+	byID := map[string]launcherWithPosition{}
+	for _, l := range home.Launchers {
+		byID[l.ID] = l
+	}
+	require.Len(t, home.Launchers, 2)
+	assert.Equal(t, "jellyfin", byID["remote-jf"].App, "the tile knows which catalog app it stands for")
+	assert.Empty(t, byID["plain-launch"].App, "a launcher has no catalog app to borrow")
+}

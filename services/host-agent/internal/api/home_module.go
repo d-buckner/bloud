@@ -165,6 +165,7 @@ func (m *homeModuleSimple) launcherItems(posMap map[string]store.Position) ([]la
 			Name: app.Name,
 			URL:  app.URL,
 			Icon: app.Icon,
+			App:  externalRecordCatalogApp(app),
 			X:    pos.X,
 			Y:    pos.Y,
 			W:    w,
@@ -298,10 +299,27 @@ type launcherWithPosition struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 	Icon string `json:"icon"`
-	X    *int   `json:"x"`
-	Y    *int   `json:"y"`
-	W    int    `json:"w"`
-	H    int    `json:"h"`
+	// App is the catalog ID this record stands in for, set only for a remote
+	// install of one. It is what lets the tile wear the same icon the local app
+	// wears: the icon belongs to the catalog entry, not to the record, so a
+	// Jellyfin down the hall looks exactly like the Jellyfin Bloud booted.
+	App string `json:"app,omitempty"`
+	X   *int   `json:"x"`
+	Y   *int   `json:"y"`
+	W   int    `json:"w"`
+	H   int    `json:"h"`
+}
+
+// externalRecordCatalogApp returns the catalog ID a remote-install record
+// stands in for, and "" for a launcher or a bare contract provider. The tile
+// uses it to borrow the catalog icon, so a remote Jellyfin is not visually a
+// different species of thing from a local one.
+func externalRecordCatalogApp(app *store.ExternalApp) string {
+	kind, ref, ok := store.ParseExternalAppSource(app.Source)
+	if !ok || kind != store.ExternalAppSourceKindApp {
+		return ""
+	}
+	return ref
 }
 
 // externalRecordIsTile reports whether an external record earns a grid tile.

@@ -1,6 +1,7 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import { launchers } from '$lib/stores/launchers';
+	import AppIcon from '$lib/components/AppIcon.svelte';
 
 	interface Props {
 		itemId: string;
@@ -33,7 +34,12 @@
 	onkeydown={activate}
 >
 	<div class="app-icon-wrapper">
-		{#if launcher?.icon}
+		{#if launcher?.app}
+			<!-- A remote install of a catalog app borrows that app's icon, so the
+			     tile looks the way the local one did. The icon lives with the
+			     catalog entry, not with the record. -->
+			<AppIcon appName={launcher.app} {displayName} size="md" />
+		{:else if launcher?.icon}
 			<img src={launcher.icon} alt="" class="launcher-icon" />
 		{:else}
 			<span class="launcher-glyph" aria-hidden="true">↗</span>
