@@ -61,7 +61,12 @@
 			values[contract.name] = {};
 			secrets[contract.name] = '';
 			for (const field of contract.fields) {
-				if (field.kind === 'value') values[contract.name][field.key] = '';
+				if (field.kind === 'value') {
+					// Prefill what the catalog already declares. A static fact about
+					// the app is true of a remote copy unchanged, so the operator
+					// sees it filled and only types what this instance owns.
+					values[contract.name][field.key] = field.default ?? '';
+				}
 			}
 		}
 	}

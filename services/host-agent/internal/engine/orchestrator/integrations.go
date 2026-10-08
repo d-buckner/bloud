@@ -483,10 +483,18 @@ func (o *Orchestrator) publishedSecret(src providerSource, contract string, offe
 // disagreement to arbitrate: a key is either metadata-owned or runtime-owned.
 func (o *Orchestrator) contractValue(src providerSource, contract string, offer catalog.ContractProvides, key string) string {
 	if src.isExternal() {
-		// There is no runtime-published channel for a provider Bloud does not
-		// boot: the operator's value is the authoritative one, and it is static
-		// until they edit it.
-		return src.external.Value(contract, key)
+		// The operator's value wins where they supplied one, because for a
+		// provider Bloud does not boot they are the runtime. But a value the
+		// catalog declares statically is a fact about the *app*, not about the
+		// instance, and it stays true three rooms away: Radarr's calendar feed
+		// lives at /feed/v3/calendar/Radarr.ics whether Bloud booted it or not.
+		// Falling back to the static value is what keeps "register my remote
+		// Radarr" a one-field form instead of a demand to retype what the
+		// catalog already knows.
+		if v := src.external.Value(contract, key); v != "" {
+			return v
+		}
+		return offer.Values[key]
 	}
 	if slices.Contains(offer.RuntimeValues, key) && o.secrets != nil {
 		if v := o.secrets.GetAppContractValue(src.id, contract, key); v != "" {

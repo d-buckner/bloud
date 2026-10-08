@@ -98,6 +98,8 @@ export interface ExternalProviderField {
 	label: string;
 	kind: 'value' | 'secret';
 	required: boolean;
+	/** Value the provider's catalog entry already declares; prefilled. */
+	default?: string;
 	help?: string;
 }
 
