@@ -52,6 +52,12 @@ var conformanceTable = []appSpec{
 	{Dir: "homeassistant", Node: "apps-homeassistant", DefaultPort: 8123, WithSSO: true, Preseed: preseedHAComponent},
 	{Dir: "immich", Node: "apps-immich-server", DefaultPort: 2283, WithSSO: true},
 	{Dir: "jellyfin", Node: "apps-jellyfin", DefaultPort: 8096},
+	// The wrapper is exercised here in its unbound state: the harness supplies
+	// no mediaServer binding, which is the shape that keeps PreStart off the
+	// network. The bound path, where PreStart mints the Jellyfin API key, is
+	// covered by apps/jellyfin-mcp/configurator_test.go against a fake server,
+	// the same split apps/dav-mcp uses.
+	{Dir: "jellyfin-mcp", Node: "apps-jellyfin-mcp", DefaultPort: 9334},
 	{Dir: "navidrome", Node: "apps-navidrome", DefaultPort: 4533},
 	{Dir: "paperless-ngx", Node: "apps-paperless-ngx", DefaultPort: 8000, WithSSO: true},
 	{Dir: "prowlarr", Node: "apps-prowlarr", DefaultPort: 9696},

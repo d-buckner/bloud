@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: jellyfin-mcp
+displayName: Jellyfin MCP
+description: MCP tool server over the media library Bloud already serves, so an agent can search, browse, and manage Jellyfin
+category: productivity
+port: 9334
+estimatedSizeMB: 175
+
+# No browser UI: the wrapper serves an MCP endpoint and nothing to click, so the
+# dashboard draws no tile for it. It is otherwise an ordinary app: installed,
+# reconciled, and routed like every other.
+headless: true
+
+# A wrapper, not the media server. jellyfin-mcp (Knuckles-Team/jellyfin-mcp)
+# serves streamable HTTP itself, so there is no bridge process in front of it:
+# one container speaks MCP on one port and talks the Jellyfin REST API out to
+# apps-jellyfin. The wrapper is not a browser and cannot join the identity
+# provider, so it reaches Jellyfin with a dedicated API key Bloud mints on its
+# behalf; the media server's address and its bootstrap credential come from the
+# `mediaServer` contract.
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # The media server's address, and the bootstrap admin password this app logs
+  # in with to mint its own key. `requires: [adminPassword]` is the whole
+  # consumer surface: the address arrives with the graph edge and no credential
+  # is handed over that was not asked for. Required, because a media tool server
+  # with no media server has nothing to serve; the edge this declares is what
+  # orders Jellyfin's convergence ahead of this node's PreStart, which is where
+  # the key gets minted.
+  mediaServer:
+    required: true
+    multi: false
+    requires:
+      - adminPassword
+    compatible:
+      - app: jellyfin
+        default: true
+
+# The `mcp` contract a harness (Hermes) consumes, under a `jellyfin-mcp`
+# namespace. `httpToken` is a long-lived HS256 JWT Bloud mints and this app's
+# own listener verifies, so the bearer a harness presents is checked by the
+# thing it was given rather than being a name that authenticates against nothing.
+provides:
+  mcp:
+    secrets: [httpToken]
+    values:
+      serverName: jellyfin-mcp
+      path: /mcp
+
+containers:
+  - name: apps-jellyfin-mcp
+    # jellyfin-mcp 1.0.1, the `mcp` build target: the MCP server's dependency
+    # closure only, without the agent runtime (173 MB against the 265 MB `:agent`
+    # image). Pinned by digest rather than by tag because upstream publishes no
+    # version tags on this image at all: the only tags are `latest`, `main`,
+    # `mcp`, and `sha-<commit>`, all of which are republished, so a digest is
+    # the only reference that means the same bytes twice.
+    #
+    # amd64 only. Upstream's container pipeline builds no arm64 leg, so this
+    # app does not install on an ARM host; see INTEGRATION.md.
+    image: docker.io/knucklessg1/jellyfin-mcp:mcp@sha256:fc371dc6578e12eaba31710bfb447915ab1f4a12fd9005cc89dee77b745e43a2
+    network: apps-net
+    restartPolicy: always
+    ports:
+      - host: 9334
+        container: 9334
+    environment:
+      # Everything here is static. The three values that are not - the Jellyfin
+      # address, the Jellyfin API key, and the inbound verification secret -
+      # arrive through the env file below, because `environment:` can only
+      # render {{appDataDir}} and the process-start template vars.
+      #
+      # The transport the harness dials. stdio cannot cross a container boundary,
+      # and sse is the legacy form upstream keeps for old clients.
+      TRANSPORT: streamable-http
+      # Bound to every interface inside the container: the port is published to
+      # the host and routed by Traefik, so loopback-only would be unreachable.
+      # What gates the listener is AUTH_TYPE below, not the bind address.
+      HOST: "0.0.0.0"
+      # Serves on the same port the host publishes, so there is no translation
+      # layer to keep straight and no collision with the host-agent's 3000 on
+      # the native backend.
+      PORT: "9334"
+      # Inbound authentication. `none` leaves /mcp open to whoever can reach the
+      # port, which under a public domain is everyone; `static` accepts two
+      # tokens hardcoded in the upstream package (`test-token`, `admin-token`),
+      # which is a published credential rather than a secret. `jwt` with an
+      # HMAC key Bloud generated is the only mode here where the bearer a
+      # harness presents is validated against something this installation owns.
+      AUTH_TYPE: jwt
+      FASTMCP_SERVER_AUTH_JWT_ALGORITHM: HS256
+      # The issuer and audience the verifier requires in every token. Bloud mints
+      # its tokens with exactly these, and a token minted for anything else -
+      # including one signed with the same key for a different audience - is
+      # refused. Measured: matching aud 200, mismatched aud 401.
+      FASTMCP_SERVER_AUTH_JWT_ISSUER: bloud
+      FASTMCP_SERVER_AUTH_JWT_AUDIENCE: jellyfin-mcp
+    # Written by the configurator on every pass: the resolved Jellyfin address,
+    # the Jellyfin API key minted for this app, and the HMAC secret the inbound
+    # JWT is verified against. The image reads its whole configuration from
+    # process env and nothing else, so this is the only way a resolved binding
+    # reaches it. The file lives in the app's own data tree and is not mounted:
+    # the runtime reads it on the host and passes the values in at create time.
+    envFile: "{{appDataDir}}/config/env"
+    healthCheck:
+      # Exec form, because the check names the interpreter directly: this is the
+      # image's own liveness probe (its compose file uses the same urllib call),
+      # with the port fixed to the one set above rather than read from the
+      # environment.
+      #
+      # /health is served unauthenticated and says nothing about Jellyfin or
+      # about the MCP layer: it answers 200 as long as the process is up. That
+      # is the right job for a liveness probe. The functional gate is the MCP
+      # handshake in PostStart, where a failure can be reported without
+      # flapping the container.
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9334/health').status == 200 else 1)",
+        ]
+      interval: 5
+      timeout: 10
+      retries: 30

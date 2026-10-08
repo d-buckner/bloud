@@ -91,3 +91,56 @@ func TestShippedCatalog_MCPConsumerAsksForNoMoreThanItUses(t *testing.T) {
 	}
 	assert.True(t, found, "the shipped harness must list the shipped provider")
 }
+
+// TestShippedCatalog_EveryMCPProviderIsHarnessReady applies the provider-side
+// rules to every app that offers the contract, not just the first one.
+//
+// The two tests above pin affine-mcp by name. That shape does not scale to a
+// catalog with several providers, and it lets a second one ship with a hole the
+// first one does not have: a missing `serverName` still loads, and a provider
+// nobody declared compatible still resolves nothing. Iterating the catalog
+// means the rules bind on the third wrapper too, which is the point of having
+// a contract rather than a convention.
+func TestShippedCatalog_EveryMCPProviderIsHarnessReady(t *testing.T) {
+	apps, err := NewLoader(realCatalogDir(t)).LoadAll()
+	require.NoError(t, err)
+
+	spec, known := ContractFor("mcp")
+	require.True(t, known, "the mcp contract must be in the registry")
+
+	hermes := apps["hermes"]
+	require.NotNil(t, hermes, "hermes must be in the shipped catalog")
+	declared := map[string]bool{}
+	for _, c := range hermes.Integrations["mcp"].Compatible {
+		declared[c.App] = true
+	}
+
+	providers := 0
+	for name, app := range apps {
+		offered, ok := app.Provides["mcp"]
+		if !ok || app.IsSystem {
+			continue
+		}
+		providers++
+
+		assert.Equal(t, spec.Secrets, offered.Secrets,
+			"%s must offer exactly the mcp contract's secrets", name)
+
+		for _, declaredValue := range spec.Values {
+			_, static := offered.Values[declaredValue.Key]
+			runtime := false
+			for _, rv := range offered.RuntimeValues {
+				if rv == declaredValue.Key {
+					runtime = true
+				}
+			}
+			assert.True(t, static || runtime,
+				"%s provides mcp but never fills %q: declare it in values or runtimeValues", name, declaredValue.Key)
+		}
+
+		assert.True(t, declared[name],
+			"%s provides mcp but no shipped harness declares it, so nothing would ever wire it", name)
+	}
+	assert.GreaterOrEqual(t, providers, 3,
+		"the catalog ships several MCP wrappers; a count this low means one stopped declaring the contract")
+}

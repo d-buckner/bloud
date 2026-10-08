@@ -124,6 +124,10 @@ flowchart TD
         c_jellyfin["jellyfin"]
     end
 
+    subgraph app_jellyfin_mcp["Jellyfin MCP"]
+        c_jellyfin_mcp["jellyfin-mcp"]
+    end
+
     subgraph app_navidrome["Navidrome"]
         c_navidrome["navidrome"]
     end
@@ -183,10 +187,12 @@ flowchart TD
     app_hermes -->|inference| ai_model
     app_hermes -->|native-oidc| app_authentik
     app_hermes -->|mcp| app_dav_mcp
+    app_hermes -->|mcp| app_jellyfin_mcp
     app_hermes_webui -->|agentApi| app_hermes
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
     app_jellyfin -->|ldap| app_authentik
+    app_jellyfin_mcp -->|mediaServer| app_jellyfin
     app_navidrome -->|forward-auth| app_authentik
     app_paperless_ngx -->|native-oidc| app_authentik
     app_prowlarr -->|forward-auth| app_authentik
@@ -213,6 +219,7 @@ flowchart TD
     app_traefik -->|proxy| app_homeassistant
     app_traefik -->|proxy| app_immich
     app_traefik -->|proxy| app_jellyfin
+    app_traefik -->|proxy| app_jellyfin_mcp
     app_traefik -->|proxy| app_navidrome
     app_traefik -->|proxy| app_paperless_ngx
     app_traefik -->|proxy| app_prowlarr
@@ -253,6 +260,7 @@ to mention it.
 - **Home Assistant**: Open-source home automation platform
 - **Immich**: Self-hosted photo and video management
 - **Jellyfin**: Free software media system for streaming movies, TV, and music
+- **Jellyfin MCP**: MCP tool server over the media library Bloud already serves, so an agent can search, browse, and manage Jellyfin
 - **Navidrome**: Modern music server and streamer compatible with Subsonic/Airsonic clients
 - **Paperless-ngx**: Document management system that turns scans and PDFs into a searchable archive
 - **Prowlarr**: Indexer manager that syncs indexers to Sonarr, Radarr, and other PVRs
@@ -285,7 +293,7 @@ It's built for things you have the right to use.
 | **LDAP** | Jellyfin, Radicale, Seerr |
 | **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
 | **Native OIDC** | AFFiNE, Hermes, Hermes Web UI, Home Assistant, Immich, Paperless-ngx, Vaultwarden |
-| **App-local accounts** | AFFiNE MCP, DAV MCP |
+| **App-local accounts** | AFFiNE MCP, DAV MCP, Jellyfin MCP |
 <!-- END GENERATED LOGIN TABLE -->
 
 Clients that speak a native protocol, a Subsonic player or a TV app talking to Jellyfin, keep
