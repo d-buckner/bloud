@@ -142,7 +142,7 @@ func (o *Orchestrator) bindAppProviders(out *configurator.Integrations, contract
 		if src.kind == configurator.ProviderKindApp && src.id == app {
 			continue
 		}
-		if src.isInstance() {
+		if src.isSetting() {
 			continue
 		}
 		provider, err := o.catalog.Get(src.id)
@@ -179,7 +179,7 @@ func (o *Orchestrator) refFor(src providerSource, provider *catalog.App, install
 // every configurator.
 func (o *Orchestrator) resolveInference(integration catalog.Integration, installed map[string]bool, consumer string, external map[string]*store.ExternalApp) (configurator.InferenceBinding, bool) {
 	for _, src := range resolveProviders(integration, external) {
-		if src.isInstance() || src.id == consumer || (!installed[src.id] && !src.isExternal()) {
+		if src.isSetting() || src.id == consumer || (!installed[src.id] && !src.isExternal()) {
 			continue
 		}
 		ref, offer, ok := o.usableInferenceProvider("inference", src)
@@ -195,7 +195,7 @@ func (o *Orchestrator) resolveInference(integration catalog.Integration, install
 		}, true
 	}
 
-	if binding, ok := o.instanceInferenceSource(integration.Requires); ok {
+	if binding, ok := o.settingInferenceSource(integration.Requires); ok {
 		return binding, true
 	}
 
@@ -499,7 +499,7 @@ func resolveProviders(integration catalog.Integration, external map[string]*stor
 	var out []providerSource
 	for _, declared := range catalog.DeclaredProviders(integration) {
 		if declared.IsInstance() {
-			out = append(out, instanceSource())
+			out = append(out, settingSource())
 			continue
 		}
 		out = append(out, externalAppSource(declared.App, external[declared.App]))

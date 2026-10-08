@@ -200,18 +200,27 @@ type OIDCOutput struct {
 }
 
 // ProviderKind distinguishes what a ProviderRef points at. It is a wire type: a
-// plain string so a consumer can compare it without importing anything, and the
-// values mirror the catalog's `compatible:` discriminator (`app:` versus
-// `source: instance`).
+// plain string so a consumer can compare it without importing anything, and its
+// values name the three ways a provider can come into existence: a local catalog
+// app, a remote one the operator registered, and a bare operator-declared
+// setting with no app behind it.
 type ProviderKind string
 
 const (
 	// ProviderKindApp is an installed catalog app with containers and a node.
 	ProviderKindApp ProviderKind = "app"
-	// ProviderKindInstance is the instance's own configuration: no node, no
-	// port, no container. Node, Port, BaseURL and LocalURL are empty; the
-	// contract's own endpoint field carries the value.
-	ProviderKindInstance ProviderKind = "instance"
+	// ProviderKindSetting is an operator-declared value with no catalog app
+	// behind it: no node, no port, no container. Node, Port, BaseURL and
+	// LocalURL are empty; the contract's own endpoint field carries the value.
+	//
+	// This is the old ProviderKindInstance. "Instance" was honest only while
+	// there was exactly one such thing, the AI Settings. Once a declared
+	// contract can name any provider source, the accurate word is "setting".
+	// The value changes with the name because nothing outside this package
+	// reads it as a string; the separate `source: instance` metadata value and
+	// the reserved catalog.InstanceProviderSource are a catalog-compatibility
+	// question and are untouched here.
+	ProviderKindSetting ProviderKind = "setting"
 	// ProviderKindExternalApp is a remote install of a catalog app: the
 	// operator registered the app as running somewhere Bloud does not run it.
 	// It keeps the catalog ID in App and satisfies the same contracts the
@@ -228,18 +237,18 @@ const (
 // The contract payloads below embed it, so a consumer reads the address and its
 // role-specific fields from one value.
 type ProviderRef struct {
-	// Kind distinguishes an installed catalog app from the instance's own
-	// configuration. It is the discriminator behind `compatible: [{app: ...}]`
-	// versus `compatible: [{source: instance}]`.
+	// Kind distinguishes an installed catalog app from a remote one and from an
+	// operator-declared setting. It is the discriminator behind
+	// `compatible: [{app: ...}]` versus `compatible: [{source: instance}]`.
 	//
 	// A consumer must not branch on it. Every field below carries a usable
 	// value for a local app and for an external one, which is the whole point
 	// of the abstraction: where the provider lives is not the consumer's
 	// business.
 	Kind ProviderKind
-	// App is the provider's catalog ID, e.g. "sonarr". For an instance
-	// provider it is catalog.InstanceProviderSource ("instance"), which is a
-	// reserved value and never a real catalog ID.
+	// App is the provider's catalog ID, e.g. "sonarr". For a setting provider
+	// it is catalog.InstanceProviderSource ("instance"), which is a reserved
+	// value and never a real catalog ID.
 	App string
 	// Installed reports whether the provider is installed. It mirrors the
 	// dependency edge the same provider gets in the graph, so it is true exactly

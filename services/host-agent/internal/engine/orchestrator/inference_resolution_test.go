@@ -75,7 +75,7 @@ func TestResolveInference_InstanceServesAsProvider(t *testing.T) {
 	require.Len(t, out.Inference, 1)
 	b := out.Inference[0]
 	assert.Equal(t, catalog.InstanceProviderSource, b.App)
-	assert.Equal(t, configurator.ProviderKindInstance, b.Kind)
+	assert.Equal(t, configurator.ProviderKindSetting, b.Kind)
 	assert.True(t, b.Installed, "the setting being populated is the instance analogue of an installed provider")
 	assert.Equal(t, "https://api.example.com/v1", b.Endpoint)
 	assert.Equal(t, "operator-key", b.APIKey)
