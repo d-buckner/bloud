@@ -79,16 +79,47 @@ export function testAIEndpoint(baseUrl: string, apiKey?: string): Promise<TestAI
 	return post<TestAIResponse>('/api/settings/ai/test', { baseUrl, apiKey });
 }
 
-// External apps (PR 1: launchers only). A launcher is a tile that opens a URL.
+// External apps. A launcher is a tile that opens a URL; a provider stands in
+// for something Bloud does not run and wires into the integration graph.
 export interface ExternalApp {
 	id: string;
+	kind: 'launcher' | 'provider';
+	source: string;
+	app?: string;
 	name: string;
 	url: string;
 	icon: string;
+	values?: Record<string, Record<string, string>>;
+	secretContracts?: string[];
+}
+
+export interface ExternalProviderField {
+	key: string;
+	label: string;
+	kind: 'value' | 'secret';
+	required: boolean;
+	help?: string;
+}
+
+export interface ExternalProviderContract {
+	name: string;
+	fields: ExternalProviderField[];
+}
+
+export interface ExternalProviderOption {
+	app: string;
+	displayName: string;
+	description: string;
+	installed: boolean;
+	contracts: ExternalProviderContract[];
 }
 
 export function fetchExternalApps(): Promise<ExternalApp[]> {
 	return get<ExternalApp[]>('/api/external-apps');
+}
+
+export function fetchExternalProviders(): Promise<ExternalProviderOption[]> {
+	return get<ExternalProviderOption[]>('/api/external-apps/providers');
 }
 
 export function addExternalApp(input: {
@@ -96,7 +127,26 @@ export function addExternalApp(input: {
 	url: string;
 	icon: string;
 }): Promise<IntentResponse> {
-	return post<IntentResponse>('/api/external-apps', input);
+	return post<IntentResponse>('/api/external-apps', { kind: 'launcher', ...input });
+}
+
+export function addExternalProvider(input: {
+	app: string;
+	name: string;
+	url: string;
+	icon?: string;
+	values: Record<string, Record<string, string>>;
+	secrets: Record<string, string>;
+}): Promise<IntentResponse> {
+	return post<IntentResponse>('/api/external-apps', {
+		kind: 'provider',
+		source: `app:${input.app}`,
+		name: input.name,
+		url: input.url,
+		icon: input.icon ?? '',
+		values: input.values,
+		secrets: input.secrets,
+	});
 }
 
 export function removeExternalApp(id: string): Promise<IntentResponse> {

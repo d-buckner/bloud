@@ -212,6 +212,15 @@ const (
 	// port, no container. Node, Port, BaseURL and LocalURL are empty; the
 	// contract's own endpoint field carries the value.
 	ProviderKindInstance ProviderKind = "instance"
+	// ProviderKindExternalApp is a remote install of a catalog app: the
+	// operator registered the app as running somewhere Bloud does not run it.
+	// It keeps the catalog ID in App and satisfies the same contracts the
+	// catalog entry declares, but it has no node, no port, and no container.
+	// BaseURL and LocalURL both carry the operator's endpoint, because there
+	// is no container-network vantage point distinct from the host's: what the
+	// consumer's app stores and what its configurator dials are the same
+	// origin.
+	ProviderKindExternalApp ProviderKind = "externalApp"
 )
 
 // ProviderRef is the part of an integration binding that is the same for every
@@ -222,6 +231,11 @@ type ProviderRef struct {
 	// Kind distinguishes an installed catalog app from the instance's own
 	// configuration. It is the discriminator behind `compatible: [{app: ...}]`
 	// versus `compatible: [{source: instance}]`.
+	//
+	// A consumer must not branch on it. Every field below carries a usable
+	// value for a local app and for an external one, which is the whole point
+	// of the abstraction: where the provider lives is not the consumer's
+	// business.
 	Kind ProviderKind
 	// App is the provider's catalog ID, e.g. "sonarr". For an instance
 	// provider it is catalog.InstanceProviderSource ("instance"), which is a

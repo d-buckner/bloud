@@ -90,6 +90,20 @@ func (o *Orchestrator) applyInstallIntent(intent InstallAppIntent) {
 	// with it, and the graph must order them before the consumer. The wired
 	// (already installed) providers need no record.
 	for _, provider := range plan.RequiredProviders {
+		// The install side of the XOR rule. A catalog ID has one instantiation:
+		// either it runs here or the operator pointed at a remote one. When the
+		// external registry already answers this contract, pulling the local
+		// workload in as well would hand a `multi: false` consumer two
+		// providers of the same catalog ID that it cannot tell apart, which is
+		// precisely the hazard the rule exists to prevent. The filter lives at
+		// this boundary rather than inside PlanInstall because the planner is a
+		// pure function of catalog metadata and the installed set, and the
+		// external registry is a third input it must not learn about.
+		if o.remoteProviderFor(provider.Source) {
+			o.logger.Info("provider is registered as a remote install, not installing it locally",
+				"app", appName, "provider", provider.Source, "integration", provider.Integration)
+			continue
+		}
 		o.logger.Info("recording required provider", "app", appName, "provider", provider.Source)
 		if err := o.recordIntent(provider.Source, nil); err != nil {
 			o.logger.Error("failed to record required provider", "app", appName, "provider", provider.Source, "error", err)
