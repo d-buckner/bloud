@@ -19,7 +19,7 @@ ask to add a todo to a specific person.**
    directory and the live feed bindings. Creation and sharing both consume that
    one value, so they cannot disagree.
 3. Personal collections are owned by `calendar-service` at
-   `/calendar-service/people/<user>/` and map-shared into the user's tree and
+   `/calendar-service/person-<user>/` and map-shared into the user's tree and
    the agent's tree, because Bloud cannot authenticate as the user and
    therefore cannot create anything in it.
 4. The agent resolves "Bob" from the display name and the URL that
@@ -86,7 +86,7 @@ object with a computed name and a narrower recipient list.
 |---|---|---|
 | Owner | `calendar-service` | `calendar-service`, same |
 | Created by | `ensureFamilyCalendar`, `PostStart`, PROPFIND then MKCALENDAR | the same loop, once per user |
-| Path | `/calendar-service/family/` | `/calendar-service/people/<user>/` |
+| Path | `/calendar-service/family/` | `/calendar-service/person-<user>/` |
 | Display name | `"Family"`, a constant | `"Bob's calendar"`, computed |
 | Share render | `renderShares`, every pass, from the directory | the same function |
 | Recipients | every active user plus the agent | that user plus the agent |
@@ -153,24 +153,29 @@ provisionable at all.
 ## Proposed shape
 
 Owner: `calendar-service`. One collection per active Bloud user, keyed by
-username, under a `people/` prefix so a username can never collide with a feed
-collection (`Movies`, `Shows`) or with `family`.
+username with a `person-` **name** prefix, so a username can never collide with
+a feed collection (`Movies`, `Shows`) or with `family`.
+
+The prefix is part of the collection's name rather than a directory above it,
+and that is not a style choice. It is forced by the rights backend, and the
+live stack is what found it. See *The rights backend allows exactly two levels*
+below.
 
 ```
 calendar-service's tree (the real storage)
   /calendar-service/family/            shared, exists today
-  /calendar-service/people/bob/        new: Bob's personal calendar
-  /calendar-service/people/alice/      new
+  /calendar-service/person-bob/        new: Bob's personal calendar
+  /calendar-service/person-alice/      new
 
 bob's tree (what bob's phone enumerates)
-  /bob/Personal/        map -> /calendar-service/people/bob/      RWrw
+  /bob/Personal/        map -> /calendar-service/person-bob/      RWrw
   /bob/Family/          map -> /calendar-service/family/          RWrw   (exists today)
   /bob/Movies/          map -> /calendar-service/Movies/          Rr     (exists today)
 
 caldav-service's tree (what the agent enumerates, for a `direct` preference)
   /caldav-service/family/                                        RWrw   (exists today)
-  /caldav-service/people/bob/     map -> /calendar-service/people/bob/   RWrw
-  /caldav-service/people/alice/   map -> /calendar-service/people/alice/ RWrw
+  /caldav-service/person-bob/     map -> /calendar-service/person-bob/   RWrw
+  /caldav-service/person-alice/   map -> /calendar-service/person-alice/ RWrw
 ```
 
 The agent's tree is the one that carries the consent decision, and it is why the
@@ -182,18 +187,19 @@ the pinned image:
 
 - **A map share resolves by prefix replacement**
   (`sharing/__init__.py:660`, `path.replace(parent_path, result['PathMapped'])`),
-  so nesting under `people/` works, and so does a mount at depth 2 in the
-  recipient's tree.
+  so a mount can sit at any depth the rights backend permits and still resolve
+  to the owner's collection.
 - **Sharing a parent shares everything beneath it.** A row for
-  `/calendar-service/people/` would hand the recipient every person's calendar.
-  Shares must be rendered per leaf, never per prefix. This is a rule worth a
-  test, because it is invisible in the metadata and total when broken.
+  `/calendar-service/` would hand the recipient the whole tree, every personal
+  calendar in it included. Shares must be rendered per leaf, never per prefix.
+  This is a rule worth a test, because it is invisible in the metadata and total
+  when broken.
 
 Display names are the part that carries user-visible weight. Proposal:
 
 | Collection | `displayname` | Rationale |
 |---|---|---|
-| `/calendar-service/people/bob/` | `Bob's calendar` | What a household member sees in the shared list. |
+| `/calendar-service/person-bob/` | `Bob's calendar` | What a household member sees in the shared list. |
 | mounted at `/bob/Personal/` | `Personal` | In your own client, "Bob's calendar" is noise. The mount point is where the personal-vs-shared distinction should show. |
 
 Radicale derives supported components from the collection, and the family
@@ -217,7 +223,7 @@ the set of them is.
 // it is called, and who it is mounted for. Singleton and per-user calendars are
 // the same type; nothing downstream branches on which kind it is.
 type Calendar struct {
-    // Segment is the path under the owner: "family", "people/bob".
+    // Segment is the path under the owner: "family", "person-bob".
     Segment string
     // DisplayName is the DAV displayname on the owned collection.
     DisplayName string
@@ -264,7 +270,7 @@ generalization:
 |---|---|---|---|
 | Singleton, shared | `family` | `Family` | every user `RWrw`, agent `RWrw` |
 | Singleton, from a feed | `Movies`, `Shows` | from `icsFeed.calendarName` | every user `Rr`, agent `Rr` |
-| Per-user | `people/bob` | `Bob's calendar` | that user `RWrw`, agent `RWrw` |
+| Per-user | `person-bob` | `Bob's calendar` | that user `RWrw`, agent `RWrw` |
 
 The feed's *content source*, the pimsync sidecar and its sync pairs, is not
 part of this abstraction and should not be. A calendar value says a collection
@@ -357,7 +363,7 @@ Which is what makes the safety conditions mechanical rather than advisory:
   is silently short and everyone beyond is in the purge set. Compare the API's
   reported total against the length of the returned list and refuse to delete
   on disagreement.
-- The purge is bounded to owned prefixes. Today that is `people/`. Family and
+- The purge is bounded to owned prefixes. Today that is `person-`. Family and
   feed collections are never in scope, so a wrong roster cannot reach them.
 
 The asymmetry is the whole lesson: the create half of this design is safe by
@@ -443,13 +449,42 @@ by themselves under whatever they named it. If they later delete the calendar
 they made, the mount reappears on the next pass, which is the whole reason this
 is a per-pass check rather than an install-time one.
 
-### The `people/` prefix against an account named `people`
+### The rights backend allows exactly two levels
 
-Checked, and it is not a hazard in this shape. A user literally named `people`
-gets `/calendar-service/people/people/`, which nests cleanly, and their own
-principal home is `/people/` in a tree the purge never reads. The purge boundary
-is `people/` *under the owner*, and only plan-created collections ever land
-there.
+This is the constraint that shaped the naming, and unit tests could not have
+found it. `owner_only` is not "you may touch your own tree". It is a hard-coded
+depth rule:
+
+```python
+if "/" not in sane_path:            return "RW"   # /calendar-service/
+if sane_path.count("/") == 1:      return "rw"    # /calendar-service/family
+return ""                                        # depth 3+: forbidden
+```
+
+The original design put personal collections at `/calendar-service/people/bob/`.
+That is depth 3. Against the live stack:
+
+```
+MKCALENDAR /calendar-service/probe-depth2/  -> 201 Created
+MKCALENDAR /calendar-service/probe/depth3/  -> 403 Forbidden
+```
+
+Every personal calendar would have failed the same way, and the failure is a
+`WARN` in a log with the node otherwise healthy, because the create half warns
+rather than faults by design. The shares would have rendered, pointed at
+collections that could never exist.
+
+Flattening to `person-<username>` keeps both properties the path prefix existed
+for -- usernames cannot collide with `family` or a feed, and the purge has a
+boundary to read -- at a depth the backend permits. It also keeps the agent's
+mount at depth 2, which it must be for the same reason.
+
+### A username that collides with the reserved prefix
+
+Not a hazard with a name prefix. A user named `people`, or one named
+`person-bob`, produces `person-people` and `person-person-bob` respectively.
+Neither aliases another user's collection, because the prefix is prepended rather
+than joined.
 
 What `planCalendars` does reject is a username that cannot be a path segment at
 all: one containing a slash, a leading dot, or whitespace. A slash would escape
@@ -469,7 +504,7 @@ the notes say plainly that they are "documented, not migrated".
 ### What the purge must not do on upgrade
 
 Phase 5 must not treat legacy collections as orphans. Today the purge prefix is
-`people/`, which contains only what the plan created, so `reality - roster` is
+`person-`, which contains only what the plan created, so `reality - roster` is
 empty on the first purge pass and the upgrade is safe. That is a property of
 the prefix choice, not of the logic, and it stops being true the moment anyone
 widens the prefix to sweep legacy collections. If the sweep is ever widened, it
@@ -603,7 +638,7 @@ and URL) and contacts.
 
 | Option | How it works | Assessment |
 |---|---|---|
-| A. Display-name matching over `list_calendars` | The agent's tree literally contains one collection per person. `list_calendars` returns "Bob's calendar" and its URL. The LLM matches the name. | Free, and better than it sounds for an LLM. The URL carries the username (`/caldav-service/people/bob/`), so the mapping is machine-checkable, not just vibes. Fails on nicknames and on two people named Bob. |
+| A. Display-name matching over `list_calendars` | The agent's tree literally contains one collection per person. `list_calendars` returns "Bob's calendar" and its URL. The LLM matches the name. | Free, and better than it sounds for an LLM. The URL carries the username (`/caldav-service/person-bob/`), so the mapping is machine-checkable, not just vibes. Fails on nicknames and on two people named Bob. |
 | B. A Bloud-provisioned household address book | CardDAV contacts generated from the directory, each contact carrying the person's calendar URL. The agent does `search_contacts("Bob")` and reads the URL off the contact. | Fuzzy matching for free, and a shared address book is worth having anyway. Costs a second provisioning surface, and puts the mapping in user-editable data that can drift from the calendar set. |
 | C. A `peopleDirectory` contract rendered into the wrapper's config | Radicale provides the roster; `dav-mcp` exposes a `list_people` tool. | The most structured, and it needs a fork. Rejected for this slice on the third-party constraint above. |
 
@@ -656,7 +691,7 @@ mount:
 
 | Preference | The agent's tree gets | Consequence |
 |---|---|---|
-| `direct` | `/caldav-service/people/<user>/` mapped to the personal calendar | "Add a todo to Bob" writes into Bob's calendar. |
+| `direct` | `/caldav-service/person-<user>/` mapped to the personal calendar | "Add a todo to Bob" writes into Bob's calendar. |
 | `off` | no mount for this person | The agent cannot reach Bob's calendar at all, and says so. |
 
 **Why this is enforcement and not policy.** `owner_only` means the agent can
@@ -734,7 +769,7 @@ before adding anything: it proves the abstraction is faithful against a set
 that is already known good.
 
 **Phase 2: per-user calendars in the plan.** Add the per-user kind.
-`planCalendars` emits one `people/<user>` calendar per active directory user,
+`planCalendars` emits one `person-<user>` calendar per active directory user,
 with grants to that user and to the agent, and it checks the mount path before
 granting it so an existing collection the user made is shadowed by nothing.
 
@@ -767,7 +802,7 @@ way: the provisioning feature is complete and useful without it.
 What it proves: with `off`, the agent's tree has no mount for that person and a
 write is refused by the server rather than by a check.
 
-**Phase 5: the purge.** `reality - plan` under `people/`, gated on a plan
+**Phase 5: the purge.** `reality - plan` under `person-`, gated on a plan
 marked complete.
 
 This phase goes last on purpose, and it does not go in at all until phases 1
@@ -803,6 +838,65 @@ with a truncated API response.
    assumed, and the purge reads the directory roster rather than the plan so a
    deactivated account is never mistaken for a deleted one.
 
+## Verified against a live stack
+
+Brought up on the `native` backend with `./bloud dev --reset`, admin created,
+Radicale installed through the real API, then driven over DAV with `curl`.
+
+**The share file renders as designed.** From the live
+`collections/collection-db/sharing.csv`:
+
+```
+map;/admin/Personal/;       /calendar-service/person-admin/; ... admin          RWrw ... {'D:displayname': 'Personal'}
+map;/caldav-service/person-admin/; /calendar-service/person-admin/; ... caldav-service RWrw {}
+```
+
+**The collection is created and named.** `.Radicale.props` on disk reads
+`{"D:displayname": "Admin's calendar", "tag": "VCALENDAR"}`, and after the
+flattening fix there are zero `could not create a calendar` warnings across the
+reconcile.
+
+**The properties overlay works.** The same collection reads differently to the
+two principals who can see it, which is the whole point of using it:
+
+```
+PROPFIND /admin/Personal/              as admin          -> "Personal"
+PROPFIND /caldav-service/person-admin/ as caldav-service -> "Admin's calendar"
+```
+
+**The agent's home enumerates the personal calendars at Depth 1**, which is
+what a CalDAV client uses for discovery:
+
+```
+/caldav-service/family/          Family
+/caldav-service/person-admin/    Admin's calendar
+```
+
+**The write lands where the person can read it.** A `VTODO` PUT by
+`caldav-service` to `/caldav-service/person-admin/oat-milk.ics` returned 201
+and read back byte-for-byte from `admin`'s own `/admin/Personal/oat-milk.ics`.
+One object on disk under the owner, not a copy per mount.
+
+**Isolation holds at the enforcement layer, not by convention.** The agent's
+granted mount returns 200 while the same object reached through the user's own
+path returns 403:
+
+```
+GET /caldav-service/person-admin/oat-milk.ics  as caldav-service -> 200
+GET /admin/Personal/oat-milk.ics               as caldav-service -> 403
+```
+
+That is the claim "what the agent can write is exactly what is mounted for it"
+being true rather than asserted. Removing the mount in the Phase 4 `off` case
+will remove the 200 and leave the 403.
+
+Two things the live run caught that 75 unit tests did not: the depth-3 rights
+rejection above, and that `supported-calendar-component-set` advertising
+`VTODO` is not the same statement as accepting a bare `VTODO` -- the item still
+needs its `VCALENDAR` envelope per RFC 5545. The first was a design defect. The
+second was my test being wrong about the wire format, and worth recording only
+because the advertised property reads like a guarantee it does not make.
+
 ## What this does not solve
 
 - **Per-user agent identity.** The agent still has one credential for the whole
@@ -811,7 +905,7 @@ with a truncated API response.
   Bob's calendar" is not expressible until the requester has an identity.
 - **Notifications.** A todo appearing in Bob's task list is the only signal.
   Nothing pings him.
-- **Rollback.** Existing installs have no `people/` collections and get them on
+- **Rollback.** Existing installs have no `person-` collections and get them on
   the next pass. Nothing to migrate, and nothing to roll back: once a
   collection exists it holds real data, so reverting the feature leaves the
   collections and their data behind rather than removing them.

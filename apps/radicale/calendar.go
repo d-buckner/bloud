@@ -10,11 +10,23 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
-// peoplePrefix namespaces every personal collection under the owner, so a
-// username can never collide with a feed collection (`Movies`, `Shows`) or with
-// `family`. It is also the boundary the purge reads: `reality - roster` is taken
-// under this prefix and nowhere else.
-const peoplePrefix = "people"
+// personalPrefix namespaces a personal collection by name rather than by path,
+// so a username can never collide with a feed collection (`Movies`, `Shows`) or
+// with `family`. It is also the boundary the purge reads: `reality - roster` is
+// taken over `person-*` under the owner and nowhere else.
+//
+// It used to be a path prefix, `people/<user>`, and the live stack proved that
+// cannot work. The `owner_only` rights backend allows exactly two levels --
+// `<principal>/<collection>` -- and returns "" for anything deeper:
+//
+//	if "/" not in sane_path:              return "RW"
+//	if sane_path.count("/") == 1:        return "rw"
+//	return ""
+//
+// MKCALENDAR on `/calendar-service/people/admin/` is a 403 while
+// `/calendar-service/family/` is a 201. A name prefix keeps both properties
+// the path prefix existed for, at a depth the rights backend permits.
+const personalPrefix = "person-"
 
 // personalMount is where a person's own calendar appears in their own tree.
 //
@@ -157,7 +169,7 @@ func planCalendars(users []DirectoryUser, feeds []configurator.ICSFeedBinding, c
 	// Bloud choosing not to make one.
 	for _, u := range sortedUsers(users) {
 		cal := Calendar{
-			Segment:     peoplePrefix + "/" + u.Username,
+			Segment:     personalPrefix + u.Username,
 			DisplayName: personalDisplayName(u),
 		}
 
@@ -184,7 +196,7 @@ func planCalendars(users []DirectoryUser, feeds []configurator.ICSFeedBinding, c
 		// carries the identity the LLM matched on.
 		cal.Grants = append(cal.Grants, Grant{
 			Principal: agentUsername,
-			Mount:     peoplePrefix + "/" + u.Username,
+			Mount:     personalPrefix + u.Username,
 			Perms:     writableShare,
 		})
 

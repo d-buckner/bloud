@@ -157,7 +157,7 @@ func withoutPersonalRows(rendered string) string {
 		if line == "" {
 			continue
 		}
-		if strings.Contains(line, ";/"+calendarOwner+"/"+peoplePrefix+"/") {
+		if strings.Contains(line, ";/"+calendarOwner+"/"+personalPrefix) {
 			continue
 		}
 		kept = append(kept, line)
@@ -282,7 +282,7 @@ func TestCalendarRecipientsSkipsAUsernameThatCannotBeAPathSegment(t *testing.T) 
 	got, ok := c.calendarRecipients(context.Background(), ssoState(t, server.URL))
 	require.True(t, ok)
 	assert.Equal(t, []string{"alice"}, usernamesOf(got),
-		"a username that escapes the people/ prefix or hides its directory is not provisioned")
+		"a username that escapes the person- prefix or hides its directory is not provisioned")
 }
 
 func TestCalendarRecipientsReportsFailureWhenTheDirectoryIsUnreachable(t *testing.T) {
@@ -633,9 +633,9 @@ func TestPlanEmitsOnePersonalCalendarPerPerson(t *testing.T) {
 	plan := planCalendars(household(), nil, true, nil)
 
 	for _, want := range []struct{ segment, display string }{
-		{"people/alice", "Alice Hart's calendar"},
-		{"people/bob", "Bob Nunes's calendar"},
-		{"people/carol", "Carol's calendar"},
+		{"person-alice", "Alice Hart's calendar"},
+		{"person-bob", "Bob Nunes's calendar"},
+		{"person-carol", "Carol's calendar"},
 	} {
 		var found *Calendar
 		for i := range plan.Calendars {
@@ -664,19 +664,19 @@ func TestPersonalMountsCarryTheirOwnDisplayNames(t *testing.T) {
 				own = &rows[i]
 			}
 		case agentUsername:
-			if rows[i].mountedAt == "/"+agentUsername+"/people/bob/" {
+			if rows[i].mountedAt == "/"+agentUsername+"/person-bob/" {
 				agent = &rows[i]
 			}
 		}
 	}
 
 	require.NotNil(t, own, "bob has no Personal mount")
-	assert.Equal(t, "/calendar-service/people/bob/", own.mappedTo)
+	assert.Equal(t, "/calendar-service/person-bob/", own.mappedTo)
 	assert.Equal(t, writableShare, own.perms)
 	assert.Equal(t, "{'D:displayname': 'Personal'}", own.properties)
 
 	require.NotNil(t, agent, "the agent has no mount for bob")
-	assert.Equal(t, "/calendar-service/people/bob/", agent.mappedTo)
+	assert.Equal(t, "/calendar-service/person-bob/", agent.mappedTo)
 	assert.Equal(t, writableShare, agent.perms)
 	assert.Equal(t, "{}", agent.properties,
 		"the agent inherits the collection's own displayname, which carries the person's name")
@@ -690,7 +690,7 @@ func TestPersonalCalendarsAreNeverSharedWithAnotherPerson(t *testing.T) {
 	plan := planCalendars(household(), []configurator.ICSFeedBinding{feedBinding()}, true, nil)
 
 	for _, row := range parseRows(renderShares(plan)) {
-		trimmed := strings.TrimPrefix(row.mappedTo, "/"+calendarOwner+"/"+peoplePrefix+"/")
+		trimmed := strings.TrimPrefix(row.mappedTo, "/"+calendarOwner+"/"+personalPrefix)
 		if trimmed == row.mappedTo {
 			continue // not a personal collection
 		}
@@ -732,7 +732,7 @@ func TestOwnMountIsSkippedWhenThePersonAlreadyHasOne(t *testing.T) {
 	// under whatever they named it.
 	var agentSeesBob bool
 	for _, row := range parseRows(renderShares(plan)) {
-		if row.user == agentUsername && row.mappedTo == "/calendar-service/people/bob/" {
+		if row.user == agentUsername && row.mappedTo == "/calendar-service/person-bob/" {
 			agentSeesBob = true
 		}
 	}
@@ -761,7 +761,7 @@ func TestAddingAPersonChangesOnlyTheirRows(t *testing.T) {
 	added := func(rows []parsedRow, user string) []parsedRow {
 		var out []parsedRow
 		for _, r := range rows {
-			if r.mappedTo == "/"+calendarOwner+"/"+peoplePrefix+"/"+user+"/" {
+			if r.mappedTo == "/"+calendarOwner+"/"+personalPrefix+user+"/" {
 				out = append(out, r)
 			}
 		}
