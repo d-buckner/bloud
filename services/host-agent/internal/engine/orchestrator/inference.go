@@ -47,11 +47,11 @@ func externalAppSource(id string, record *store.ExternalApp) providerSource {
 	return providerSource{kind: configurator.ProviderKindExternalApp, id: id, external: record}
 }
 
-func instanceSource() providerSource {
-	return providerSource{kind: configurator.ProviderKindInstance, id: catalog.InstanceProviderSource}
+func settingSource() providerSource {
+	return providerSource{kind: configurator.ProviderKindSetting, id: catalog.InstanceProviderSource}
 }
 
-func (s providerSource) isInstance() bool { return s.kind == configurator.ProviderKindInstance }
+func (s providerSource) isSetting() bool { return s.kind == configurator.ProviderKindSetting }
 
 // isExternal reports whether this provider is a remote install rather than a
 // container Bloud runs.
@@ -60,8 +60,8 @@ func (s providerSource) isExternal() bool { return s.external != nil }
 // externalAppProviderRef builds the ProviderRef for a remote install of a
 // catalog app.
 //
-// App keeps the catalog ID, which is what makes this different from an
-// instance provider: an instance is anonymous, a remote AFFiNE is still
+// App keeps the catalog ID, which is what makes this different from a setting
+// provider: a setting is anonymous, a remote AFFiNE is still
 // AFFiNE, and a consumer that names AFFiNE in its `compatible:` list should
 // see AFFiNE come back. Node and Port stay empty because there is neither.
 // BaseURL and LocalURL are the same origin: with no container network between
@@ -77,16 +77,16 @@ func externalAppProviderRef(catalogID, endpoint string) configurator.ProviderRef
 	}
 }
 
-// instanceProviderRef builds the ProviderRef for the instance as a contract
-// provider.
+// settingProviderRef builds the ProviderRef for the instance's own settings as
+// a contract provider.
 //
 // Node, Port, BaseURL and LocalURL stay empty on purpose: there is no container
 // and no container-network address. The contract's own endpoint field carries the
 // value a consumer dials. `installed` here means "the setting is populated",
 // which is the instance analogue of a graph edge existing.
-func instanceProviderRef(populated bool) configurator.ProviderRef {
+func settingProviderRef(populated bool) configurator.ProviderRef {
 	return configurator.ProviderRef{
-		Kind:      configurator.ProviderKindInstance,
+		Kind:      configurator.ProviderKindSetting,
 		App:       catalog.InstanceProviderSource,
 		Installed: populated,
 	}
@@ -118,11 +118,11 @@ func (o *Orchestrator) inferenceSettings() inference.Settings {
 	return settings
 }
 
-// instanceInferenceSource resolves the instance's configured upstream into an
+// settingInferenceSource resolves the instance's configured upstream into an
 // inference binding. It returns ok=false when nothing is configured; a parse
 // failure is logged and also reads as not-configured, because a binding built
 // from an endpoint that does not parse would be worse than none.
-func (o *Orchestrator) instanceInferenceSource(requires []string) (configurator.InferenceBinding, bool) {
+func (o *Orchestrator) settingInferenceSource(requires []string) (configurator.InferenceBinding, bool) {
 	settings := o.inferenceSettings()
 	ep, ok, err := settings.Endpoint()
 	if err != nil {
@@ -135,7 +135,7 @@ func (o *Orchestrator) instanceInferenceSource(requires []string) (configurator.
 
 	upstream, _ := settings.ActiveUpstream()
 	binding := configurator.InferenceBinding{
-		ProviderRef:  instanceProviderRef(true),
+		ProviderRef:  settingProviderRef(true),
 		Endpoint:     ep.String(),
 		DefaultModel: settings.DefaultModel,
 		Models:       upstream.Models,
@@ -325,7 +325,7 @@ func (o *Orchestrator) promotedSources(contract string, installed map[string]boo
 		candidates := o.providersOfContract(fallback)
 		var ready []providerSource
 		for _, src := range candidates {
-			if src.isInstance() {
+			if src.isSetting() {
 				continue
 			}
 			if installed[src.id] {
