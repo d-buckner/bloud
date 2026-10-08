@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { get, post, put } from './httpClient';
+import { get, post, put, del } from './httpClient';
 import type { IntentResponse } from '$lib/types';
 
 export interface PublicURLSettings {
@@ -77,4 +77,28 @@ export function setAISettings(data: SetAIRequest): Promise<IntentResponse> {
  */
 export function testAIEndpoint(baseUrl: string, apiKey?: string): Promise<TestAIResponse> {
 	return post<TestAIResponse>('/api/settings/ai/test', { baseUrl, apiKey });
+}
+
+// External apps (PR 1: launchers only). A launcher is a tile that opens a URL.
+export interface ExternalApp {
+	id: string;
+	name: string;
+	url: string;
+	icon: string;
+}
+
+export function fetchExternalApps(): Promise<ExternalApp[]> {
+	return get<ExternalApp[]>('/api/external-apps');
+}
+
+export function addExternalApp(input: {
+	name: string;
+	url: string;
+	icon: string;
+}): Promise<IntentResponse> {
+	return post<IntentResponse>('/api/external-apps', input);
+}
+
+export function removeExternalApp(id: string): Promise<IntentResponse> {
+	return del<IntentResponse>(`/api/external-apps/${id}`);
 }

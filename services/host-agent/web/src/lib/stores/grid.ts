@@ -9,7 +9,7 @@
 
 import { writable, derived } from 'svelte/store';
 import { getWidgetById } from '$lib/widgets/registry';
-import type { GridElement, HomeApp, HomeData, HomeWidget } from '$lib/types';
+import type { GridElement, HomeApp, HomeData, HomeWidget, Launcher } from '$lib/types';
 
 export type { GridElement };
 
@@ -57,9 +57,26 @@ function widgetElements(widgets: HomeWidget[]): GridElement[] {
 	return elements;
 }
 
+/** Turn the snapshot's launcher list into grid tiles. Launchers are fixed
+ * one-cell tiles like apps, but they open a URL rather than a routed origin. */
+function launcherElements(launchers: Launcher[]): GridElement[] {
+	const elements: GridElement[] = [];
+	for (const launcher of launchers) {
+		elements.push({
+			type: 'launcher',
+			id: launcher.id,
+			x: launcher.x,
+			y: launcher.y,
+			w: launcher.w || APP_SIZE,
+			h: launcher.h || APP_SIZE,
+		});
+	}
+	return elements;
+}
+
 /** Rebuild the whole element list from a home endpoint response. */
 function elementsFromHome(data: HomeData): GridElement[] {
-	return [...appElements(data.apps), ...widgetElements(data.widgets)];
+	return [...appElements(data.apps), ...launcherElements(data.launchers ?? []), ...widgetElements(data.widgets)];
 }
 
 function createGridStore() {

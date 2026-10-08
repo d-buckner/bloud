@@ -88,6 +88,7 @@ func baseInput(t *testing.T) Input {
 		LDAPOutput:        &configurator.LDAPOutput{Host: "127.0.0.1", Port: 3389},
 		TemplateVars:      configurator.NewTemplateVars(map[string]string{"postgresPassword": "pw"}),
 		Secrets:           secrets.NewManager(filepath.Join(t.TempDir(), "secrets.json")),
+		ExternalApps:      store.NewExternalAppStore(db),
 		SSOBaseURL:        "http://localhost:8080",
 		SSOHostSecret:     "host-secret",
 		SSOAuthentikURL:   "http://sso.localhost:8080",

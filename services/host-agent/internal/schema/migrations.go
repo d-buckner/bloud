@@ -57,6 +57,20 @@ var Migrations = []Migration{
 	{9, "collapse hosts table into settings.public_url", collapseHostsToPublicURL},
 	{10, "apps.sso_strategy", ensureColumn("apps", "sso_strategy", "TEXT NOT NULL DEFAULT ''")},
 	{11, "remove sharing: drop shares, guests, tailnet_connections, remote_apps", dropSharingSchema},
+	{12, "external_apps: operator-declared off-host pointers", func(tx *sql.Tx) error {
+		_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS external_apps (
+			id          TEXT PRIMARY KEY,
+			kind        TEXT NOT NULL,
+			source      TEXT NOT NULL DEFAULT '',
+			name        TEXT NOT NULL,
+			url         TEXT NOT NULL,
+			icon        TEXT NOT NULL DEFAULT '',
+			values_json TEXT NOT NULL DEFAULT '{}',
+			created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+		)`)
+		return err
+	}},
 }
 
 // retiredChange is the body of a ledger entry whose subject no longer

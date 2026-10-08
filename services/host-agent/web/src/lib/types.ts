@@ -93,7 +93,7 @@ export interface IntentResponse {
 
 // Grid element: null x/y means autoPosition (GridStack picks the cell)
 export interface GridElement {
-	type: 'app' | 'widget';
+	type: 'app' | 'widget' | 'launcher';
 	id: string;
 	x: number | null;
 	y: number | null;
@@ -117,8 +117,22 @@ export interface HomeWidget {
 	h: number;
 }
 
+// Launcher: an operator-declared tile that opens a URL and wires to nothing.
+export interface Launcher {
+	id: string;
+	name: string;
+	url: string;
+	icon: string;
+	x: number | null;
+	y: number | null;
+	w: number;
+	h: number;
+}
+
 export interface HomeData {
 	apps: HomeApp[];
+	/** Optional so older snapshots (and tests) that predate launchers still typecheck. */
+	launchers?: Launcher[];
 	widgets: HomeWidget[];
 }
 

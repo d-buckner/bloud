@@ -229,3 +229,24 @@ func TestHomeModule_GetLayout_ClientAccess(t *testing.T) {
 	assert.Contains(t, string(payload), `"has_client_access":true`)
 	assert.NotContains(t, string(payload), `"has_client_access":false`)
 }
+
+func TestHomeModule_Launchers(t *testing.T) {
+	posStore := NewFakePositionStore()
+	appStore := NewFakeAppStore()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	extStore := newExternalAppsTestStore(t)
+
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID: "l1", Kind: string(store.ExternalAppKindLauncher), Name: "Photos", URL: "https://photos.example.com",
+	}))
+
+	mod := NewHomeModule(posStore, appStore, func() map[string]string { return nil }, logger)
+	mod.SetExternalApps(extStore)
+
+	layout, err := mod.GetLayout("alice")
+	require.NoError(t, err)
+	require.Len(t, layout.Launchers, 1)
+	assert.Equal(t, "l1", layout.Launchers[0].ID)
+	assert.Equal(t, "Photos", layout.Launchers[0].Name)
+	assert.Equal(t, "https://photos.example.com", layout.Launchers[0].URL)
+}

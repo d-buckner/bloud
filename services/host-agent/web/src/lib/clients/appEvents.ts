@@ -18,6 +18,7 @@
 
 import { get } from 'svelte/store';
 import { apps, loading, error } from '$lib/stores/apps';
+import { launchers } from '$lib/stores/launchers';
 import { gridElements } from '$lib/stores/grid';
 import {
 	appProgress,
@@ -62,6 +63,7 @@ function handleHomeData(data: HomeData): void {
 	lastStatuses = new Map(data.apps.map((a: App) => [a.catalog_id, a.status]));
 
 	apps.set(data.apps);
+	launchers.set(data.launchers ?? []);
 	gridElements.setFromHome(data);
 	loading.set(false);
 	error.set(null);

@@ -39,6 +39,7 @@ type routerOptions struct {
 	positionStore store.PositionStoreInterface
 	prefsStore    store.PreferencesStoreInterface
 	sessionStore  store.SessionStoreInterface
+	externalApps  store.ExternalAppStoreInterface
 	orch          any // any orchestratorCaller implementation
 	authConfig    *AuthRef
 }
@@ -49,6 +50,7 @@ type routerOptions struct {
 // routes.
 type routerDeps struct {
 	appStore      store.AppStoreInterface
+	externalApps  store.ExternalAppStoreInterface
 	eventsBus     *eventbus.Bus
 	positionStore store.PositionStoreInterface
 	prefsStore    store.PreferencesStoreInterface
@@ -111,6 +113,16 @@ func buildStoreDeps(d *routerDeps, db *sql.DB, cfg ServerConfig, options *router
 	}
 	d.secrets = cfg.Secrets
 	d.settingsStore = cfg.Settings
+
+	d.externalApps = options.externalApps
+	if d.externalApps == nil {
+		d.externalApps = store.NewExternalAppStore(db)
+	}
+	// Launcher changes reshape the home payload, so they must resnapshot the
+	// SSE stream exactly like an app-store change does.
+	d.externalApps.SetOnChange(func() {
+		d.eventsBus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
+	})
 
 	d.catalogCache = options.catalog
 	if d.catalogCache == nil {
@@ -202,6 +214,7 @@ type routerModules struct {
 	events   *eventsModule
 	settings *settingsModule
 	ai       *aiSettingsModule
+	external *externalAppsModule
 	system   *systemModule
 	// clientCreds serves the reveal surface for credentials a provider
 	// declares under `clientAccess`. It is its own module rather than a route
@@ -248,6 +261,7 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 	// And the apps that publish a clientAccess credential, so the right-click
 	// menu offers the reveal surface only for those.
 	homeMod.SetClientAccessLookup(catalogClientAccessSet(deps.catalogCache))
+	homeMod.SetExternalApps(deps.externalApps)
 
 	// The developer graph renders each app's containers with their live
 	// lifecycle phase, so the system module needs the real orchestrator.
@@ -287,6 +301,11 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 			catalog:       deps.catalogCache,
 			orch:          deps.orchCaller,
 			logger:        logger,
+		},
+		external: &externalAppsModule{
+			externalApps: deps.externalApps,
+			orch:         deps.orchCaller,
+			logger:       logger,
 		},
 		system: systemMod,
 		clientCreds: NewClientCredentialsModule(deps.catalogCache, deps.secrets,
@@ -414,6 +433,7 @@ func (m *routerModules) registerRoutes(r chi.Router) {
 		admin.Get("/system/rebuild/stream", rebuildStreamHandler())
 		NewSettingsRouter(m.settings, admin)
 		RegisterAIRoutes(m.ai, admin)
+		m.external.Register(admin)
 
 		// Client credentials: reveal and rotate for credentials a provider
 		// declares under `clientAccess`. Admin-only, because the reveal
