@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -249,4 +250,57 @@ func TestHomeModule_Launchers(t *testing.T) {
 	assert.Equal(t, "l1", layout.Launchers[0].ID)
 	assert.Equal(t, "Photos", layout.Launchers[0].Name)
 	assert.Equal(t, "https://photos.example.com", layout.Launchers[0].URL)
+}
+
+// An external record's grid position round-trips the same way an app's does:
+// save the settled layout with the record's ID, read the home payload back,
+// and the tile carries the position it was given. Rename and remove ride the
+// same record, so the three together are the grid contract for a thing that
+// is not an installed app.
+func TestHomeModule_ExternalRecordGridRoundTrip(t *testing.T) {
+	posStore := NewFakePositionStore()
+	appStore := NewFakeAppStore()
+	extStore := store.NewExternalAppStore(testdb.SetupTestDB(t))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	mod := NewHomeModule(posStore, appStore, func() map[string]string { return nil }, logger)
+	mod.SetExternalApps(extStore)
+
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID: "nas-router", Kind: string(store.ExternalAppKindLauncher),
+		Name: "Router", URL: "http://192.168.1.1",
+	}))
+
+	// Position it.
+	x, y := 3, 2
+	require.NoError(t, mod.SetLayout("alice", []store.Position{
+		{ElementID: "nas-router", ElementType: "launcher", X: &x, Y: &y, W: 2, H: 1},
+	}))
+
+	home, err := mod.GetLayout("alice")
+	require.NoError(t, err)
+	require.Len(t, home.Launchers, 1)
+	assert.Equal(t, "nas-router", home.Launchers[0].ID)
+	require.NotNil(t, home.Launchers[0].X)
+	assert.Equal(t, 3, *home.Launchers[0].X)
+	assert.Equal(t, 2, home.Launchers[0].W)
+
+	// Rename: the tile follows the record, the position stays put.
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID: "nas-router", Kind: string(store.ExternalAppKindLauncher),
+		Name: "Home Router", URL: "http://10.0.0.1",
+	}))
+	home, err = mod.GetLayout("alice")
+	require.NoError(t, err)
+	require.Len(t, home.Launchers, 1)
+	assert.Equal(t, "Home Router", home.Launchers[0].Name)
+	assert.Equal(t, "http://10.0.0.1", home.Launchers[0].URL)
+	require.NotNil(t, home.Launchers[0].X)
+	assert.Equal(t, 3, *home.Launchers[0].X, "renaming must not lose the position")
+
+	// Remove: the tile is gone and its position row goes with it.
+	require.NoError(t, extStore.Delete("nas-router"))
+	home, err = mod.GetLayout("alice")
+	require.NoError(t, err)
+	assert.Empty(t, home.Launchers)
 }
