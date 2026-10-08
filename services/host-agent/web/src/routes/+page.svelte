@@ -16,6 +16,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { AppStatus, type App } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
+	import { launchers } from '$lib/stores/launchers';
 	import { enabledWidgetIds } from '$lib/stores/grid';
 	import { installApp, uninstallApp, renameApp } from '$lib/clients/appFacade';
 	import { getAppUrl } from '$lib/utils/appUrl';
@@ -56,9 +57,10 @@
 		if (!mounted || $loading) return 'Loading…';
 		if ($error) return 'Could not reach the host agent';
 		const appCount = $apps.length;
+		const launcherCount = $launchers.length;
 		const widgetCount = $enabledWidgetIds.length;
 		const noun = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
-		return [noun(appCount, 'app'), noun(widgetCount, 'widget')].join(' · ');
+		return [noun(appCount, 'app'), noun(launcherCount, 'launcher'), noun(widgetCount, 'widget')].join(' · ');
 	});
 
 	onMount(() => {
@@ -121,7 +123,7 @@
 		}
 	}
 
-	let isEmpty = $derived($apps.length === 0 && $enabledWidgetIds.length === 0);
+	let isEmpty = $derived($apps.length === 0 && $launchers.length === 0 && $enabledWidgetIds.length === 0);
 </script>
 
 <svelte:head>

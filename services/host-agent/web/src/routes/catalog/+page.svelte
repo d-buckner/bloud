@@ -4,6 +4,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import CatalogAppCard from '$lib/components/CatalogAppCard.svelte';
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
+	import ExternalAppsSection from '$lib/components/ExternalAppsSection.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
 	import { apps as installedApps } from '$lib/stores/apps';
@@ -158,6 +159,8 @@
 			</div>
 		{/if}
 	{/if}
+
+	<ExternalAppsSection />
 </div>
 
 <AppDetailModal

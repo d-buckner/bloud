@@ -65,16 +65,17 @@
 </script>
 
 <section class="section">
-	<h2>Launchers</h2>
+	<h2>External apps</h2>
 	<p class="section-description">
-		Shortcuts to sites you already use. A launcher is a tile, not an app Bloud runs.
+		Shortcuts to sites you already use. A launcher becomes a tile on your dashboard
+		that opens that URL.
 	</p>
 
 	{#if loading}
 		<p class="hint">Loading launchers...</p>
 	{:else}
 		{#if launchers.length === 0}
-			<p class="hint">No launchers yet.</p>
+			<p class="hint">No external apps yet.</p>
 		{:else}
 			<ul class="launcher-list">
 				{#each launchers as launcher (launcher.id)}
