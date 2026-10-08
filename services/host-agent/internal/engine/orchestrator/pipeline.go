@@ -30,6 +30,12 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applySetInferenceIntent(i)
 		case RevokeClientSessionsIntent:
 			o.applyRevokeClientSessionsIntent(i)
+		case AddExternalAppIntent:
+			o.applyAddExternalAppIntent(i)
+		case UpdateExternalAppIntent:
+			o.applyUpdateExternalAppIntent(i)
+		case RemoveExternalAppIntent:
+			o.applyRemoveExternalAppIntent(i)
 		case ReconcileIntent:
 			// The timer pass asks for no change of its own, so there is no
 			// user request to record. The one thing it does drive is the

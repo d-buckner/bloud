@@ -124,7 +124,10 @@ type ServerConfig struct {
 	// stream listens to. main.go builds them once and hands the same
 	// pointers to both. When nil the router constructs its own, which is the
 	// path tests take.
-	AppStore     store.AppStoreInterface
+	AppStore store.AppStoreInterface
+	// ExternalApps is the operator-declared external app registry. Nil
+	// disables the feature (external apps are simply absent).
+	ExternalApps store.ExternalAppStoreInterface
 	CatalogCache catalog.CacheInterface
 }
 
@@ -144,6 +147,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	router, orch := NewRouter(db, cfg, logger, func(o *routerOptions) {
 		o.authConfig = authRef
 		o.appStore = cfg.AppStore
+		o.externalApps = cfg.ExternalApps
 		o.catalog = cfg.CatalogCache
 	})
 

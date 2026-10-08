@@ -118,6 +118,10 @@ type Input struct {
 	// the provider's identity and address.
 	Secrets configurator.AppSecretsProvider
 
+	// ExternalApps is the operator-declared external app registry. Nil
+	// disables the feature (external apps are simply absent).
+	ExternalApps store.ExternalAppStoreInterface
+
 	// OnHostsChanged runs after a SetHosts intent is applied. The API layer
 	// passes a closure that re-ensures the dashboard OAuth app against the
 	// new redirect URIs. It crosses this boundary as a plain func so wire
@@ -251,10 +255,11 @@ func buildOrchestratorConfig(
 			TraefikPort:  in.TraefikPort,
 		},
 		Stores: orchestrator.StoresConfig{
-			AppStore:   in.AppStore,
-			Settings:   in.Settings,
-			Operations: store.NewOperationStore(in.DB),
-			Secrets:    in.Secrets,
+			AppStore:     in.AppStore,
+			Settings:     in.Settings,
+			Operations:   store.NewOperationStore(in.DB),
+			Secrets:      in.Secrets,
+			ExternalApps: in.ExternalApps,
 		},
 		SSO: orchestrator.SSOConfig{
 			SSO:             ssoProvisioner,

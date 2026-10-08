@@ -444,6 +444,17 @@ func initTestDB(db *sql.DB) error {
 			created_at TEXT NOT NULL,
 			expires_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS external_apps (
+			id          TEXT PRIMARY KEY,
+			kind        TEXT NOT NULL,
+			source      TEXT NOT NULL DEFAULT '',
+			name        TEXT NOT NULL,
+			url         TEXT NOT NULL,
+			icon        TEXT NOT NULL DEFAULT '',
+			values_json TEXT NOT NULL DEFAULT '{}',
+			created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+		)`,
 	}
 	for _, tbl := range tables {
 		if _, err := db.Exec(tbl); err != nil {

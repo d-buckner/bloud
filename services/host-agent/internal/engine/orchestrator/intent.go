@@ -163,6 +163,51 @@ func NewReconcileIntent() ReconcileIntent {
 	return ReconcileIntent{intentBase: newIntentBase()}
 }
 
+// AddExternalAppIntent requests adding an external app. PR 1 adds only
+// launchers: a named tile that opens a URL and wires to nothing. The record's
+// kind/source/values are the applier's to fill, so the intent carries exactly
+// the operator-facing fields and stays forward-compatible with later kinds.
+type AddExternalAppIntent struct {
+	intentBase
+	ID   string
+	Name string
+	URL  string
+	Icon string
+}
+
+func (AddExternalAppIntent) intentMarker() {}
+
+func NewAddExternalAppIntent(id, name, url, icon string) AddExternalAppIntent {
+	return AddExternalAppIntent{intentBase: newIntentBase(), ID: id, Name: name, URL: url, Icon: icon}
+}
+
+// UpdateExternalAppIntent requests changing a launcher's name, URL, or icon.
+type UpdateExternalAppIntent struct {
+	intentBase
+	ID   string
+	Name string
+	URL  string
+	Icon string
+}
+
+func (UpdateExternalAppIntent) intentMarker() {}
+
+func NewUpdateExternalAppIntent(id, name, url, icon string) UpdateExternalAppIntent {
+	return UpdateExternalAppIntent{intentBase: newIntentBase(), ID: id, Name: name, URL: url, Icon: icon}
+}
+
+// RemoveExternalAppIntent requests deleting an external app.
+type RemoveExternalAppIntent struct {
+	intentBase
+	ID string
+}
+
+func (RemoveExternalAppIntent) intentMarker() {}
+
+func NewRemoveExternalAppIntent(id string) RemoveExternalAppIntent {
+	return RemoveExternalAppIntent{intentBase: newIntentBase(), ID: id}
+}
+
 // Compile-time assertions that all types implement Intent.
 var (
 	_ Intent = InstallAppIntent{}
@@ -172,4 +217,7 @@ var (
 	_ Intent = SetPublicURLIntent{}
 	_ Intent = SetInferenceIntent{}
 	_ Intent = ReconcileIntent{}
+	_ Intent = AddExternalAppIntent{}
+	_ Intent = UpdateExternalAppIntent{}
+	_ Intent = RemoveExternalAppIntent{}
 )

@@ -95,21 +95,22 @@ func runServer() {
 // refresh the cache the orchestrator reads, and app-status writes have to fire
 // the change hook the SSE stream listens to.
 type agentStack struct {
-	cfg        *config.Config
-	database   *sql.DB
-	client     *podman.Client
-	runtime    containerruntime.Runtime
-	hosts      *hostset.State
-	settings   *store.SettingsStore
-	vars       *configurator.TemplateVars
-	registry   *configurator.Registry
-	eventsBus  *eventbus.Bus
-	app        *store.AppStore
-	catalog    *catalog.MemoryCache
-	authClient *authentik.Client
-	authRef    *api.AuthRef
-	orch       *orchestrator.Orchestrator
-	serverCfg  api.ServerConfig
+	cfg          *config.Config
+	database     *sql.DB
+	client       *podman.Client
+	runtime      containerruntime.Runtime
+	hosts        *hostset.State
+	settings     *store.SettingsStore
+	vars         *configurator.TemplateVars
+	registry     *configurator.Registry
+	eventsBus    *eventbus.Bus
+	app          *store.AppStore
+	externalApps *store.ExternalAppStore
+	catalog      *catalog.MemoryCache
+	authClient   *authentik.Client
+	authRef      *api.AuthRef
+	orch         *orchestrator.Orchestrator
+	serverCfg    api.ServerConfig
 }
 
 // buildAgentStack brings up every long-lived piece of the agent: config,
@@ -181,6 +182,7 @@ func buildAgentStack(logger *slog.Logger) *agentStack {
 // openAgentStoresInto builds the four shared stores and loads the catalog.
 func openAgentStoresInto(st *agentStack, logger *slog.Logger) {
 	st.app = store.NewAppStore(st.database)
+	st.externalApps = store.NewExternalAppStore(st.database)
 	st.catalog = catalog.NewMemoryCache()
 	if err := st.catalog.Refresh(catalog.NewLoader(st.cfg.AppsDir)); err != nil {
 		logger.Error("failed to load the app catalog", "apps_dir", st.cfg.AppsDir, "error", err)
@@ -309,6 +311,7 @@ func agentServerConfig(st *agentStack) api.ServerConfig {
 		TemplateVars:          st.vars,
 		Secrets:               cfg.Secrets,
 		AppStore:              st.app,
+		ExternalApps:          st.externalApps,
 		CatalogCache:          st.catalog,
 	}
 }
@@ -339,6 +342,7 @@ func (st *agentStack) wireInput() wire.Input {
 		SSOAuthentikURL:   cfg.SSOAuthentikURL,
 		SSOIssuerURL:      cfg.SSOIssuerURL,
 		Secrets:           cfg.Secrets,
+		ExternalApps:      st.externalApps,
 		OnHostsChanged:    st.authRef.Ensure,
 	}
 }

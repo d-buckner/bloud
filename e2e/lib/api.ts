@@ -169,3 +169,26 @@ export async function ensureInstalled(name: string): Promise<void> {
   await installApp(name);
   await waitForApp(name, 'running');
 }
+
+// External apps (PR 1: launchers only). A launcher is a tile that opens a URL.
+export interface Launcher {
+  id: string;
+  name: string;
+  url: string;
+  icon: string;
+}
+
+export async function listLaunchers(): Promise<Launcher[]> {
+  return fetchJSON<Launcher[]>('/api/external-apps');
+}
+
+export async function addLauncher(input: { name: string; url: string; icon?: string }): Promise<void> {
+  await fetchJSON('/api/external-apps', {
+    method: 'POST',
+    body: JSON.stringify({ name: input.name, url: input.url, icon: input.icon ?? '' }),
+  });
+}
+
+export async function removeLauncher(id: string): Promise<void> {
+  await fetchJSON('/api/external-apps/' + id, { method: 'DELETE' });
+}

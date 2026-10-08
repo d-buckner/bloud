@@ -25,6 +25,9 @@ type homeModuleSimple struct {
 	// clientAccess credential. Optional: with no lookup wired, nothing is
 	// offered the reveal surface.
 	getClientAccess func() map[string]bool
+	// externalApps is the operator-declared external app registry. Optional:
+	// with no store wired, the home payload carries no launchers.
+	externalApps store.ExternalAppStoreInterface
 }
 
 // SetHeadlessLookup wires the catalog-derived headless set so the home payload
@@ -39,6 +42,12 @@ func (m *homeModuleSimple) SetHeadlessLookup(fn func() map[string]bool) {
 // surface only for the apps in this set.
 func (m *homeModuleSimple) SetClientAccessLookup(fn func() map[string]bool) {
 	m.getClientAccess = fn
+}
+
+// SetExternalApps wires the external app registry so the home payload can
+// carry launchers alongside installed apps.
+func (m *homeModuleSimple) SetExternalApps(s store.ExternalAppStoreInterface) {
+	m.externalApps = s
 }
 
 // NewHomeModule creates a new HomeModule.
@@ -74,9 +83,15 @@ func (m *homeModuleSimple) GetLayout(username string) (*homeResponse, error) {
 		posMap[p.ElementID] = p
 	}
 
+	launchers, err := m.launcherItems(posMap)
+	if err != nil {
+		return nil, fmt.Errorf("get launchers for home: %w", err)
+	}
+
 	return &homeResponse{
-		Apps:    m.homeAppItems(apps, posMap),
-		Widgets: homeWidgetItems(positions),
+		Apps:      m.homeAppItems(apps, posMap),
+		Launchers: launchers,
+		Widgets:   homeWidgetItems(positions),
 	}, nil
 }
 
@@ -124,6 +139,38 @@ func (m *homeModuleSimple) clientAccessIDs() map[string]bool {
 		return nil
 	}
 	return m.getClientAccess()
+}
+
+// launcherItems pairs each launcher external app with its saved grid position.
+// A provider external app is not a tile, so it is left out of the home payload
+// (it reaches the grid only through the developer graph, in a later PR).
+func (m *homeModuleSimple) launcherItems(posMap map[string]store.Position) ([]launcherWithPosition, error) {
+	if m.externalApps == nil {
+		return []launcherWithPosition{}, nil
+	}
+	apps, err := m.externalApps.GetAll()
+	if err != nil {
+		return nil, err
+	}
+	items := make([]launcherWithPosition, 0, len(apps))
+	for _, app := range apps {
+		if app.Kind != string(store.ExternalAppKindLauncher) {
+			continue
+		}
+		pos := posMap[app.ID]
+		w, h := atLeastOne(pos)
+		items = append(items, launcherWithPosition{
+			ID:   app.ID,
+			Name: app.Name,
+			URL:  app.URL,
+			Icon: app.Icon,
+			X:    pos.X,
+			Y:    pos.Y,
+			W:    w,
+			H:    h,
+		})
+	}
+	return items, nil
 }
 
 // homeWidgetItems picks the widget-typed positions out of the user's full set.
@@ -240,6 +287,18 @@ type widgetPosition struct {
 }
 
 type homeResponse struct {
-	Apps    []appWithPosition `json:"apps"`
-	Widgets []widgetPosition  `json:"widgets"`
+	Apps      []appWithPosition      `json:"apps"`
+	Launchers []launcherWithPosition `json:"launchers"`
+	Widgets   []widgetPosition       `json:"widgets"`
+}
+
+type launcherWithPosition struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	Icon string `json:"icon"`
+	X    *int   `json:"x"`
+	Y    *int   `json:"y"`
+	W    int    `json:"w"`
+	H    int    `json:"h"`
 }

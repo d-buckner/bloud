@@ -8,6 +8,7 @@
 	import { saveLayout } from '$lib/clients/layoutClient';
 	import { type App } from '$lib/types';
 	import AppTile from './AppTile.svelte';
+	import LauncherTile from './LauncherTile.svelte';
 	import WidgetWrapper from './WidgetWrapper.svelte';
 	import { diffGrid, type GridDiff, type GridNodeState } from '$lib/utils/gridDiff';
 	import { firstFreeSlot } from '$lib/utils/gridPlacement';
@@ -78,6 +79,9 @@
 				props: { itemId: element.id, onAppClick: handleAppClick, onAppContextMenu },
 			});
 		}
+		if (element.type === 'launcher') {
+			return mount(LauncherTile, { target, props: { itemId: element.id } });
+		}
 		if (!widget) return null;
 		return mount(WidgetWrapper, {
 			target,
@@ -90,7 +94,9 @@
 	 * widget block instead of filling the first gap among the apps.
 	 */
 	function appBlockBottom(occupied: GridNodeState[]): number {
-		const appIds = new Set($gridElements.filter((el) => el.type === 'app').map((el) => el.id));
+		const appIds = new Set(
+			$gridElements.filter((el) => el.type === 'app' || el.type === 'launcher').map((el) => el.id)
+		);
 		return occupied
 			.filter((node) => appIds.has(node.id))
 			.reduce((bottom, node) => Math.max(bottom, node.y + node.h), 0);
@@ -104,7 +110,7 @@
 		if (element.x !== null && element.y !== null) {
 			return { x: element.x, y: element.y };
 		}
-		if (element.type === 'app') return { autoPosition: true as const };
+		if (element.type === 'app' || element.type === 'launcher') return { autoPosition: true as const };
 
 		const occupied = currentGridState();
 		const slot = firstFreeSlot(occupied, size.w, size.h, appBlockBottom(occupied), columns);

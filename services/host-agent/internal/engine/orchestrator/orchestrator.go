@@ -126,6 +126,7 @@ type Orchestrator struct {
 	// Live address state (nil = legacy single-URL mode from config).
 	hosts          *hostset.State
 	settings       store.SettingsStoreInterface
+	externalApps   store.ExternalAppStoreInterface
 	onHostsChanged func()
 
 	// sessionRevokes carries session-revoke requests from the drain phase to
@@ -197,6 +198,7 @@ func NewOrchestrator(
 		traefikGen:      config.Runtime.TraefikGen,
 		hosts:           config.Hosts.Hosts,
 		settings:        config.Stores.Settings,
+		externalApps:    config.Stores.ExternalApps,
 		onHostsChanged:  config.Hosts.OnHostsChanged,
 		queue:           NewIntentQueue(DefaultDebounce),
 		events:          config.Tuning.Events,
@@ -229,6 +231,12 @@ func (o *Orchestrator) Enqueue(intent Intent) {
 func (o *Orchestrator) Submit(intent Intent) {
 	if i, ok := intent.(InstallAppIntent); ok {
 		o.recordInstallNow(i.AppName)
+	}
+	// External apps have no convergence to wait for, so the add records the
+	// row before enqueuing: the 202 response carries it and the tile appears
+	// without a drain round trip. The drain re-applies it idempotently.
+	if i, ok := intent.(AddExternalAppIntent); ok {
+		o.applyAddExternalAppIntent(i)
 	}
 	o.Enqueue(intent)
 }

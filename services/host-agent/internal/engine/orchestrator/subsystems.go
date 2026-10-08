@@ -69,6 +69,9 @@ type StoresConfig struct {
 	// Secrets is the host secret store. Nil disables publishing: integration
 	// bindings still carry the provider's identity and address.
 	Secrets configurator.AppSecretsProvider
+	// ExternalApps is the operator-declared external app registry. Nil
+	// disables the feature (external apps are simply absent).
+	ExternalApps store.ExternalAppStoreInterface
 }
 
 // SSOConfig groups the identity-provider provisioning and the OIDC/LDAP

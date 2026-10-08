@@ -85,3 +85,19 @@ CREATE TABLE IF NOT EXISTS operations (
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Operator-declared pointers to things Bloud does not run: a launcher tile,
+-- a remote install of a catalog app, or an off-host provider. Credentials are
+-- deliberately absent here: they live in the secrets manager under an
+-- external/<id> scope, never in this table. See docs/plans/external-apps.md.
+CREATE TABLE IF NOT EXISTS external_apps (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT '',
+    name        TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    icon        TEXT NOT NULL DEFAULT '',
+    values_json TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
