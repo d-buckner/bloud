@@ -152,18 +152,68 @@ func TestRadicaleChallengesAnonymousDAV(t *testing.T) {
 	}
 }
 
+// ldapBackendWarming reports a status where Radicale is answering but its LDAP
+// backend could not complete the bind.
+//
+// Radicale's ldap backend raises RuntimeError when the Authentik outpost will
+// not finish a bind, and the server turns any uncaught exception into a 500.
+// A correct credential presented to an outpost that is up but not yet warm
+// therefore answers "A server error occurred", which on the wire is
+// indistinguishable from a broken app.
+//
+// These are the same three codes the configurator's own PostStart classifies
+// as "the provider's outage and not this app's configuration", so the test
+// and the product agree about what a 502 from this server means.
+func ldapBackendWarming(status int) bool {
+	switch status {
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+		return true
+	}
+	return false
+}
+
+// davRequestSettled issues an authenticated DAV request and retries while the
+// server reports its auth backend is still warming, returning the first
+// settled response and failing on the last attempt once the deadline passes.
+//
+// The retry covers one window and nothing else. The Authentik LDAP outpost is
+// restarted by every re-provision, which every app install triggers, so a
+// test that runs after an install routinely reaches the outpost before it can
+// serve a user bind. Retrying only the warming codes keeps every other answer
+// immediate: a 401 is a real verdict about the credential and a 207 is the
+// outcome under test, so retrying either would bury the thing this file exists
+// to detect.
+func davRequestSettled(t *testing.T, method, path, user, pass string, timeout time.Duration) (*http.Response, string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		res, body := davRequest(t, method, path, user, pass)
+		if !ldapBackendWarming(res.StatusCode) || time.Now().After(deadline) {
+			return res, body
+		}
+		t.Logf("%s %s = %d; the LDAP backend is still warming, retrying", method, path, res.StatusCode)
+		time.Sleep(2 * time.Second)
+	}
+}
+
 // TestRadicaleLDAPLogin is the behavioral core: a Bloud account, verified
 // against the Authentik LDAP outpost, gets its own DAV tree. This is the chain
 // the app exists to provide, and nothing short of a 207 demonstrates it.
+//
+// The outpost readiness gate is not optional here. `waitAppRunning` says the
+// container is up, and the outpost publishes its port before it can serve a
+// user bind, so without the gate a correct credential can arrive into a 500
+// that says nothing about Radicale.
 func TestRadicaleLDAPLogin(t *testing.T) {
 	waitAppRunning(t, "radicale", 3*time.Minute)
+	waitLDAPReady(t, 3*time.Minute)
 
 	password := readSecrets(t).AuthentikBootstrapPassword
 	if password == "" {
 		t.Fatal("authentikBootstrapPassword not found in secrets.json")
 	}
 
-	res, body := davRequest(t, "PROPFIND", "/admin/", "admin", password)
+	res, body := davRequestSettled(t, "PROPFIND", "/admin/", "admin", password, 2*time.Minute)
 	if res.StatusCode != http.StatusMultiStatus {
 		t.Fatalf("PROPFIND /admin/ as admin = %d, want 207\nbody: %s", res.StatusCode, body)
 	}
@@ -177,8 +227,9 @@ func TestRadicaleLDAPLogin(t *testing.T) {
 // answers 207 to anything.
 func TestRadicaleRejectsAWrongPassword(t *testing.T) {
 	waitAppRunning(t, "radicale", 3*time.Minute)
+	waitLDAPReady(t, 3*time.Minute)
 
-	res, _ := davRequest(t, "PROPFIND", "/admin/", "admin", "not-the-password")
+	res, _ := davRequestSettled(t, "PROPFIND", "/admin/", "admin", "not-the-password", 2*time.Minute)
 	if res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong-password PROPFIND = %d, want 401", res.StatusCode)
 	}
@@ -190,8 +241,9 @@ func TestRadicaleRejectsAWrongPassword(t *testing.T) {
 // the test needs.
 func TestRadicaleIsolatesOneUsersTreeFromAnother(t *testing.T) {
 	waitAppRunning(t, "radicale", 3*time.Minute)
+	waitLDAPReady(t, 3*time.Minute)
 
-	res, _ := davRequest(t, "PROPFIND", "/admin/", "ldap-service", readSecrets(t).LdapBindPassword)
+	res, _ := davRequestSettled(t, "PROPFIND", "/admin/", "ldap-service", readSecrets(t).LdapBindPassword, 2*time.Minute)
 	if res.StatusCode != http.StatusForbidden {
 		t.Fatalf("ldap-service reading /admin/ = %d, want 403 (owner_only must not admit a stranger)",
 			res.StatusCode)
@@ -208,7 +260,7 @@ func TestRadicaleWritesACalendar(t *testing.T) {
 	password := readSecrets(t).AuthentikBootstrapPassword
 	calendarPath := fmt.Sprintf("/admin/bloud-e2e-%d/", time.Now().UnixNano())
 
-	res, body := davRequest(t, "MKCALENDAR", calendarPath, "admin", password)
+	res, body := davRequestSettled(t, "MKCALENDAR", calendarPath, "admin", password, 2*time.Minute)
 	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusNoContent {
 		t.Fatalf("MKCALENDAR %s = %d, want 201\nbody: %s", calendarPath, res.StatusCode, body)
 	}
