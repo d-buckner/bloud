@@ -92,6 +92,7 @@ type fakeJellyfin struct {
 	keys        map[string]string
 	creates     int
 	logins      int
+	usernames   []string
 	requireAuth bool
 }
 
@@ -100,8 +101,15 @@ func newFakeJellyfin(t *testing.T) *fakeJellyfin {
 	f := &fakeJellyfin{keys: map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/Users/AuthenticateByName", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Username string `json:"Username"`
+		}
+		// Best-effort: a body this test cannot parse still counts as a login, and
+		// the assertion that cares about the username supplies a well-formed one.
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.logins++
+		f.usernames = append(f.usernames, body.Username)
 		f.mu.Unlock()
 		if !strings.Contains(r.Header.Get("Authorization"), `Client="jellyfin-mcp"`) {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -152,6 +160,15 @@ func (f *fakeJellyfin) loginCount() int {
 	return f.logins
 }
 
+// loginUsernames returns the `Username` of every login this fake received, in
+// order. It is what lets a test assert *which* account the configurator tried,
+// not merely that it tried once.
+func (f *fakeJellyfin) loginUsernames() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.usernames...)
+}
+
 func (f *fakeJellyfin) seed(name, token string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -159,8 +176,10 @@ func (f *fakeJellyfin) seed(name, token string) {
 }
 
 // mediaServerBindingFor builds the binding the orchestrator would hand this
-// app once Jellyfin has converged, pointed at a fake server for the host-side
-// calls and at the container address for what gets written into the config.
+// app once a *locally installed* Jellyfin has converged, pointed at a fake
+// server for the host-side calls and at the container address for what gets
+// written into the config. The username is the managed bootstrap account a
+// Bloud-booted provider publishes; remoteBindingFor is its off-host twin.
 func mediaServerBindingFor(localURL string) configurator.MediaServerBinding {
 	return configurator.MediaServerBinding{
 		ProviderRef: configurator.ProviderRef{
@@ -171,8 +190,23 @@ func mediaServerBindingFor(localURL string) configurator.MediaServerBinding {
 			BaseURL:   "http://apps-jellyfin:8096",
 			LocalURL:  localURL,
 		},
+		AdminUsername: "bloud-bootstrap-admin",
 		AdminPassword: "bootstrap-admin-password",
 	}
+}
+
+// remoteBindingFor is the same binding for a Jellyfin the operator registered
+// as an external app: the operator's own origin, the operator's own admin
+// account, and no container node or port behind either.
+func remoteBindingFor(localURL string) configurator.MediaServerBinding {
+	b := mediaServerBindingFor(localURL)
+	b.Kind = configurator.ProviderKindExternalApp
+	b.Node = ""
+	b.Port = 0
+	b.BaseURL = localURL
+	b.AdminUsername = "daniel"
+	b.AdminPassword = "the-remote-password"
+	return b
 }
 
 func stateWith(binding configurator.MediaServerBinding, dataDir string) *configurator.AppState {
@@ -319,6 +353,62 @@ func TestPreStartAdoptsAnExistingJellyfinKey(t *testing.T) {
 
 	assert.Equal(t, 0, jf.createCount(), "an existing key must be adopted, not duplicated")
 	assert.Equal(t, "key-from-a-previous-install", secrets.Get(appName, jellyfinAPIKeyKey))
+}
+
+// TestPreStartLogsInAsTheAccountTheProviderPublished is the remote case, and
+// the reason this code reads the username off the binding at all. A Jellyfin
+// the operator registered from off-host has an account Bloud did not name, so
+// a configurator that logged in as the local bootstrap account could never
+// authenticate against it: the mint 401s, PreStart fails, and the node never
+// converges. The address written into the container is the operator's origin
+// too, not a container name nothing would resolve.
+func TestPreStartLogsInAsTheAccountTheProviderPublished(t *testing.T) {
+	jf := newFakeJellyfin(t)
+	secrets := newFakeSecrets()
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: configurator.ClientFactory{}})
+	dir := t.TempDir()
+
+	_, err := c.PreStart(t.Context(), stateWith(remoteBindingFor(jf.server.URL), dir))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"daniel"}, jf.loginUsernames(),
+		"the login must use the account the provider published, not a name this app assumed")
+
+	raw, err := os.ReadFile(filepath.Join(dir, configDir, envFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "JELLYFIN_URL='"+jf.server.URL+"'")
+	assert.Contains(t, string(raw), "JELLYFIN_API_KEY='key-jellyfin-mcp-1'")
+}
+
+// TestPreStartLogsInAsTheBootstrapAccountForALocalProvider: the same read
+// answers the local case, because a Bloud-booted Jellyfin publishes its own
+// bootstrap account name. This pins that the generalization did not quietly
+// break the install path that already worked.
+func TestPreStartLogsInAsTheBootstrapAccountForALocalProvider(t *testing.T) {
+	jf := newFakeJellyfin(t)
+	c := NewConfigurator(0, configurator.Deps{Secrets: newFakeSecrets(), HTTP: configurator.ClientFactory{}})
+
+	_, err := c.PreStart(t.Context(), stateWith(mediaServerBindingFor(jf.server.URL), t.TempDir()))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bloud-bootstrap-admin"}, jf.loginUsernames())
+}
+
+// TestPreStartFailsWhenTheProviderPublishesNoAdminUsername: a binding with a
+// password and no username cannot be logged into, and guessing one would be
+// worse than failing loudly. Nothing is persisted, so the next pass retries
+// clean rather than caching a credential minted against a guess.
+func TestPreStartFailsWhenTheProviderPublishesNoAdminUsername(t *testing.T) {
+	jf := newFakeJellyfin(t)
+	secrets := newFakeSecrets()
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: configurator.ClientFactory{}})
+
+	binding := mediaServerBindingFor(jf.server.URL)
+	binding.AdminUsername = ""
+	_, err := c.PreStart(t.Context(), stateWith(binding, t.TempDir()))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "admin username")
+	assert.Equal(t, 0, jf.loginCount(), "a binding with no username must not be guessed at")
+	assert.Empty(t, secrets.Get(appName, jellyfinAPIKeyKey))
 }
 
 // TestPreStartWithoutABindingStaysOffline: with no media server resolved the

@@ -51,6 +51,50 @@ and configuration and can create and revoke other keys. That is the same
 privilege level the bootstrap admin has; the difference is that it is
 separately named and separately revocable.
 
+## Which account it logs into
+
+The account the mint uses is read off the `mediaServer` binding
+(`MediaServerBinding.AdminUsername`), never hardcoded. That is what makes a
+Jellyfin Bloud did not boot work as the provider:
+
+| Provider | `AdminUsername` on the binding | Where it comes from |
+|---|---|---|
+| Jellyfin installed by Bloud | `bloud-bootstrap-admin` | the static `provides.mediaServer.values.adminUsername` in `apps/jellyfin/metadata.yaml`, the account `apps/jellyfin` creates |
+| Jellyfin registered as an external app | whatever the operator typed | the external record's `values.mediaServer.adminUsername`, surfaced by the generated form in Settings |
+
+`apps/seerr` reads the same field for the same reason. An earlier shape of
+this configurator used a local constant, which made the remote case fail
+unconditionally: the login 401s against a server whose admin is called
+anything else, `PreStart` fails, and the node never converges. Pinned by
+`TestPreStartLogsInAsTheAccountTheProviderPublished` and
+`TestPreStartLogsInAsTheBootstrapAccountForALocalProvider`.
+
+A binding that carries a password and no username fails the pass rather than
+guessing (`TestPreStartFailsWhenTheProviderPublishesNoAdminUsername`), and
+the failure names the account it was refused on: the contract declares the
+username a value rather than a secret, so putting it in the error is the one
+useful thing a log line can say about a 401.
+
+### Registering a remote Jellyfin
+
+Settings -> External apps -> Remote app -> Jellyfin. The form is generated
+from the contract registry, so it asks for the endpoint origin and the
+`mediaServer` pair (`adminUsername`, `adminPassword`) and nothing else.
+Installing `jellyfin-mcp` after that does not pull a local Jellyfin: the
+install planner skips a required provider the external registry already
+answers (`orchestrator/pipeline.go`), and the wrapper binds the remote origin
+for both the mint and the container's `JELLYFIN_URL`.
+
+Two things the remote shape changes, neither of them invisible:
+
+- **The mint writes to someone else's server.** The key named `jellyfin-mcp`
+  lands in that instance's Dashboard -> Security -> API Keys, so the account
+  supplied has to be an administrator there.
+- **TLS is verified with the system trust store.** `pkg/appclient` sets no
+  custom root and no `InsecureSkipVerify`, so an `https://` remote on a
+  self-signed certificate fails the handshake. Use an origin a system CA
+  covers, or run the remote over plain http on the LAN.
+
 ## The mint: lookup before create
 
 `PreStart` mints the key through Jellyfin's own API:
@@ -182,6 +226,10 @@ leaves it out.
   says three tools; the real method list is a string in a description field.
 - **The key is full-privilege.** Revoking it is the control, and it lives in
   Jellyfin's UI, not in Bloud's.
+- **The remote-provider path is unit-tested, not live-verified.** The
+  off-host Jellyfin shape is covered against a fake Jellyfin that records the
+  account it was called with, but no run in this document exercised a real
+  second-instance Jellyfin over the network.
 
 ## Verification
 

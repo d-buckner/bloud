@@ -38,6 +38,38 @@ install detail modal, because investigation is the point. The tile shows only
 the app name while installing; the icon carries the spinner, and live phase
 detail lives in the modal.
 
+## External tiles
+
+A launcher or a remote install of a catalog app renders as a `LauncherTile`
+and is not an installed app, so it gets its own affordances rather than the
+lifecycle ones:
+
+- **Add** lives in the page header next to **Add widget**, not in the catalog.
+  A custom app is not a catalog entry, and putting it in the catalog list made
+  it look like one: the same card shape, the same place you go to install, and
+  no install behind it.
+- **Right-click** opens a menu with **Configure** and **Remove**. Configure
+  edits the record the operator declared (name, endpoint, icon, and for a
+  remote install the contract values and credentials, generated from the
+  provider's `provides:` the same way the add form generates them). The
+  record's kind and source are not editable: changing what a record *is*
+  means removing it and adding the other thing.
+- **Remove** confirms first, and the confirmation says what it does not do:
+  nothing on the remote machine is touched, so a credential Bloud minted
+  over there stays until it is revoked in that app's own settings.
+
+The config form never has to retype a stored credential. The list endpoint
+does not echo secrets, so a blank secret is dropped from the PATCH body rather
+than sent empty: omitted means "keep what is on file", and blank reads as a
+credential the operator typed. That rule lives in
+`src/lib/utils/externalAppPatch.ts` and is unit-tested, because the two
+words "omitted" and "blank" are the whole difference between a save that
+works and one that wipes a credential.
+
+A bare contract provider (an AI upstream, owned by Settings -> AI) never
+reaches the grid: it is an endpoint, not a destination, so it has no tile to
+right-click.
+
 ## Files
 
 |File|Role|
@@ -45,6 +77,11 @@ detail lives in the modal.
 |`src/routes/+page.svelte`|Page shell: header, toolbar, empty/loading/error states, modals|
 |`src/lib/components/GridStackGrid.svelte`|GridStack instance, mounting, sync, persistence|
 |`src/lib/components/AppTile.svelte`|App tile (`app-slot`, `install-spinner`, `phase-label` are e2e contracts)|
+|`src/lib/components/LauncherTile.svelte`|Tile for a launcher or a remote install|
+|`src/lib/components/ExternalAppContextMenu.svelte`|Right-click menu for an external tile|
+|`src/lib/components/ExternalAppConfigModal.svelte`|Edit one external record: endpoint, values, credentials|
+|`src/lib/components/ExternalAppRemoveModal.svelte`|Confirm dropping an external record|
+|`src/lib/utils/externalAppPatch.ts`|PATCH body rules for an external record (pure, unit-tested)|
 |`src/lib/stores/grid.ts`|Elements in the grid, from the home snapshot|
 |`src/lib/utils/gridDiff.ts`|Store-vs-grid diff (pure, unit-tested)|
 |`src/lib/utils/gridPlacement.ts`|Free-slot search (pure, unit-tested)|

@@ -65,13 +65,16 @@ const (
 	jwtIssuer   = "bloud"
 	jwtAudience = "jellyfin-mcp"
 
-	// The provider side of this app: the Jellyfin catalog entry, the account
-	// apps/jellyfin bootstraps (apps/jellyfin/configurator.go:bootstrapUsername,
-	// the same account apps/seerr onboards from), and the name the API key this
-	// app mints carries in Jellyfin's own Security screen.
-	jellyfinAppName       = "jellyfin"
-	jellyfinAdminUsername = "bloud-bootstrap-admin"
-	jellyfinKeyName       = "jellyfin-mcp"
+	// The provider side of this app: the Jellyfin catalog entry whose
+	// `mediaServer` contract this consumes, and the name the API key this app
+	// mints carries in Jellyfin's own Security screen. The admin *account* is
+	// deliberately not a constant here. It arrives on the binding, because a
+	// Jellyfin Bloud booted (which publishes the managed bootstrap account it
+	// made, apps/jellyfin/configurator.go) and a Jellyfin the operator
+	// registered from off-host (which publishes whatever account they typed in)
+	// are not the same account, and this app has to work against both.
+	jellyfinAppName = "jellyfin"
+	jellyfinKeyName = "jellyfin-mcp"
 
 	// The secrets-store keys this app owns. `httpToken` is the published one,
 	// declared under `provides.mcp.secrets`; the other two are private, which
