@@ -45,7 +45,7 @@ func inferenceConsumer(id string, compatible ...catalog.CompatibleApp) *catalog.
 	}
 }
 
-var instanceSrc = catalog.CompatibleApp{Source: catalog.InstanceProviderSource}
+var instanceSrc = catalog.CompatibleApp{Source: catalog.SettingProviderSource}
 
 // configureInstance sets the instance's upstream and default model.
 func configureInstance(t *testing.T, s *fakeSettings, baseURL, defaultModel string) {
@@ -74,7 +74,7 @@ func TestResolveInference_InstanceServesAsProvider(t *testing.T) {
 
 	require.Len(t, out.Inference, 1)
 	b := out.Inference[0]
-	assert.Equal(t, catalog.InstanceProviderSource, b.App)
+	assert.Equal(t, catalog.SettingProviderSource, b.App)
 	assert.Equal(t, configurator.ProviderKindSetting, b.Kind)
 	assert.True(t, b.Installed, "the setting being populated is the instance analogue of an installed provider")
 	assert.Equal(t, "https://api.example.com/v1", b.Endpoint)
@@ -153,21 +153,21 @@ func TestComputeAppDeps_InstanceProviderCreatesNoEdge(t *testing.T) {
 	deps := computeAppDeps(apps, cache)
 
 	for _, dep := range deps["hermes"] {
-		assert.NotEqual(t, catalog.InstanceProviderSource, dep,
+		assert.NotEqual(t, catalog.SettingProviderSource, dep,
 			"the instance is never a graph dependency")
 		assert.NotEmpty(t, dep, "an empty provider id must never become an edge")
 	}
 }
 
 // The instance provider must not leak into non-inference contracts: a consumer
-// declaring `source: instance` for some other contract gets no binding rather
+// declaring `source: setting` for some other contract gets no binding rather
 // than a half-populated one.
 func TestBuildIntegrations_InstanceSourceOnlyResolvesInference(t *testing.T) {
 	consumer := &catalog.App{
 		CatalogID: "something",
 		Integrations: map[string]catalog.Integration{
 			"pvr": {Required: false, Compatible: []catalog.CompatibleApp{
-				{Source: catalog.InstanceProviderSource},
+				{Source: catalog.SettingProviderSource},
 			}},
 		},
 	}

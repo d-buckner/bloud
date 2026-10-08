@@ -490,7 +490,7 @@ func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installe
 // wired is the caller's question, answered by whether it is installed (or,
 // for the instance, configured).
 //
-// A `source: instance` entry becomes an instance providerSource. It carries no
+// A `source: setting` entry becomes an instance providerSource. It carries no
 // node and produces no graph edge, which is why computeAppDeps filters on kind.
 // An `app:` entry is resolved against the external registry the caller loaded,
 // so a remote install of a catalog app arrives as an external providerSource
@@ -498,7 +498,7 @@ func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installe
 func resolveProviders(integration catalog.Integration, external map[string]*store.ExternalApp) []providerSource {
 	var out []providerSource
 	for _, declared := range catalog.DeclaredProviders(integration) {
-		if declared.IsInstance() {
+		if declared.IsSetting() {
 			out = append(out, settingSource())
 			continue
 		}

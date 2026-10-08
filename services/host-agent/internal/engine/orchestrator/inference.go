@@ -19,7 +19,7 @@ import (
 type providerSource struct {
 	kind configurator.ProviderKind
 	// id is the catalog app ID for an app provider, or
-	// catalog.InstanceProviderSource for the instance.
+	// catalog.SettingProviderSource for the instance.
 	id string
 	// external is the operator-registered record when this provider is a
 	// remote install of the catalog app rather than a local one. Nil for every
@@ -48,7 +48,7 @@ func externalAppSource(id string, record *store.ExternalApp) providerSource {
 }
 
 func settingSource() providerSource {
-	return providerSource{kind: configurator.ProviderKindSetting, id: catalog.InstanceProviderSource}
+	return providerSource{kind: configurator.ProviderKindSetting, id: catalog.SettingProviderSource}
 }
 
 func (s providerSource) isSetting() bool { return s.kind == configurator.ProviderKindSetting }
@@ -87,7 +87,7 @@ func externalAppProviderRef(catalogID, endpoint string) configurator.ProviderRef
 func settingProviderRef(populated bool) configurator.ProviderRef {
 	return configurator.ProviderRef{
 		Kind:      configurator.ProviderKindSetting,
-		App:       catalog.InstanceProviderSource,
+		App:       catalog.SettingProviderSource,
 		Installed: populated,
 	}
 }

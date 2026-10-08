@@ -277,7 +277,7 @@ type integrationTarget struct {
 // answers below.
 //
 // The instance's own AI provider reaches the graph without a `default: true`
-// anywhere: an app that declares `source: instance` declares a wiring that
+// anywhere: an app that declares `source: setting` declares a wiring that
 // exists the moment the setting is populated, and a display keyed on the
 // default flag would hide it.
 //

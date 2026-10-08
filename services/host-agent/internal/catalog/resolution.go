@@ -57,7 +57,7 @@ func DeclaredProviders(integration Integration) []BoundProvider {
 }
 
 // BoundProvider is one provider an integration declares: a catalog app, or
-// the instance itself for a `source: instance` entry.
+// the instance itself for a `source: setting` entry.
 //
 // Source carries the provider-source kind for a non-app provider and is empty
 // for a catalog app, which is what lets each consumer map this to its own
@@ -66,13 +66,13 @@ func DeclaredProviders(integration Integration) []BoundProvider {
 type BoundProvider struct {
 	// App is the catalog app ID. Empty when Source is set.
 	App string
-	// Source is the provider source as declared (`InstanceProviderSource`),
+	// Source is the provider source as declared (`SettingProviderSource`),
 	// empty for a catalog app.
 	Source string
 }
 
-// IsInstance reports whether this provider is the instance rather than a
+// IsSetting reports whether this provider is the instance rather than a
 // catalog app.
-func (p BoundProvider) IsInstance() bool {
-	return p.Source == InstanceProviderSource
+func (p BoundProvider) IsSetting() bool {
+	return p.Source == SettingProviderSource
 }

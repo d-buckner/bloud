@@ -335,11 +335,11 @@ func TestDrawnProvidersKeepsSingleIntegrationsNarrow(t *testing.T) {
 func TestDrawnProvidersMapsInstanceSource(t *testing.T) {
 	multi := Integration{
 		Multi:      true,
-		Compatible: []CompatibleApp{{Source: "instance"}, {App: "real"}},
+		Compatible: []CompatibleApp{{Source: "setting"}, {App: "real"}},
 	}
 	got := drawnProviders(multi)
-	if len(got) != 2 || got[0] != instanceProviderNodeID || got[1] != "real" {
-		t.Errorf("drawnProviders(instance+app) = %v, want [%s real]", got, instanceProviderNodeID)
+	if len(got) != 2 || got[0] != settingProviderNodeID || got[1] != "real" {
+		t.Errorf("drawnProviders(instance+app) = %v, want [%s real]", got, settingProviderNodeID)
 	}
 }
 
@@ -427,8 +427,8 @@ func TestBuildCatalogGraphContainerlessApp(t *testing.T) {
 		t.Errorf("containerless app rendered as %+v", graph.Nodes)
 	}
 	// The AI Model node rides along with every snapshot; see the note on
-	// instanceProviderNodeID.
-	if graph.Nodes[1].ID != instanceProviderNodeID || graph.Nodes[1].NodeType != "service" {
+	// settingProviderNodeID.
+	if graph.Nodes[1].ID != settingProviderNodeID || graph.Nodes[1].NodeType != "service" {
 		t.Errorf("expected the AI provider node second, got %+v", graph.Nodes[1])
 	}
 }
@@ -442,9 +442,9 @@ func TestBuildCatalogGraphAlwaysCarriesAIProvider(t *testing.T) {
 	})
 	found := false
 	for _, node := range graph.Nodes {
-		if node.ID == instanceProviderNodeID {
+		if node.ID == settingProviderNodeID {
 			found = true
-			if node.DisplayName != instanceProviderLabel || node.NodeType != "service" {
+			if node.DisplayName != settingProviderLabel || node.NodeType != "service" {
 				t.Errorf("AI provider node rendered as %+v", node)
 			}
 		}
@@ -454,7 +454,7 @@ func TestBuildCatalogGraphAlwaysCarriesAIProvider(t *testing.T) {
 	}
 }
 
-// An app whose only inference provider is `source: instance` gets an edge to
+// An app whose only inference provider is `source: setting` gets an edge to
 // the AI Model node. Before the instance source mapped to a node this edge
 // resolved to an empty app name and vanished, so the wiring the app declares
 // was invisible.
@@ -464,11 +464,11 @@ func TestBuildCatalogGraphInferenceEdgeToAIProvider(t *testing.T) {
 			Name:        "agent",
 			DisplayName: "Agent",
 			Integrations: map[string]Integration{
-				"inference": {Compatible: []CompatibleApp{{Source: "instance", Default: true}}},
+				"inference": {Compatible: []CompatibleApp{{Source: "setting", Default: true}}},
 			},
 		},
 	})
-	want := catalogGraphEdge{Source: "agent", Target: instanceProviderNodeID, Label: "inference"}
+	want := catalogGraphEdge{Source: "agent", Target: settingProviderNodeID, Label: "inference"}
 	if !containsEdge(graph.Edges, want) {
 		t.Errorf("no inference edge to the AI provider; edges: %+v", graph.Edges)
 	}
@@ -504,9 +504,9 @@ func TestBuildCatalogGraphUnknownProviderStillDropped(t *testing.T) {
 }
 
 func TestDefaultProviderMapsInstanceSourceToAINode(t *testing.T) {
-	integration := Integration{Compatible: []CompatibleApp{{Source: "instance", Default: true}}}
-	if got := defaultProvider(integration); got != instanceProviderNodeID {
-		t.Errorf("defaultProvider = %q, want %q", got, instanceProviderNodeID)
+	integration := Integration{Compatible: []CompatibleApp{{Source: "setting", Default: true}}}
+	if got := defaultProvider(integration); got != settingProviderNodeID {
+		t.Errorf("defaultProvider = %q, want %q", got, settingProviderNodeID)
 	}
 }
 
@@ -516,7 +516,7 @@ func TestRenderGraphAIProviderOutsideEveryBox(t *testing.T) {
 		Name:        "agent",
 		DisplayName: "Agent",
 		Integrations: map[string]Integration{
-			"inference": {Compatible: []CompatibleApp{{Source: "instance", Default: true}}},
+			"inference": {Compatible: []CompatibleApp{{Source: "setting", Default: true}}},
 		},
 	}
 	rendered := renderDependencyGraph(apps)
@@ -551,7 +551,7 @@ func countSubgraphDepthAtAI(lines []string) int {
 			depth--
 			continue
 		}
-		if strings.HasPrefix(trimmed, instanceProviderMermaid+"[") {
+		if strings.HasPrefix(trimmed, settingProviderMermaid+"[") {
 			return depth
 		}
 	}

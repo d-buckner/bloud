@@ -125,7 +125,7 @@ func inferenceConsumerDef(catalogID string) *catalog.App {
 		CatalogID: catalogID,
 		Integrations: map[string]catalog.Integration{
 			"inference": {
-				Compatible: []catalog.CompatibleApp{{Source: catalog.InstanceProviderSource, Default: true}},
+				Compatible: []catalog.CompatibleApp{{Source: catalog.SettingProviderSource, Default: true}},
 			},
 		},
 	}
@@ -469,7 +469,7 @@ func TestSystemHTTP_DeveloperGraph_InferenceEdgeWithoutDefault(t *testing.T) {
 		CatalogID:   "affine",
 		DisplayName: "AFFiNE",
 		Integrations: map[string]catalog.Integration{
-			"inference": {Compatible: []catalog.CompatibleApp{{Source: catalog.InstanceProviderSource}}},
+			"inference": {Compatible: []catalog.CompatibleApp{{Source: catalog.SettingProviderSource}}},
 		},
 	})
 
@@ -696,7 +696,7 @@ func TestSystemHTTP_DeveloperGraph_RealCatalogWiresInferenceConsumers(t *testing
 
 	assert.True(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
 	assert.True(t, graphEdgePresent(resp.Edges, "affine", AINodeID),
-		"affine declares source: instance with no `default: true`; the edge must not depend on the flag")
+		"affine declares source: setting with no `default: true`; the edge must not depend on the flag")
 }
 
 func TestSystemHTTP_DeveloperGraph_ContainerNodes(t *testing.T) {

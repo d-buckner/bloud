@@ -287,9 +287,9 @@ func validateCompatibleProvider(contract string, compatible CompatibleApp) error
 			contract, compatible.App, compatible.Source)
 	case !hasApp && !hasSource:
 		return fmt.Errorf("integrations.%s compatible entry names neither app nor source", contract)
-	case hasSource && compatible.Source != InstanceProviderSource:
+	case hasSource && compatible.Source != SettingProviderSource:
 		return fmt.Errorf("integrations.%s compatible entry has source %q; the only source is %q (use app: to name a catalog app)",
-			contract, compatible.Source, InstanceProviderSource)
+			contract, compatible.Source, SettingProviderSource)
 	}
 	return nil
 }

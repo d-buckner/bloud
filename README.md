@@ -169,19 +169,19 @@ flowchart TD
     ai_model["AI Model"]
 
     %% Cross-app integration edges
-    app_affine -->|inference| ai_model
     app_affine -->|native-oidc| app_authentik
     app_affine -->|caldav| app_radicale
+    app_affine -->|inference| ai_model
     app_affine_mcp -->|appApi| app_affine
     app_calino -->|forward-auth| app_authentik
     app_calino -->|caldav| app_radicale
     app_dav_mcp -->|appApi| app_radicale
     app_dav_mcp -->|caldav| app_radicale
     app_hermes -->|mcp| app_affine_mcp
-    app_hermes -->|inference| ai_model
     app_hermes -->|native-oidc| app_authentik
     app_hermes -->|mcp| app_dav_mcp
     app_hermes -->|mcp| app_jellyfin_mcp
+    app_hermes -->|inference| ai_model
     app_hermes_webui -->|agentApi| app_hermes
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik

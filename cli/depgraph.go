@@ -94,16 +94,16 @@ const catalogNodeStatus = "catalog"
 // after someone fills in a form. The live dashboard graph applies its own
 // rule and shows the node only once Settings -> AI has an upstream.
 const (
-	instanceProviderNodeID   = "ai:instance"
-	instanceProviderLabel    = "AI Model"
-	instanceProviderMermaid  = "ai_model"
-	instanceProviderCategory = "ai"
-	// instanceProviderStatus is what the node reads as: "external", not the
+	settingProviderNodeID   = "setting:ai"
+	settingProviderLabel    = "AI Model"
+	settingProviderMermaid  = "ai_model"
+	settingProviderCategory = "ai"
+	// settingProviderStatus is what the node reads as: "external", not the
 	// snapshot-wide "catalog". It names what the node is rather than that it
 	// happens to be part of a catalog dump, and it is deliberately absent
 	// from the dashboard's status color table so the dot stays the same
 	// neutral gray as every other unprobed status.
-	instanceProviderStatus = "external"
+	settingProviderStatus = "external"
 )
 
 func cmdDepGraph(args []string) int {

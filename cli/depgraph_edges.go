@@ -110,11 +110,11 @@ func defaultProvider(integration Integration) string {
 }
 
 // providerNodeID maps one compatible entry to the graph node that stands for
-// it. `source: instance` is not a catalog app, so it maps to the node the
+// it. `source: setting` is not a catalog app, so it maps to the node the
 // instance provides instead of to a name nothing can look up.
 func providerNodeID(compat CompatibleApp) string {
 	if compat.Source != "" {
-		return instanceProviderNodeID
+		return settingProviderNodeID
 	}
 	return compat.App
 }
@@ -124,15 +124,15 @@ func providerNodeID(compat CompatibleApp) string {
 // when the catalog actually has it, so an integration naming an app that is
 // not shipped drops its edge instead of inventing a node.
 func providerIsDrawn(apps map[string]*AppMetadata, provider string) bool {
-	return provider == instanceProviderNodeID || apps[provider] != nil
+	return provider == settingProviderNodeID || apps[provider] != nil
 }
 
 // edgeEnd resolves one end of a cross-app edge to its mermaid id. An app is
 // its box; the instance provider is a standalone node, because there is no
 // app box to put it in.
 func edgeEnd(endpoint string) string {
-	if endpoint == instanceProviderNodeID {
-		return instanceProviderMermaid
+	if endpoint == settingProviderNodeID {
+		return settingProviderMermaid
 	}
 	return appBoxID(endpoint)
 }
