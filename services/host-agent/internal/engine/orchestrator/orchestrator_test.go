@@ -905,6 +905,32 @@ func TestContainerSpecFromDef_NoNetwork(t *testing.T) {
 	assert.Empty(t, spec.Networks)
 }
 
+// TestContainerSpecFromDef_MapsShmSize pins the metadata-to-spec hop for the
+// shared-memory size: what a catalog author writes as "256m" has to reach the
+// spec as the byte count the runtime takes, and a size that cannot be read has
+// to stop the build rather than render as zero.
+func TestContainerSpecFromDef_MapsShmSize(t *testing.T) {
+	spec, err := ContainerSpecFromDef(
+		catalog.ContainerDef{Name: "apps-authentik-server", Image: "img", ShmSize: "256m"},
+		"authentik", "/var/tmp/bloud", nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int64(256<<20), spec.ShmSize)
+
+	// Undeclared stays zero, which the runtime reads as "leave the default".
+	plain, err := ContainerSpecFromDef(
+		catalog.ContainerDef{Name: "apps-x", Image: "img"}, "myapp", "/var/tmp/bloud", nil,
+	)
+	require.NoError(t, err)
+	assert.Zero(t, plain.ShmSize)
+
+	_, err = ContainerSpecFromDef(
+		catalog.ContainerDef{Name: "apps-x", Image: "img", ShmSize: "lots"}, "myapp", "/var/tmp/bloud", nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `container "apps-x"`)
+}
+
 // ============================================================================
 // S9: framework-owned AppPhaseBudget + shutdown-interrupt semantics
 // ============================================================================

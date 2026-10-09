@@ -242,6 +242,15 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 		env[k] = render(v)
 	}
 
+	// The loader already rejected an unreadable shmSize, so this only fires on
+	// a ContainerDef built in code rather than loaded from metadata. Still
+	// named, because a spec carrying the wrong shm size is the failure this
+	// whole path exists to prevent.
+	shmSize, err := def.ShmSizeBytes()
+	if err != nil {
+		return containerruntime.Spec{}, fmt.Errorf("container %q: %w", def.Name, err)
+	}
+
 	spec := containerruntime.Spec{
 		Name:        def.Name,
 		Image:       def.Image,
@@ -254,6 +263,7 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 		Entrypoint:    def.Entrypoint,
 		Command:       def.Command,
 		RestartPolicy: def.RestartPolicy,
+		ShmSize:       shmSize,
 		Labels:        map[string]string{containerruntime.AppLabel: appCatalogID},
 	}
 	for _, port := range def.Ports {

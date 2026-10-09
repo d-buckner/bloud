@@ -55,6 +55,14 @@ containers:
   - name: apps-authentik-server
     image: ghcr.io/goauthentik/server:2025.10.3
     command: [server]
+    # Authentik's workers mmap /dev/shm. At podman's 64MB default a full tmpfs
+    # sends a gunicorn worker SIGBUS on its next write to a mapped page: the
+    # worker dies, the master boots a replacement, the replacement dies the same
+    # way, and the container never exits. `restartPolicy: always` therefore
+    # never fires, and the ready healthcheck fails while the container reports
+    # Up, which is SSO down for every app on the install. 256m is an order of
+    # magnitude of headroom over the default. See issue #267.
+    shmSize: 256m
     networks:
       - authentik-internal
       - apps-net
@@ -92,6 +100,9 @@ containers:
   - name: apps-authentik-worker
     image: ghcr.io/goauthentik/server:2025.10.3
     command: [worker]
+    # Same shared-memory story as apps-authentik-server: the worker process is
+    # the one doing the mmap work that fills /dev/shm in the first place.
+    shmSize: 256m
     network: authentik-internal
     restartPolicy: always
     environment:

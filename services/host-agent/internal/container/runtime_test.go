@@ -389,3 +389,48 @@ func TestParseEnvFileMissingFile(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read env file")
 }
+
+// TestPodmanRuntimeEnsureCarriesShmSize proves the size survives the trip from
+// the runtime-neutral Spec into the create call, which is the only place it can
+// take effect.
+func TestPodmanRuntimeEnsureCarriesShmSize(t *testing.T) {
+	client := &fakePodmanClient{}
+	runtime := newPodmanRuntime(client)
+
+	_, err := runtime.Ensure(context.Background(), Spec{
+		Name: "apps-authentik-server", Image: "img", ShmSize: 256 << 20,
+	})
+	require.NoError(t, err)
+	require.Len(t, client.created, 1)
+	assert.Equal(t, int64(256<<20), client.created[0].ShmSize)
+}
+
+// TestShmSizeMovesTheSpecRevision pins that a size change reaches an install
+// that already has the container. Ensure recreates on a moved revision and does
+// nothing when the revision matches, so a field left out of the hash would leave
+// every existing container on the size it was first created with, no matter
+// what the catalog later asked for.
+func TestShmSizeMovesTheSpecRevision(t *testing.T) {
+	base := Spec{Name: "apps-x", Image: "img"}
+	before, err := base.Revision()
+	require.NoError(t, err)
+
+	raised := base
+	raised.ShmSize = 256 << 20
+	after, err := raised.Revision()
+	require.NoError(t, err)
+
+	assert.NotEqual(t, before, after, "shm size is part of desired state")
+}
+
+func TestRuntimeRejectsNegativeShmSize(t *testing.T) {
+	client := &fakePodmanClient{}
+	runtime := newPodmanRuntime(client)
+
+	_, err := runtime.Ensure(context.Background(), Spec{
+		Name: "apps-x", Image: "img", ShmSize: -1,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "shm size must not be negative")
+	assert.Empty(t, client.created, "a rejected spec must not create anything")
+}

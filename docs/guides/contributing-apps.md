@@ -110,6 +110,7 @@ containers:
     image: someorg/someimage:1.2.3   # pin the version
     network: apps-net
     restartPolicy: always
+    # shmSize: 256m   # only if the app needs more than podman's 64MB /dev/shm
     environment:
       TZ: Etc/UTC
     ports:
@@ -155,6 +156,14 @@ A few friendly defaults worth knowing:
 - The `healthCheck` numbers are seconds. Pick a check the image can actually
   run. Many slim images lack curl, but their own runtime works (immich uses
   `node -e ...fetch`, home assistant uses `python3`); see the reference apps.
+- `shmSize` raises the container's `/dev/shm` tmpfs above podman's 64MB
+  default. Most apps never need it. The ones that do fail strangely: a process
+  that mmaps shared memory and finds the tmpfs full is sent SIGBUS on its next
+  write to a mapped page, which kills the worker without the container exiting.
+  `restartPolicy: always` therefore never fires, the container keeps reporting
+  Up, and nothing self-heals. Authentik's gunicorn workers hit exactly this and
+  take SSO down for every app on the install (issue #267). Write it as a size
+  string: `256m`, `1g`, `268435456`.
 - The full field reference lives in
   `services/host-agent/internal/catalog/models.go`. It is the source of
   truth if this guide ever drifts.

@@ -93,3 +93,80 @@ func TestLoader_LoadAll_ShippedMetadataValid(t *testing.T) {
 	assert.True(t, hermes.SSO.LoopbackIssuer, "hermes is the app that needs the loopback issuer")
 	assert.True(t, hermes.HasHostNetworkedContainer(), "and the host-networked container that makes it reachable")
 }
+
+// TestValidateApp_ShmSizeMustParse pins that a container's declared shmSize is
+// checked at load. Podman's create API ignores a field it does not understand
+// rather than failing the create, so an unreadable size would otherwise ship as
+// a container quietly left on the 64MB /dev/shm default. That is the condition
+// #267 turns into a SIGBUS crash loop, so the typo has to be caught here, on
+// the file that was written.
+func TestValidateApp_ShmSizeMustParse(t *testing.T) {
+	const tmpl = `name: sso-app
+displayName: SSO App
+description: An app
+category: productivity
+containers:
+  - name: apps-sso-app
+    image: example/sso-app:1.0
+    shmSize: "%s"
+`
+
+	cases := []struct {
+		name    string
+		size    string
+		wantErr bool
+	}{
+		{name: "suffix form", size: "256m"},
+		{name: "byte count", size: "268435456"},
+		{name: "unknown suffix", size: "256q", wantErr: true},
+		{name: "zero", size: "0", wantErr: true},
+		{name: "negative", size: "-1m", wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeMetadataApp(t, fmt.Sprintf(tmpl, tc.size))
+			_, err := NewLoader(dir).LoadAll()
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), `container "apps-sso-app": shmSize:`)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestShippedMetadata_AuthentikRaisesShmSize guards the fix for #267 from
+// quietly going away. Authentik's gunicorn workers mmap /dev/shm, and at
+// podman's 64MB default a full tmpfs sends each worker SIGBUS the moment it
+// writes to a mapped page. The worker dies, the master boots a replacement, the
+// replacement dies the same way, and the container never exits, so
+// `restartPolicy: always` never fires and SSO stays down for every app on the
+// install.
+func TestShippedMetadata_AuthentikRaisesShmSize(t *testing.T) {
+	apps, err := NewLoader(realCatalogDir(t)).LoadAll()
+	require.NoError(t, err)
+
+	authentik, ok := apps["authentik"]
+	require.True(t, ok, "authentik should be in the shipped catalog")
+
+	for _, name := range []string{"apps-authentik-server", "apps-authentik-worker"} {
+		def := findContainerByName(t, authentik, name)
+		size, err := def.ShmSizeBytes()
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, size, int64(256<<20),
+			"%s needs at least 256MB of /dev/shm: the 64MB default is what filled up", name)
+	}
+}
+
+func findContainerByName(t *testing.T, app *App, name string) ContainerDef {
+	t.Helper()
+	for _, c := range app.Containers {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("app %q has no container %q", app.CatalogID, name)
+	return ContainerDef{}
+}
