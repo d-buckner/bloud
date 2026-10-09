@@ -210,6 +210,17 @@ that is not answering. The status the visitor sees stays the upstream's own
 5xx; only the body and headers are replaced, so nothing caches a 200 that is
 really a wait.
 
+The poll asks for the redirect instead of following it (`redirect: "manual"`).
+An app that has come back answers by redirecting, and an SSO-backed app leaves
+the origin on the second hop: Hermes sends `/` to `/auth/login` and then to the
+issuer. A `fetch` in the default cors mode follows that chain, the browser
+refuses the cross-origin response, and the rejection is read as "still down", so
+the one signal that the app is back becomes the reason to keep waiting. Asking
+for the redirect makes it resolve as an `opaqueredirect` with no headers, which
+the same marker-header check already reads as "not the waiting page", and no
+cross-origin request is ever made. `e2e/tests/app-loading.spec.ts` drives that
+chain in a real browser against the committed page.
+
 ### Configurator Framework (`pkg/configurator/`)
 
 Generic interface for app-specific runtime configuration that can't be expressed in

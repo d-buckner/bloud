@@ -227,3 +227,38 @@ func TestAppLoadingTemplateParses(t *testing.T) {
 	assert.Contains(t, out, "Jellyfin is re-loading")
 	assert.Contains(t, out, "X-Bloud-Loading")
 }
+
+// pollFetch returns the option list of the page's single fetch call, so a
+// change to how the poll asks its question shows up as a named failure instead
+// of a page that quietly stops reloading.
+func pollFetch(t *testing.T, body string) string {
+	t.Helper()
+	start := strings.Index(body, "fetch(")
+	require.NotEqual(t, -1, start, "the page must poll with fetch")
+	end := strings.Index(body[start:], "})")
+	require.NotEqual(t, -1, end, "the poll's fetch call is not shaped as expected")
+	return body[start : start+end]
+}
+
+// The poll has to ask for the redirect instead of following it. An app that has
+// come back answers by redirecting, and an SSO-backed app leaves the origin on
+// the second hop (Hermes: `/` then `/auth/login` then the issuer), which a fetch
+// in the default cors mode cannot read: the browser refuses the cross-origin
+// response, the rejection is read as "still down", and the tab sits on
+// "re-loading" over an app that has been up for hours.
+//
+// Pinned on the rendered page because the fast tier has no browser to run the
+// script in. The redirect chain itself is driven for real by
+// e2e/tests/app-loading.spec.ts.
+func TestAppLoading_PollAsksForTheRedirectInsteadOfFollowingIt(t *testing.T) {
+	mod := loadingModule(t, t.TempDir(), &catalog.App{CatalogID: "hermes", DisplayName: "Hermes"})
+	body := serveLoading(t, mod, "/bloud-loading/hermes").Body.String()
+
+	call := pollFetch(t, body)
+	assert.Contains(t, call, "window.location.href", "the poll re-requests its own URL")
+	assert.Contains(t, call, `redirect: "manual"`, "a redirect must resolve, not be followed")
+	// `no-cors` would also silence the CORS error, by making every response
+	// header-less. Then the marker header is unreadable and the page reloads
+	// onto a waiting page all over again, forever.
+	assert.NotContains(t, call, `mode: "no-cors"`, "an opaque response cannot carry the marker header")
+}

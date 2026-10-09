@@ -231,9 +231,26 @@
 					fetch(window.location.href, {
 						cache: "no-store",
 						credentials: "same-origin",
+						// Ask for the redirect instead of following it, because a
+						// redirect is what "the app is back" actually looks like. An
+						// SSO-backed app answers `/` by redirecting twice and leaving
+						// the origin on the second hop: Hermes sends 302 ->
+						// /auth/login, then 302 -> the issuer. Following that chain in
+						// the default cors mode makes the browser refuse the
+						// cross-origin response, so fetch rejects and the catch below
+						// reads the one signal that the app came back as a reason to
+						// keep waiting. With `manual` the redirect resolves as an
+						// `opaqueredirect`, no cross-origin request is ever made, and
+						// the reload below follows the chain in the address bar, where
+						// a hop to the identity provider is a navigation and not a CORS
+						// problem.
+						redirect: "manual",
 						signal: ctrl.signal,
 					})
 						.then(function (res) {
+							// An `opaqueredirect` carries no headers, so a redirect
+							// from an app that is up reads as "this is no longer the
+							// waiting page", which is the answer being waited for.
 							var stillWaiting = res.headers.get(LOADING_HEADER);
 							ctrl.abort();
 							if (stillWaiting) {
@@ -243,13 +260,9 @@
 							reload();
 						})
 						.catch(function () {
-							// A cancelled body read, a dropped connection, or an
-							// opaque cross-origin redirect from an app that is
-							// up and wants a login. In the redirect case the
-							// reload follows it to the sign-in page, which is
-							// where the user was headed anyway; in every other
-							// case waiting and asking again is the only useful
-							// move.
+							// A network failure: nothing listening yet, a dropped
+							// connection, a cancelled body read. Waiting and asking
+							// again is the only useful move.
 							schedule();
 						});
 				}
