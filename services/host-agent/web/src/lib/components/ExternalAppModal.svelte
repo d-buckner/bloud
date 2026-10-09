@@ -80,10 +80,10 @@
 	}
 </script>
 
-<Modal {open} {onclose} size="lg">
+<Modal {open} {onclose} size="lg" labelledBy="external-app-title">
 	<header class="modal-header">
 		<div>
-			<h2>External app</h2>
+			<h2 id="external-app-title">External app</h2>
 			<p class="modal-subtitle">
 				Something Bloud does not run: a shortcut to a site you already use, or a
 				remote install of a catalog app that keeps wiring to your other apps.

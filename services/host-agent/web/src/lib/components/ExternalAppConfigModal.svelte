@@ -193,11 +193,11 @@
 	}
 </script>
 
-<Modal open={app !== null} {onclose} size="lg">
+<Modal open={app !== null} {onclose} size="lg" labelledBy="external-app-config-title">
 	{#if app}
 		<header class="modal-header">
 			<div>
-				<h2>Configure {app.name}</h2>
+				<h2 id="external-app-config-title">Configure {app.name}</h2>
 				<p class="modal-subtitle">
 					{#if isProvider}
 						A remote install of {schema?.displayName || app.app || 'an app'} that Bloud does not

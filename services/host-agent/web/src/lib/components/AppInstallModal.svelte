@@ -43,13 +43,13 @@
 	}
 </script>
 
-<Modal open={app !== null} onclose={onclose} size="lg">
+<Modal open={app !== null} onclose={onclose} size="lg" labelledBy="app-install-title">
 	{#if app}
 		<header class="modal-header">
 			<div class="modal-app-header">
 				<AppIcon appName={app.catalog_id} displayName={app.display_name} size="lg" />
 				<div class="modal-app-info">
-					<h2>{app.display_name}</h2>
+					<h2 id="app-install-title">{app.display_name}</h2>
 					<span class="modal-app-status" class:failed={isFailed}>
 						{app.status}
 					</span>

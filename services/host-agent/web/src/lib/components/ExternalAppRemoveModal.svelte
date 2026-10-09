@@ -25,15 +25,21 @@
 	}
 </script>
 
-<Modal open={target !== null} {onclose}>
+<Modal
+	open={target !== null}
+	{onclose}
+	labelledBy="external-app-remove-title"
+	describedBy="external-app-remove-consequence"
+	dialogRole="alertdialog"
+>
 	{#if target}
 		<header class="modal-header">
-			<h2>Remove {target.name}?</h2>
+			<h2 id="external-app-remove-title">Remove {target.name}?</h2>
 			<CloseButton onclick={onclose} />
 		</header>
 
 		<div class="modal-body">
-			<p>
+			<p id="external-app-remove-consequence">
 				Bloud stops pointing at this <strong>{what}</strong>. Any app wired to it
 				loses that integration on the next reconciliation pass.
 			</p>
@@ -44,7 +50,7 @@
 		</div>
 
 		<footer class="modal-footer">
-			<button class="btn btn-secondary" onclick={onclose}>Cancel</button>
+			<button class="btn btn-secondary" onclick={onclose} data-autofocus>Cancel</button>
 			<button class="btn btn-danger" onclick={doRemove}>Remove</button>
 		</footer>
 	{/if}

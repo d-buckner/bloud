@@ -18,10 +18,10 @@
 	}
 </script>
 
-<Modal {open} {onclose}>
+<Modal {open} {onclose} labelledBy="widget-picker-title">
 	<div class="picker">
 		<header class="picker-header">
-			<h2 class="picker-title">Widgets</h2>
+			<h2 class="picker-title" id="widget-picker-title">Widgets</h2>
 			<button class="close-btn" onclick={onclose} aria-label="Close">
 				<Icon name="close" size={18} />
 			</button>

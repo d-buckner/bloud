@@ -18,19 +18,28 @@
 	}
 </script>
 
-<Modal open={appName !== null} onclose={onclose}>
+<Modal
+	open={appName !== null}
+	{onclose}
+	labelledBy="uninstall-title"
+	describedBy="uninstall-consequence"
+	dialogRole="alertdialog"
+>
 	{#if appName}
 		<header class="modal-header">
-			<h2>Remove {appName}?</h2>
+			<h2 id="uninstall-title">Remove {appName}?</h2>
 			<CloseButton onclick={onclose} />
 		</header>
 
 		<div class="modal-body">
-			<p>Are you sure you want to remove <strong>{appName}</strong>?</p>
+			<p id="uninstall-consequence">
+				Are you sure you want to remove <strong>{appName}</strong>? Its containers and
+				its data directory are deleted.
+			</p>
 		</div>
 
 		<footer class="modal-footer">
-			<button class="btn btn-secondary" onclick={onclose}>Cancel</button>
+			<button class="btn btn-secondary" onclick={onclose} data-autofocus>Cancel</button>
 			<button class="btn btn-danger" onclick={doUninstall}>Remove</button>
 		</footer>
 	{/if}

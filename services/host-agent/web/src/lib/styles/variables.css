@@ -18,6 +18,10 @@
 	--color-accent-hover: #292524;
 	--color-success: #166534;
 	--color-success-bg: #F0FDF4;
+	/* The installed-state badge fill. Darker than --color-success-bg: the
+	   card tint at #F0FDF4 sits 1.04:1 from white, which is why the badge
+	   gets its own, perceptible fill (#DCF0E2, 12.4 delta-E from white). */
+	--color-success-tint: #DCF0E2;
 	--color-error: #991B1B;
 	--color-error-bg: #FEF2F2;
 	--color-warning: #92400E;

@@ -66,13 +66,13 @@
 	}
 </script>
 
-<Modal open={app !== null} onclose={handleClose} size="lg">
+<Modal open={app !== null} onclose={handleClose} size="lg" labelledBy="app-detail-title">
 	{#if app}
 		<header class="modal-header">
 			<div class="modal-app-header">
 				<AppIcon appName={app.catalogId} displayName={app.displayName} size="lg" />
 				<div class="modal-app-info">
-					<h2>{app.displayName || formatAppName(app.catalogId)}</h2>
+					<h2 id="app-detail-title">{app.displayName || formatAppName(app.catalogId)}</h2>
 					{#if app.category}
 						<span class="modal-app-category">{app.category}</span>
 					{/if}

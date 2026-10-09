@@ -46,10 +46,15 @@
 	);
 </script>
 
-<nav class="sidebar" class:collapsed>
+<nav class="sidebar" class:collapsed aria-label="Main navigation">
 	<div class="logo">
 		{#if collapsed}
-			<button class="expand-btn" onclick={() => (collapsed = false)} title="Expand sidebar">
+			<button
+				class="expand-btn"
+				onclick={() => (collapsed = false)}
+				title="Expand sidebar"
+				aria-label="Expand sidebar"
+			>
 				<Icon name="menu" size={20} />
 			</button>
 		{:else}
@@ -60,15 +65,22 @@
 	<ul class="nav-links">
 		{#each navItems as item (item.href)}
 			<li>
-				<a href={resolve(item.href)} class:active={currentPath === item.href}>
+				<a
+					href={resolve(item.href)}
+					class:active={currentPath === item.href}
+					aria-current={currentPath === item.href ? 'page' : undefined}
+				>
 					<span class="nav-icon">
 						<Icon name={item.icon} size={20} />
 					</span>
-					<span>{item.label}</span>
+					<span class="nav-label">{item.label}</span>
 					{#if item.href === '/' && attentionApps.length > 0}
 						<span
 							class="attention-chip"
 							title={attentionApps.map((a) => a.display_name).join(', ')}
+							aria-label={attentionApps.length === 1
+								? '1 app needs attention'
+								: `${attentionApps.length} apps need attention`}
 						>
 							<Icon name="warning" size={12} />
 							{#if !collapsed}
@@ -89,7 +101,12 @@
 					<span class="username-text">{user.username}</span>
 				</span>
 				<form action="/auth/logout" method="POST" class="logout-form" data-sveltekit-reload>
-					<button type="submit" class="logout-btn" title="Sign out">
+					<button
+						type="submit"
+						class="logout-btn"
+						title="Sign out"
+						aria-label="Sign out"
+					>
 						<Icon name="logout" size={16} />
 					</button>
 				</form>
@@ -285,8 +302,20 @@
 		padding: var(--space-sm);
 	}
 
-	.sidebar.collapsed .nav-links a span:not(.nav-icon) {
-		display: none;
+	.sidebar.collapsed .nav-links a span:not(.nav-icon),
+	.sidebar.collapsed .username-text {
+		/* Hidden visually, never removed: an icon rail whose links are `display:
+		   none` apart from their icon is a row of anonymous "link" announcements.
+		   Same treatment as the mobile rail below. */
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		margin: -1px;
+		padding: 0;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.sidebar.collapsed .sidebar-footer {
@@ -301,10 +330,6 @@
 	.sidebar.collapsed .user-section {
 		flex-direction: column;
 		gap: var(--space-xs);
-	}
-
-	.sidebar.collapsed .username-text {
-		display: none;
 	}
 
 	.sidebar.collapsed .username {
@@ -335,8 +360,22 @@
 			padding: var(--space-sm);
 		}
 
-		.nav-links a span:not(.nav-icon) {
-			display: none;
+		.nav-links a span:not(.nav-icon),
+		.username-text {
+			/* The mobile rail is the collapsed rail: same visually-hidden treatment,
+			   because the media query cannot add a class and `display: none` takes
+			   the accessible name away with the pixels. The footer at 64px was
+			   clipping the username to a stray initial, which is worse than hiding
+			   it. */
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			margin: -1px;
+			padding: 0;
+			overflow: hidden;
+			clip-path: inset(50%);
+			white-space: nowrap;
+			border: 0;
 		}
 
 		.sidebar-footer {

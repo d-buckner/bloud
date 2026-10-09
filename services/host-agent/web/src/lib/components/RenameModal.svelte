@@ -38,10 +38,10 @@
 	}
 </script>
 
-<Modal open={appName !== null} {onclose}>
+<Modal open={appName !== null} {onclose} labelledBy="rename-app-title">
 	{#if appName}
 		<header class="modal-header">
-			<h2>Rename App</h2>
+			<h2 id="rename-app-title">Rename App</h2>
 			<CloseButton onclick={onclose} />
 		</header>
 
