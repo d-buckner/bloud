@@ -17,10 +17,10 @@
 	let { appName, displayName, onclose }: Props = $props();
 </script>
 
-<Modal open={appName !== null} {onclose}>
+<Modal open={appName !== null} {onclose} labelledBy="client-access-title">
 	{#if appName}
 		<header class="modal-header">
-			<h2>Client access</h2>
+			<h2 id="client-access-title">Client access</h2>
 			<CloseButton onclick={onclose} />
 		</header>
 

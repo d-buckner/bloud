@@ -1,6 +1,9 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import { onMount } from 'svelte';
+	import DeleteUserModal from './DeleteUserModal.svelte';
+	import Icon from './Icon.svelte';
+	import { currentUser } from '$lib/stores/user';
 	import {
 		fetchUsers,
 		createUser,
@@ -9,6 +12,7 @@
 		type ManagedUser
 	} from '$lib/clients/userClient';
 	import { type Role } from '$lib/stores/user';
+	import { guardUserRow, demoteBlocked, deleteBlocked } from '$lib/utils/userGuard';
 
 	let users = $state<ManagedUser[]>([]);
 	let usersLoading = $state(true);
@@ -17,9 +21,16 @@
 	let newUsername = $state('');
 	let newPassword = $state('');
 	let newRole = $state<Role>('member');
-	let deleteConfirm = $state<string | null>(null);
+	// The user whose deletion is being confirmed, not the one already deleted:
+	// the dialog has to name its target while it is still open.
+	let pendingDelete = $state<string | null>(null);
+	let deleting = $state(false);
 
 	onMount(loadUsers);
+
+	function rowGuard(u: ManagedUser) {
+		return guardUserRow(u, users, $currentUser?.username ?? null);
+	}
 
 	async function loadUsers() {
 		usersLoading = true;
@@ -52,12 +63,15 @@
 
 	async function handleDeleteUser(username: string) {
 		usersError = '';
+		deleting = true;
 		try {
 			await deleteUser(username);
-			deleteConfirm = null;
+			pendingDelete = null;
 			await loadUsers();
 		} catch (err: unknown) {
 			usersError = errMessage(err, 'Failed to delete user');
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -92,34 +106,44 @@
 		{#if users.length > 0}
 			<div class="users-list">
 				{#each users as u (u.id)}
+					{@const guard = rowGuard(u)}
 					<div class="user-row">
-						<div class="user-info">
-							<span class="user-name">{u.username}</span>
-							<span class="role-badge" class:admin={u.is_admin}>
-								{u.is_admin ? 'Admin' : 'Member'}
-							</span>
+						<div class="user-line">
+							<div class="user-info">
+								<span class="user-name">{u.username}</span>
+								<span class="role-badge" class:admin={u.is_admin}>
+									{u.is_admin ? 'Admin' : 'Member'}
+								</span>
+							</div>
+							<div class="user-controls">
+								<button
+									class="btn-sm"
+									onclick={() => handleToggleRole(u)}
+									title={guard.reason || (u.is_admin ? 'Demote to member' : 'Promote to admin')}
+									aria-describedby={guard.reason ? `guard-${u.id}` : undefined}
+									disabled={demoteBlocked(guard)}
+								>
+									{u.is_admin ? 'Make Member' : 'Make Admin'}
+								</button>
+								<span class="danger-group">
+									<button
+										class="btn-sm btn-sm-danger"
+										onclick={() => (pendingDelete = u.username)}
+										title={guard.reason || `Delete ${u.username}`}
+										aria-describedby={guard.reason ? `guard-${u.id}` : undefined}
+										disabled={deleteBlocked(guard)}
+									>
+										Delete
+									</button>
+								</span>
+							</div>
 						</div>
-						<div class="user-actions">
-							<button
-								class="btn-sm"
-								onclick={() => handleToggleRole(u)}
-								title={u.is_admin ? 'Demote to member' : 'Promote to admin'}
-							>
-								{u.is_admin ? 'Make Member' : 'Make Admin'}
-							</button>
-							{#if deleteConfirm === u.username}
-								<button class="btn-sm btn-sm-danger" onclick={() => handleDeleteUser(u.username)}>
-									Confirm
-								</button>
-								<button class="btn-sm" onclick={() => (deleteConfirm = null)}>
-									Cancel
-								</button>
-							{:else}
-								<button class="btn-sm btn-sm-danger" onclick={() => (deleteConfirm = u.username)}>
-									Delete
-								</button>
-							{/if}
-						</div>
+						{#if guard.reason}
+							<p class="guard-note" id={`guard-${u.id}`}>
+								<Icon name="info" size={13} />
+								{guard.reason}
+							</p>
+						{/if}
 					</div>
 				{/each}
 			</div>
@@ -158,6 +182,14 @@
 		<div class="error-message">{usersError}</div>
 	{/if}
 </section>
+
+<DeleteUserModal
+	username={pendingDelete}
+	error={usersError}
+	deleting={deleting}
+	onclose={() => (pendingDelete = null)}
+	onconfirm={handleDeleteUser}
+/>
 
 <style>
 	/* The section shell matches the other settings sections exactly. Each
@@ -200,19 +232,28 @@
 	}
 
 	.user-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
 		padding: var(--space-sm) var(--space-md);
 		background: var(--color-bg-elevated);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 	}
 
+	.user-line {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		/* Wrapped rather than squeezed: the row's min-content is what sets the
+		   page width on a narrow viewport, and a nowrap pair of control groups
+		   would widen every route that renders it. */
+		flex-wrap: wrap;
+		gap: var(--space-sm) var(--space-md);
+	}
+
 	.user-info {
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
+		min-width: 0;
 	}
 
 	.user-name {
@@ -233,9 +274,30 @@
 		color: white;
 	}
 
-	.user-actions {
+	.user-controls {
 		display: flex;
-		gap: var(--space-xs);
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	/* The destructive control gets its own group behind a divider. Two buttons
+	   of the same chrome, three pixels apart, is how the last-admin foot-gun
+	   read as a pair of ordinary row actions. */
+	.danger-group {
+		display: inline-flex;
+		align-items: center;
+		margin-left: var(--space-xs);
+		padding-left: var(--space-sm);
+		border-left: 1px solid var(--color-border);
+	}
+
+	.guard-note {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin: var(--space-sm) 0 0 0;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
 	}
 
 	.btn-sm {
@@ -250,9 +312,14 @@
 		transition: all 0.15s ease;
 	}
 
-	.btn-sm:hover {
+	.btn-sm:hover:not(:disabled) {
 		background: var(--color-bg-elevated);
 		color: var(--color-text);
+	}
+
+	.btn-sm:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.btn-sm-danger {
@@ -260,7 +327,7 @@
 		border-color: rgba(220, 38, 38, 0.3);
 	}
 
-	.btn-sm-danger:hover {
+	.btn-sm-danger:hover:not(:disabled) {
 		background: var(--color-error);
 		color: white;
 	}
