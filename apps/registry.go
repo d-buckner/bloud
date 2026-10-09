@@ -23,6 +23,7 @@ import (
 	// runtime-dependent and always needed.
 	_ "codeberg.org/d-buckner/bloud/apps/affine"
 	_ "codeberg.org/d-buckner/bloud/apps/affine-mcp"
+	_ "codeberg.org/d-buckner/bloud/apps/arr-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/calino"
 	_ "codeberg.org/d-buckner/bloud/apps/dav-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/hermes"
@@ -30,7 +31,6 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/homeassistant"
 	_ "codeberg.org/d-buckner/bloud/apps/immich"
 	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
-	_ "codeberg.org/d-buckner/bloud/apps/jellyfin-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
 	_ "codeberg.org/d-buckner/bloud/apps/paperless-ngx"
 	_ "codeberg.org/d-buckner/bloud/apps/prowlarr"
@@ -56,6 +56,7 @@ func NodeNames() []string {
 	return []string{
 		"apps-affine",
 		"apps-affine-mcp",
+		"apps-arr-mcp",
 		"apps-calino",
 		"apps-dav-mcp",
 		"apps-hermes",
@@ -63,7 +64,6 @@ func NodeNames() []string {
 		"apps-homeassistant",
 		"apps-immich-server",
 		"apps-jellyfin",
-		"apps-jellyfin-mcp",
 		"apps-navidrome",
 		"apps-paperless-ngx",
 		"apps-prowlarr",

@@ -31,6 +31,8 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Handing app credentials to third-party clients (reveal vs provision) | [plans/client-credentials.md](plans/client-credentials.md) |
 | Pilot: hermes-webui, OIDC for browsers plus a minted password for Hermex | [plans/client-credentials-hermes-webui-pilot.md](plans/client-credentials-hermes-webui-pilot.md) |
 | How client credentials work (declare, reveal, rotate, revoke) | [features/client-credentials.md](features/client-credentials.md) |
+| Tools an agent asks Bloud itself, and where wrappers stop | [plans/native-mcp-endpoint.md](plans/native-mcp-endpoint.md) |
+| One MCP provider over Seerr and the arr stack, with many optional integrations | [plans/arr-mcp-provider.md](plans/arr-mcp-provider.md) |
 | In-flight designs | [plans/](plans/) |
 
 ## Sections

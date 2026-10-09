@@ -718,7 +718,18 @@ builder, parsers, fixtures. Three tiers decide where each piece lives:
 |---|---|
 | Lifecycle flow (`PreStart`/`PostStart` steps, wizard logic) | `apps/<name>/` top level, same package as the configurator |
 | App-specific reusable helper (own-API client, config builder, parser, fixtures) | `apps/<name>/lib/` |
-| Needed by 2+ apps, **or** by host-agent itself | `services/host-agent/pkg/` (existing: `xmlutil`, `slug`, `authentik`) |
+| A client for one app's API that other apps also call | that app's package (`apps/<name>/api.go`), imported by consumers |
+| Not about any one app (format/protocol helpers, host-agent machinery) | `services/host-agent/pkg/` (existing: `xmlutil`, `slug`, `authentik`) |
+
+The middle two rows are the distinction that matters, and it is newer than the
+rest of this section. "Needed by 2+ apps" does **not** by itself send a helper
+to `pkg/`: a client that talks to one app's API is that app's concern and stays
+with it, exported for whoever needs it. `apps/jellyfin/api.go` owns the Jellyfin
+client and exports `EnsureAPIKey`; `apps/arr-mcp` imports it instead of carrying
+a copy of the login-and-mint flow. `pkg/` is for
+helpers that are not about any one app's API. `pkg/servarr` and `pkg/authentik`
+predate this rule and are not being reshaped in one go, the same migration
+posture as `lib/` below.
 
 `lib/` is an ordinary Go sub-package (`package lib`), imported as
 `bloud/apps/<name>/lib`. Two helpful constraints keep it clean:
@@ -759,7 +770,7 @@ checks as every other app:
 
 Run them with `cd apps && go test -run TestConformance ./...`.
 
-Two things this catches that per-app unit tests reliably miss, both found in
+Three things this catches that per-app unit tests reliably miss, all found in
 practice:
 
 - **A version comparison that never matches.** Home Assistant compared the
@@ -770,6 +781,13 @@ practice:
   and the bug was live.
 - **A port default that drifted from metadata.** Two were wrong when the
   harness first checked them against the catalog instead of against memory.
+- **A value re-randomized on every pass.** A salted hash written into a
+  managed file must be stable or the file changes every reconciliation and
+  `prestart_is_idempotent` fails. `apps/arr-mcp` writes a scrypt hash of its
+  config-UI password; the salt is derived from the password rather than random,
+  so the second pass writes identical bytes. Anything PreStart writes that
+  changes pass-to-pass must either be deterministic or be persisted and
+  re-read.
 
 If your app legitimately needs the network in `PreStart`, or needs to seed a
 file its own installer short-circuits on, the harness has a `Preseed` hook and
@@ -844,6 +862,7 @@ top to bottom.
 | `apps/homeassistant` | native-oidc via a pinned custom component: `pkg/appasset` remote install + sha256 provenance, marker-based YAML config merge, `Deps.RestartContainer`-driven reload |
 | `apps/paperless-ngx` | Own postgres+redis plus gotenberg/tika sidecars, dotenv config file generated for django-allauth OIDC, internal admin account |
 | `apps/vaultwarden` | Single container, dotenv config file for built-in OIDC, extra OIDC scopes and token lifetime via `sso.scopes`/`sso.accessTokenMinutes`, `SSO_ONLY`, a container command wrapper behind an opt-in dev switch |
+| `apps/arr-mcp` | Multi-contract MCP wrapper: consumes `requestManager` + `pvr` + `mediaServer`, writes the image's `config.yaml`, claims its config UI via `clientPassword`, reuses `apps/jellyfin`'s `EnsureAPIKey` |
 
 Stuck or unsure? The best place to start is `INTEGRATION.md` in whichever
 reference app shares your SSO strategy; each one documents its own

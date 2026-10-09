@@ -352,6 +352,9 @@ func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.App
 	if err != nil {
 		return err
 	}
+	if err := c.publishAPIKey(apiKey); err != nil {
+		return err
+	}
 
 	if err := c.api.loginWithJellyfin(ctx, login); err != nil {
 		return fmt.Errorf("creating the Seerr admin from the Jellyfin bootstrap admin: %w", err)
@@ -443,7 +446,21 @@ func (c *Configurator) reconcilePVRsWithStoredKey(ctx context.Context, state *co
 		c.logger.Warn("cannot read Seerr's API key; skipping PVR wiring", "error", err)
 		return nil
 	}
+	if err := c.publishAPIKey(apiKey); err != nil {
+		return err
+	}
 	return c.reconcilePVRs(ctx, state, apiKey)
+}
+
+// publishAPIKey hands Seerr's self-generated key to the requestManager contract,
+// so a consumer can ask Seerr to take requests on the user's behalf. It is the
+// same key the PVR wiring above uses, read from settings.json rather than
+// minted, because Seerr generates it for itself on first boot.
+func (c *Configurator) publishAPIKey(apiKey string) error {
+	if err := c.secrets.SetAppSecret(appName, "apiKey", apiKey); err != nil {
+		return fmt.Errorf("publishing Seerr's API key: %w", err)
+	}
+	return nil
 }
 
 // reconcilePVR brings one PVR's DVR entry in line with the running stack.
