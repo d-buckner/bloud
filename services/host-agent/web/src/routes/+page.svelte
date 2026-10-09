@@ -222,13 +222,16 @@
 			<h1>Home</h1>
 			<p class="subtitle">{subtitle}</p>
 		</div>
+		<!-- Both carry the plus because the glyph names the action, not the kind of
+		     thing added: each button puts something new on the grid, and an
+		     external app is as much an addition as a widget is. -->
 		<div class="header-actions">
 			<Button variant="secondary" size="sm" onclick={() => (showWidgetPicker = true)}>
 				<Icon name="plus" size={15} />
 				Add widget
 			</Button>
 			<Button variant="secondary" size="sm" onclick={() => (showExternalAppModal = true)}>
-				<Icon name="external-link" size={15} />
+				<Icon name="plus" size={15} />
 				Add external app
 			</Button>
 		</div>
