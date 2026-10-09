@@ -5,10 +5,8 @@ import {
 	BOX_PADDING,
 	CONTAINER_HEIGHT,
 	CONTAINER_WIDTH,
-	detectUserConnection,
 	layoutGraph,
-	NODE_WIDTH,
-	USER_NODE_SIZE
+	NODE_WIDTH
 } from '../graphLayout';
 import type { DeveloperGraph, GraphEdge, GraphNode } from '$lib/clients/developerClient';
 
@@ -32,26 +30,13 @@ const boxSize = (style: unknown): { width: number; height: number } => {
 	return m ? { width: Number(m[1]), height: Number(m[2]) } : { width: 0, height: 0 };
 };
 
-describe('detectUserConnection', () => {
-	const local = conn('conn:local');
-	const g = (nodes: GraphNode[]): DeveloperGraph => ({ nodes, edges: [] });
-
-	it('returns the LAN connection', () => {
-		expect(detectUserConnection(g([local]))).toBe('conn:local');
-	});
-
-	it('returns null when no connection exists', () => {
-		expect(detectUserConnection(g([node('a')]))).toBeNull();
-	});
-});
-
 describe('layoutGraph: apps present', () => {
 	const graph: DeveloperGraph = {
 		nodes: [
 			node('a'),
 			node('b'),
 			node('c', { status: 'stopped' }),
-			conn('conn:local')
+			conn('conn:local', { displayName: 'bloud.example.com' })
 		],
 		edges: [edge('a', 'b'), edge('b', 'c')]
 	};
@@ -70,11 +55,13 @@ describe('layoutGraph: apps present', () => {
 		expect(c!.position.y).toBeLessThan(byId(nodes, '__apps_group')!.position.y);
 	});
 
-	it('stacks the You node 124px above the connection row', () => {
-		const connY = byId(nodes, 'conn:local')!.position.y;
-		const you = byId(nodes, '__you__');
-		expect(you?.type).toBe('user');
-		expect(you!.position.y).toBe(connY - USER_NODE_SIZE - 60);
+	it('labels the connection with the address the backend sent', () => {
+		// One node for the ingress, named with the configured public address.
+		// The operator avatar this replaced was a frontend invention: it drew a
+		// second node above the connection for whoever was looking, which said
+		// nothing the address did not already say.
+		expect(byId(nodes, 'conn:local')!.data).toMatchObject({ displayName: 'bloud.example.com' });
+		expect(byId(nodes, '__you__')).toBeUndefined();
 	});
 
 	it('tracks outgoing/incoming from the app edge set', () => {
@@ -90,9 +77,12 @@ describe('layoutGraph: apps present', () => {
 		expect(bc?.animated).toBe(false); // running -> stopped
 	});
 
-	it('adds an animated You→connection edge by the connection status', () => {
-		const youEdge = edges.find((e) => e.id === 'e-you');
-		expect(youEdge).toMatchObject({ source: '__you__', target: 'conn:local', animated: true });
+	it('draws no edge into the ingress that the backend did not declare', () => {
+		// The graph has no conn:local edge of its own here, so nothing may appear.
+		// The synthetic avatar edge this replaces reached the canvas from a
+		// layout guess, not from the payload.
+		expect(edges.some((e) => e.id === 'e-you')).toBe(false);
+		expect(edges.some((e) => e.target === 'conn:local')).toBe(false);
 	});
 });
 
@@ -277,7 +267,7 @@ describe('layoutGraph: service nodes', () => {
 
 describe('layoutGraph: connections only (no apps)', () => {
 	const graph: DeveloperGraph = {
-		nodes: [conn('conn:local')],
+		nodes: [conn('conn:local', { displayName: 'localhost:8080' })],
 		edges: []
 	};
 	const { nodes, edges } = layoutGraph(graph);
@@ -287,15 +277,9 @@ describe('layoutGraph: connections only (no apps)', () => {
 		expect(byId(nodes, 'conn:local')!.position).toEqual({ x: 0, y: 0 });
 	});
 
-	it('puts the You node above the LAN connection at the origin column', () => {
-		const you = byId(nodes, '__you__')!;
-		expect(you.type).toBe('user');
-		expect(you.position.y).toBe(-(USER_NODE_SIZE + 60)); // connY=0 - SIZE - GAP
-		// centered over the LAN connection at x=0
-		expect(you.position.x).toBe(NODE_WIDTH / 2 - USER_NODE_SIZE / 2);
-	});
-
-	it('animates the You edge by the LAN connection status', () => {
-		expect(edges.find((e) => e.id === 'e-you')).toMatchObject({ target: 'conn:local', animated: true });
+	it('draws the connection alone: no avatar node, no invented edge', () => {
+		expect(nodes).toHaveLength(1);
+		expect(byId(nodes, 'conn:local')!.data).toMatchObject({ displayName: 'localhost:8080' });
+		expect(edges).toHaveLength(0);
 	});
 });

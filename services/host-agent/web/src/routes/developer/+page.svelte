@@ -15,7 +15,6 @@
 	import AppNode from '$lib/graph/AppNode.svelte';
 	import AppBox from '$lib/graph/AppBox.svelte';
 	import ContainerNode from '$lib/graph/ContainerNode.svelte';
-	import UserNode from './UserNode.svelte';
 
 	import '@xyflow/svelte/dist/style.css';
 
@@ -25,8 +24,7 @@
 	const nodeTypes: NodeTypes = {
 		app: AppNode as any,
 		appBox: AppBox as any,
-		container: ContainerNode as any,
-		user: UserNode as any
+		container: ContainerNode as any
 	};
 
 	/** The canvas is mounted before the first payload and filled in after. */

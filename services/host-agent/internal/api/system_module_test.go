@@ -18,6 +18,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -75,6 +76,7 @@ func newSystemModule(t *testing.T, opts systemModuleOpts) *systemModule {
 		healthCheck:  opts.healthCheck,
 		aiSettings:   opts.aiSettings,
 		externalApps: opts.externalApps,
+		hostState:    opts.hostState,
 		logger:       logger,
 	}
 }
@@ -90,6 +92,9 @@ type systemModuleOpts struct {
 	// externalApps is the registry the AI upstreams live in, and the read the
 	// AI Model node actually keys off.
 	externalApps store.ExternalAppStoreInterface
+	// hostState is the live address, which names the developer graph's
+	// ingress node. Left nil, the graph falls back to the default address.
+	hostState *hostset.State
 }
 
 // fakeAISettings answers Get from a fixed map, so a test can state exactly
@@ -330,6 +335,65 @@ func TestSystemHTTP_DeveloperGraph_WithApps(t *testing.T) {
 	require.NoError(t, err)
 	// Should have traefik, jellyfin, and other graph nodes
 	assert.Greater(t, len(resp.Nodes), 2)
+}
+
+// nodeIn finds one graph node by ID.
+func nodeIn(graph developerGraph, id string) *graphNode {
+	for i := range graph.Nodes {
+		if graph.Nodes[i].ID == id {
+			return &graph.Nodes[i]
+		}
+	}
+	return nil
+}
+
+// TestSystemHTTP_DeveloperGraph_IngressNodeCarriesTheAddress pins the single
+// ingress node: it is named with the address the operator configured, not with
+// a hardcoded word for one network path, and there is no second node drawn on
+// top of it for the viewer.
+func TestSystemHTTP_DeveloperGraph_IngressNodeCarriesTheAddress(t *testing.T) {
+	tests := []struct {
+		name  string
+		url   string
+		want  string
+		unset bool
+	}{
+		// The port belongs to the display only when it is not the scheme's own.
+		{name: "https default port is left off", url: "https://bloud.example.com", want: "bloud.example.com"},
+		{name: "explicit port is kept", url: "https://bloud.example.com:8443", want: "bloud.example.com:8443"},
+		{name: "dev localhost keeps its port", url: "http://localhost:8080", want: "localhost:8080"},
+		// Unwired is what an unconfigured install is: the default address every
+		// other reader of the host set lands on too.
+		{name: "unwired falls back to the default address", unset: true, want: "localhost:8080"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := systemModuleOpts{}
+			if !tc.unset {
+				pub, err := hostset.ParsePublicURL(tc.url)
+				require.NoError(t, err)
+				opts.hostState = hostset.NewState(hostset.New(pub))
+			}
+			mod := newSystemModule(t, opts)
+			mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+				CatalogID: "traefik", DisplayName: "Traefik", IsSystem: true, Status: "running",
+			})
+
+			graph := fetchDeveloperGraph(t, mod)
+
+			ingress := nodeIn(graph, "conn:local")
+			require.NotNil(t, ingress)
+			assert.Equal(t, tc.want, ingress.DisplayName)
+			assert.Equal(t, "connection", ingress.NodeType)
+
+			// One ingress node, not two: the operator avatar this replaced was
+			// grafted on by the browser and never came from this payload.
+			for _, n := range graph.Nodes {
+				assert.NotEqual(t, "__you__", n.ID, "the graph must not carry a synthetic viewer node")
+			}
+		})
+	}
 }
 
 // fetchDeveloperGraph runs the developer graph endpoint and decodes it.

@@ -345,7 +345,13 @@ Current connection node types:
 
 | Connection | Node ID | Source |
 |---|---|---|
-| Local access | `conn:local` | Synthetic; present when Traefik is installed. Display name is the browser's `window.location.hostname`. Routes to Traefik. |
+| The instance address | `conn:local` | Synthetic; present when Traefik is installed. Display name is the configured public address (see invariant 9 of `AGENTS.md`): the host, with the port only when it is not the scheme default. Routes to Traefik. |
+
+The display draws one node per ingress and nothing else above it. An earlier
+shape grafted a separate "You" avatar onto whichever connection the browser
+thought it was reaching through, which put a second node in the picture for a
+fact the ingress node already carried, and got it wrong for anyone reading the
+API rather than the dashboard.
 
 #### Edge Derivation
 

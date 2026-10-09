@@ -13,6 +13,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
@@ -56,7 +57,12 @@ type systemModule struct {
 	// dnsDiagnostics answers /system/diagnostics. Wired by the router; nil
 	// omits the endpoint.
 	dnsDiagnostics *system.DNSDiagnostics
-	logger         *slog.Logger
+	// hostState is the live address. The developer graph names its ingress
+	// node with it, so the picture shows the origin the operator configured
+	// rather than a hardcoded word for one network path. Unwired, the graph
+	// falls back to the default address every unconfigured install starts on.
+	hostState *hostset.State
+	logger    *slog.Logger
 }
 
 func NewSystemModule(
@@ -98,6 +104,28 @@ func (m *systemModule) SetExternalApps(registry store.ExternalAppStoreInterface)
 // /system/diagnostics. Unwired, the endpoint answers 503.
 func (m *systemModule) SetDNSDiagnostics(d *system.DNSDiagnostics) {
 	m.dnsDiagnostics = d
+}
+
+// SetHostSet wires the live address the developer graph labels its ingress
+// node with. Unwired, the node carries the default public address.
+func (m *systemModule) SetHostSet(state *hostset.State) {
+	m.hostState = state
+}
+
+// entryPointLabel is the address the instance is reached through, as the
+// developer graph names its ingress node: the configured public host, with
+// the port only when it is not the scheme default.
+//
+// The stored address is the answer rather than the Host header of the request
+// that asked for the graph. The graph describes the deployment, and the same
+// deployment is read from the machine it runs on, from another room, and from
+// the CLI against the loopback API, where the header would say `localhost:3000`
+// and describe nothing.
+func (m *systemModule) entryPointLabel() string {
+	if m.hostState == nil {
+		return hostset.Default().Public().HostPort()
+	}
+	return m.hostState.Get().Public().HostPort()
 }
 
 // HealthHandler answers the health probe. 200 means the instance is up and
@@ -508,8 +536,8 @@ func (m *systemModule) DeveloperGraphHandler() http.HandlerFunc {
 }
 
 // buildDeveloperGraph assembles the developer dashboard graph from the
-// installed apps, their catalog definitions, and the live LAN connection
-// node.
+// installed apps, their catalog definitions, and the ingress node carrying
+// the address the instance is reached through.
 func (m *systemModule) buildDeveloperGraph(
 	apps []*store.InstalledApp,
 ) developerGraph {
@@ -519,7 +547,7 @@ func (m *systemModule) buildDeveloperGraph(
 	if hasTraefik {
 		nodes = append(nodes, graphNode{
 			ID:          "conn:local",
-			DisplayName: "LAN",
+			DisplayName: m.entryPointLabel(),
 			Status:      "active",
 			NodeType:    "connection",
 		})
@@ -542,9 +570,9 @@ func (m *systemModule) buildDeveloperGraph(
 }
 
 // appNodes builds one node per installed app, plus one child node per
-// container that app declares, and reports whether traefik is among them
-// (the LAN connection node only means something with a proxy to attach to)
-// alongside each app's integration edges.
+// container that app declares, and reports whether traefik is among them (the
+// ingress node only means something with a proxy to attach to) alongside each
+// app's integration edges.
 func (m *systemModule) appNodes(
 	apps []*store.InstalledApp,
 	external externalIndex,

@@ -2,28 +2,27 @@
 /**
  * Developer graph layout: pure mapping from a DeveloperGraph to xyflow
  * Node/Edge arrays. Extracted from the developer page so the coordinate math
- * is unit-testable. The only environment dependency (the browser hostname used
- * to decide which connection the operator reaches through) is injected as a
- * `hostname` argument instead of read from `window`.
+ * is unit-testable. Nothing here reads the browser: the address the operator
+ * reaches the instance through arrives as the display name of the connection
+ * node the backend built.
  *
- * The layout is: connections in a row above the app group; a "You" node above
- * the specific connection the operator is using; app boxes inside a bounding
- * group, positioned by dagre; instance-provided services in a row below the
- * group. Every container an app declares is laid out inside its app's box (its
- * own dagre pass, so within-app `dependsOn` edges read top-down); apps without
- * containers stay flat leaf nodes. When there are no apps the connection row
- * sits at the origin. Node/edge animation reflects whether endpoints are
- * 'running'/'active'.
+ * The layout is: connections in a row above the app group; app boxes inside a
+ * bounding group, positioned by dagre; instance-provided services in a row
+ * below the group. Every container an app declares is laid out inside its
+ * app's box (its own dagre pass, so within-app `dependsOn` edges read
+ * top-down); apps without containers stay flat leaf nodes. When there are no
+ * apps the connection row sits at the origin. Node/edge animation reflects
+ * whether endpoints are 'running'/'active'.
  */
 
 import dagre from '@dagrejs/dagre';
 import type { Edge, Node } from '@xyflow/svelte';
 import type { DeveloperGraph, GraphEdge, GraphNode } from '$lib/clients/developerClient';
-import { buildEdges, buildYouNode, nodeRow, NODE_HEIGHT, NODE_WIDTH, rowStartX, YOU_ID } from './graphRows';
+import { buildEdges, nodeRow, NODE_HEIGHT, NODE_WIDTH, rowStartX } from './graphRows';
 
 // The row sizes live next to the row helpers that consume them; they are
 // re-exported here because the graph's geometry is one public surface.
-export { NODE_HEIGHT, NODE_WIDTH, USER_NODE_SIZE } from './graphRows';
+export { NODE_HEIGHT, NODE_WIDTH } from './graphRows';
 /** Container node size. */
 export const CONTAINER_WIDTH = 150;
 export const CONTAINER_HEIGHT = 38;
@@ -43,16 +42,6 @@ interface BoxLayout {
 	height: number;
 	/** Box-relative top-left position of each container node. */
 	positions: Map<string, { x: number; y: number }>;
-}
-
-/**
- * Which connection node the operator is reaching the host through. The
- * instance has one mapping, the LAN connection; it returns null when the
- * graph carries none.
- */
-export function detectUserConnection(graph: DeveloperGraph): string | null {
-	const localConn = graph.nodes.find((n) => n.id === 'conn:local');
-	return localConn ? localConn.id : null;
 }
 
 /** Dagre layout of one app's containers: box size + box-relative positions. */
@@ -218,17 +207,11 @@ function looseContainerPositions(
 
 /**
  * The data function for a whole graph. The arrow-direction flags come from the
- * edge sets: a node with no outgoing edge gets no arrow tail. The "You" node is
- * grafted onto the operator's own connection, so the edge from You to that
- * connection reads as outgoing from You and incoming to it.
+ * edge sets: a node with no outgoing edge gets no arrow tail.
  */
-function makeDataFor(graph: DeveloperGraph, userConnectionId: string | null): DataFor {
+function makeDataFor(graph: DeveloperGraph): DataFor {
 	const sources = new Set(graph.edges.map((e) => e.source));
 	const targets = new Set(graph.edges.map((e) => e.target));
-	if (userConnectionId) {
-		sources.add(YOU_ID);
-		targets.add(userConnectionId);
-	}
 	return (n) => ({
 		displayName: n.displayName,
 		status: n.status,
@@ -247,15 +230,12 @@ function layoutWithoutApps(
 	graph: DeveloperGraph,
 	connectionNodes: GraphNode[],
 	serviceNodes: GraphNode[],
-	userConnectionId: string | null,
 	dataFor: DataFor
 ): { nodes: Node[]; edges: Edge[] } {
 	const nodes = nodeRow(connectionNodes, 0, 0, dataFor);
-	const you = buildYouNode(connectionNodes, userConnectionId, 0, 0);
-	if (you) nodes.push(you);
 	const serviceY = connectionNodes.length > 0 ? NODE_HEIGHT + CONNECTION_GAP : 0;
 	nodes.push(...nodeRow(serviceNodes, 0, serviceY, dataFor));
-	return { nodes, edges: buildEdges(graph, userConnectionId) };
+	return { nodes, edges: buildEdges(graph) };
 }
 
 /**
@@ -305,12 +285,11 @@ export function layoutGraph(graph: DeveloperGraph): { nodes: Node[]; edges: Edge
 	const groupNodeIds = new Set(appNodes.map((n) => n.id));
 	const { byApp, loose } = groupContainers(graph.nodes, groupNodeIds);
 	const { boxes, sizes } = measureTopLevel(appNodes, byApp, loose, graph.edges);
-	const userConnectionId = detectUserConnection(graph);
-	const dataFor = makeDataFor(graph, userConnectionId);
+	const dataFor = makeDataFor(graph);
 
 	const topLevelIds = [...groupNodeIds, ...loose.map((n) => n.id)];
 	if (topLevelIds.length === 0) {
-		return layoutWithoutApps(graph, connectionNodes, serviceNodes, userConnectionId, dataFor);
+		return layoutWithoutApps(graph, connectionNodes, serviceNodes, dataFor);
 	}
 
 	const { g, bounds } = layoutTopLevel(topLevelIds, sizes, graph.edges);
@@ -340,11 +319,8 @@ export function layoutGraph(graph: DeveloperGraph): { nodes: Node[]; edges: Edge
 	const connBaseX = rowStartX(group.x, groupWidth, connectionNodes.length);
 	nodes.push(...nodeRow(connectionNodes, connBaseX, connY, dataFor));
 
-	const you = buildYouNode(connectionNodes, userConnectionId, connBaseX, connY);
-	if (you) nodes.push(you);
-
 	const serviceY = group.y + groupHeight + CONNECTION_GAP;
 	nodes.push(...nodeRow(serviceNodes, rowStartX(group.x, groupWidth, serviceNodes.length), serviceY, dataFor));
 
-	return { nodes, edges: buildEdges(graph, userConnectionId) };
+	return { nodes, edges: buildEdges(graph) };
 }

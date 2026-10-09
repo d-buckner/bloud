@@ -200,14 +200,21 @@ func parseExplicitPort(p string) (int, error) {
 	return n, nil
 }
 
+// HostPort renders the dialable host: host[:port], with the port left off when
+// it is the scheme default, because `https://host` already means 443 and
+// repeating it makes one address look like two. This is what a display shows
+// when it wants the address without the scheme.
+func (u PublicURL) HostPort() string {
+	if u.Port == 0 || u.Port == u.Scheme.DefaultPort() {
+		return u.Host
+	}
+	return u.Host + ":" + strconv.Itoa(u.Port)
+}
+
 // Origin renders the URL as scheme://host[:port], leaving the port off when it
 // is the scheme default so a stored value and a derived one look the same.
 func (u PublicURL) Origin() string {
-	out := string(u.Scheme) + "://" + u.Host
-	if u.Port != 0 && u.Port != u.Scheme.DefaultPort() {
-		out += ":" + strconv.Itoa(u.Port)
-	}
-	return out
+	return string(u.Scheme) + "://" + u.HostPort()
 }
 
 // Input is everything needed to resolve the effective address at startup.
