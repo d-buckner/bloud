@@ -134,6 +134,48 @@ containers:
 			wantErr:  `provides.mcp declares "path" both in values and in runtimeValues`,
 		},
 		{
+			// The admin name below is what Bloud called the account it created, so
+			// a remote Jellyfin does not share it and the operator has to say.
+			name:     "an operator-owned admin name",
+			port:     "8096",
+			provides: "  mediaServer:\n    secrets: [adminPassword]\n    values: {adminUsername: bloud-bootstrap-admin}\n    operatorValues: [adminUsername]",
+		},
+		{
+			name:     "an operator-owned value the contract does not carry",
+			port:     "8096",
+			provides: "  mediaServer:\n    secrets: [adminPassword]\n    values: {adminUsername: admin}\n    operatorValues: [bogus]",
+			wantErr:  `provides.mediaServer.operatorValues names "bogus", which this contract does not carry`,
+		},
+		{
+			// An entry has to be overriding something. A key with no static default
+			// is already asked of the operator, so naming it changes nothing and
+			// would sit here asserting a rule the derivation already applies.
+			name:     "an operator-owned value with no static default to override",
+			port:     "3010",
+			provides: "  appApi:\n    secrets: [password]\n    operatorValues: [username]",
+			wantErr:  `provides.appApi.operatorValues names "username", which this offer does not declare in values`,
+		},
+		{
+			name:     "an operator-owned value also supplied at runtime",
+			port:     "3010",
+			provides: "  appApi:\n    secrets: [password]\n    runtimeValues: [username]\n    operatorValues: [username]",
+			wantErr:  `provides.appApi lists "username" in both runtimeValues and operatorValues`,
+		},
+		{
+			// Optional values never reach the form at all, so claiming one here
+			// would ask the loader to force open a field the form is built to omit.
+			name:     "an operator-owned value the contract marks optional",
+			port:     "3010",
+			provides: "  appApi:\n    secrets: [password]\n    values: {username: svc, workspaceId: ws-1}\n    operatorValues: [workspaceId]",
+			wantErr:  `provides.appApi.operatorValues names "workspaceId", which this contract marks optional`,
+		},
+		{
+			name:     "the same operator-owned value twice",
+			port:     "8096",
+			provides: "  mediaServer:\n    secrets: [adminPassword]\n    values: {adminUsername: admin}\n    operatorValues: [adminUsername, adminUsername]",
+			wantErr:  "provides.mediaServer.operatorValues lists a name twice",
+		},
+		{
 			// The caldav contract carries no secret on purpose: the credential is
 			// the person's own password, so a provider publishing one is offering
 			// something the contract refuses to transport.

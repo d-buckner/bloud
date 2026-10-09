@@ -73,6 +73,11 @@ sso:
 # browser (dav-mcp) and therefore cannot join the identity provider. The
 # password is published by the Authentik configurator; the rights model scopes
 # what the account can read.
+#
+# `username` is under operatorValues because that account name is a fact about
+# the Radicale Bloud booted, not about Radicale. A remote server has its own
+# service account with its own name, so the form asks rather than inheriting a
+# constant that would authenticate against nothing.
 provides:
   caldav:
     values:
@@ -81,6 +86,7 @@ provides:
     secrets: [password]
     values:
       username: caldav-service
+    operatorValues: [username]
 
 # Order matters here. The last container in this list is the app's primary
 # node: it is what other apps' dependency edges on `radicale` resolve to, and

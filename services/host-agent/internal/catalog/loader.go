@@ -509,8 +509,9 @@ func validateClientAccess(name string, offer ContractProvides) error {
 
 // validateContractValues checks the non-secret values an offer declares: the
 // ones its contract requires, that a value meant to be concatenated onto an
-// address is an absolute path on an app that publishes a port, and that the
-// static and runtime halves of the offer do not both claim the same key.
+// address is an absolute path on an app that publishes a port, that the static
+// and runtime halves of the offer do not both claim the same key, and that every
+// `operatorValues` entry actually changes what a remote install asks for.
 //
 // A required value may arrive either way, but it must have exactly one declared
 // source. Accepting a silently missing value would let a provider hand every
@@ -530,6 +531,9 @@ func validateContractValues(name string, contract Contract, offer ContractProvid
 			return fmt.Errorf("provides.%s declares %q both in values and in runtimeValues; a value needs exactly one source",
 				name, runtimeKey)
 		}
+	}
+	if err := validateOperatorValues(name, contract, offer); err != nil {
+		return err
 	}
 	for _, want := range contract.Values {
 		if slices.Contains(offer.RuntimeValues, want.Key) {
@@ -552,6 +556,44 @@ func validateContractValues(name string, contract Contract, offer ContractProvid
 	return nil
 }
 
+// validateOperatorValues checks the keys an offer claims the operator of a
+// remote install must supply.
+//
+// Every rule here is a no-op guard. `operatorValues` only means something for a
+// key that is declared statically, is required by the contract, and is not
+// already supplied at runtime: that is the one shape where a static default
+// exists and is wrong for a remote copy. An entry outside it asks nothing new of
+// the operator, so it would sit in the metadata asserting a fact the form already
+// honours, and go stale the day the surrounding declaration changes.
+func validateOperatorValues(name string, contract Contract, offer ContractProvides) error {
+	if len(slices.Compact(slices.Clone(offer.OperatorValues))) != len(offer.OperatorValues) {
+		return fmt.Errorf("provides.%s.operatorValues lists a name twice (%v)", name, offer.OperatorValues)
+	}
+	for _, key := range offer.OperatorValues {
+		if key == "" || strings.ContainsAny(key, " \t\n") {
+			return fmt.Errorf("provides.%s.operatorValues entries must be single non-empty names (got %q)", name, key)
+		}
+		spec, known := valueSpec(contract, key)
+		if !known {
+			return fmt.Errorf("provides.%s.operatorValues names %q, which this contract does not carry (it carries %s)",
+				name, key, valueKeys(contract))
+		}
+		if slices.Contains(offer.RuntimeValues, key) {
+			return fmt.Errorf("provides.%s lists %q in both runtimeValues and operatorValues; a runtime value has no static default to override",
+				name, key)
+		}
+		if _, static := offer.Values[key]; !static {
+			return fmt.Errorf("provides.%s.operatorValues names %q, which this offer does not declare in values; a value with no static default is already asked of the operator",
+				name, key)
+		}
+		if spec.Optional {
+			return fmt.Errorf("provides.%s.operatorValues names %q, which this contract marks optional; an optional value stays out of the remote-install form either way",
+				name, key)
+		}
+	}
+	return nil
+}
+
 // checkValueShape applies one ValueSpec's constraints to a declared value. The
 // shape rules live together so adding a third (a pattern, a length) lands in
 // the place a reader looking for "what may a contract value be" already ends
@@ -569,12 +611,18 @@ func checkValueShape(name string, want ValueSpec, value string) error {
 
 // declaresValue reports whether the contract carries the named value.
 func declaresValue(contract Contract, key string) bool {
+	_, ok := valueSpec(contract, key)
+	return ok
+}
+
+// valueSpec finds the spec for one value key a contract carries.
+func valueSpec(contract Contract, key string) (ValueSpec, bool) {
 	for _, spec := range contract.Values {
 		if spec.Key == key {
-			return true
+			return spec, true
 		}
 	}
-	return false
+	return ValueSpec{}, false
 }
 
 // valueKeys lists a contract's value names for an error message.

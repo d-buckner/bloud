@@ -298,6 +298,16 @@ for the endpoint plus only the fields the operator actually owns:
   value the provider declares statically under `provides: <contract>:
   values:` is a fact about the app rather than about this install, so the
   form never shows it and the server merges it back in on save.
+- one input per value the offer claims under `provides: <contract>:
+  operatorValues:`. That list is the app saying "this static default describes
+  the install Bloud booted, not the app". Jellyfin's `adminUsername` is the
+  account Bloud created; a Jellyfin down the hall has whatever admin its own
+  operator named. The form asks for it, shows no default, and the constant is
+  never merged in, because writing it into a remote record is not a gap but a
+  confident wrong answer that surfaces later as a login error in whichever
+  consumer received it. The loader keeps every entry honest about the one shape
+  where it means something: declared statically, required by the contract, and
+  not supplied at runtime.
 
 Optional values stay out of the form entirely. An optional field with
 nothing to say reads as an empty binding either way, so the input only
@@ -312,9 +322,11 @@ catalog app to answer it.
 
 For a remote Sonarr or Radarr that leaves the endpoint and one API key. For
 AFFiNE it leaves the endpoint, `appApi.password`, and `appApi.username`
-(`workspaceId` is optional in the registry). No per-app code, and no
-contract grouping either: which roles a record fills is not something a
-person needs in order to fill the form in.
+(`workspaceId` is optional in the registry). For Jellyfin it leaves the endpoint,
+`mediaServer.adminPassword`, and `mediaServer.adminUsername`, because that name
+is the operator's to supply. No per-app code, and no contract grouping either:
+which roles a record fills is not something a person needs in order to fill the
+form in.
 
 The registry's `Secrets`/`Values` stay the single source of truth for what
 the form asks, exactly as they are for `validateProvides`, and the value
@@ -323,13 +335,13 @@ applies to what the form sends back. Two independent derivations of one
 registry is how a form ends up demanding what the server refuses, or hiding
 what it needs.
 
-Open sub-question: should an app *opt in* to being externalizable (an
-`external: {}` capability block with prose, like `clientAccess.reaches`), or is
-"the app provides a contract" sufficient? The lean is toward a small opt-in,
-because it gives a place to say what externalizing the app *means* (e.g. "the
-remote instance's auth is its own; Bloud does not SSO it") and it lets us
-exclude `isSystem` apps and contracts where externalizing is nonsense. But it is
-not strictly required, and the registry derivation works without it.
+Resolved for the fields, still open for the capability. The thing the opt-in was
+meant to supply, a per-app statement of what the operator has to configure, is
+data now: `operatorValues` names the inputs a remote operator owns, and the
+loader rejects an entry that would ask for nothing. What remains open is a block
+saying what externalizing an app *means* (e.g. "the remote instance's auth is
+its own; Bloud does not SSO it") and excluding the contracts where externalizing
+is nonsense; `nonExternalizableContracts` covers that last part in Go for now.
 
 ### C. `ProviderRef` and the resolver
 

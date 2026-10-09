@@ -613,6 +613,30 @@ A gateway declaring the `modelSource` contract receives a ready `Endpoint`
 (`http://apps-ollama:11434/v1`, the resolved address plus the provider's
 path) and routes to it through its own configuration.
 
+**When a static value is really the operator's.** A static value is normally a
+fact about the app, which is why an operator pointing Bloud at a remote install
+never retypes one: someone else's Radarr serves the same feed path. A name Bloud
+minted for an account it created is not that kind of fact. Jellyfin's
+`bloud-bootstrap-admin` is true of the Jellyfin this instance booted and false of
+the one down the hall, whose admin is whatever that operator called theirs.
+
+So an offer declares which of its static values the operator owns:
+
+```yaml
+provides:
+  mediaServer:
+    secrets: [adminPassword]
+    values:
+      adminUsername: bloud-bootstrap-admin
+    operatorValues: [adminUsername]
+```
+
+The remote-install form then asks for that key and shows no default for it, and
+the catalog's constant is never merged into the record. The loader holds each
+entry to the one shape where it means something: the key is declared in `values`,
+is required by the contract, and is not supplied at `runtime`. Anything else is
+an entry that changes nothing, and it fails the load.
+
 **What a contract requires is defined once**, in
 `internal/catalog/contracts.go`: its name, the secret names a provider must
 publish, and the values it must declare. A declaration that does not match fails

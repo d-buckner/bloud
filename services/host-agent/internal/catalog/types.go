@@ -69,6 +69,24 @@ type ContractProvides struct {
 	// both ways, so a value always has exactly one authoritative source. A
 	// configurator fills it with SetAppContractValue.
 	RuntimeValues []string `yaml:"runtimeValues,omitempty" json:"runtimeValues,omitempty"`
+	// OperatorValues names value keys the operator has to supply when this app is
+	// registered as a remote install, even though `Values` declares them.
+	//
+	// It exists because a static value is not always a fact about the app. A
+	// Radarr feed path is: someone else's Radarr serves the same path. A username
+	// Bloud minted for the account it created is not: `bloud-bootstrap-admin` is
+	// true of the Jellyfin this instance booted and false of the one down the hall,
+	// whose admin is whatever that operator named. Copying the local constant into
+	// a remote record does not leave a gap, it writes a confident wrong answer,
+	// and the failure surfaces much later as a login error in whichever consumer
+	// received it.
+	//
+	// So the two kinds of static value get told apart here, and the loader holds
+	// each entry to three rules: it names a key this contract carries, a key the
+	// offer actually declares statically, and a key the contract does not mark
+	// optional. Anything else is an entry that changes nothing, and an exemption
+	// that guards nothing is itself a defect.
+	OperatorValues []string `yaml:"operatorValues,omitempty" json:"operatorValues,omitempty"`
 	// ClientAccess declares that this contract's credential is meant to reach
 	// a third-party client a human holds, not only a consumer app on the
 	// graph. It is the field that makes that second audience explicit rather
