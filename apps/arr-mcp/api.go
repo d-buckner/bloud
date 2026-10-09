@@ -101,9 +101,9 @@ func (a *mcpAPI) openSession(ctx context.Context, bearer string) (string, error)
 }
 
 // waitStackHealthy opens a session and calls stack_health through it, polling
-// until the tool answers with at least one healthy service and no degraded
-// entries. This is the gate that catches a service credential the config
-// parsed but the service refuses.
+// until the tool answers with nothing in its degraded list. This is the gate
+// that catches a service credential the config parsed but the service refuses.
+// A config with no services wired is a valid empty answer, not a fault.
 func (a *mcpAPI) waitStackHealthy(ctx context.Context, bearer string) error {
 	session, err := a.openSession(ctx, bearer)
 	if err != nil {
@@ -122,14 +122,14 @@ func (a *mcpAPI) waitStackHealthy(ctx context.Context, bearer string) error {
 }
 
 // stackHealthOK reports whether a `tools/call` of stack_health came back with
-// at least one configured service and nothing in the degraded list.
+// nothing in the degraded list.
 //
 // `isError` is the part that matters most: a tool whose provider call failed
 // is answered 200 with a JSON-RPC result carrying `isError: true`, so reading
-// only the status promotes a node whose every tool call is a refusal. Beyond
-// that, an empty `services` list means nothing was wired (which for a required
-// request manager is a real fault), and a non-empty `degraded` list means a
-// service is unreachable or its credential was refused.
+// only the status promotes a node whose every tool call is a refusal. A
+// non-empty `degraded` list means a service is unreachable or its credential
+// was refused. An empty `services` list is a valid answer, not a fault: a
+// config with nothing wired yet is exactly the state an install starts in.
 func stackHealthOK(status int, body []byte) bool {
 	if status != http.StatusOK {
 		return false
@@ -149,10 +149,6 @@ func stackHealthOK(status int, body []byte) bool {
 		return false
 	}
 	structured, _ := result["structuredContent"].(map[string]any)
-	services, _ := structured["services"].([]any)
-	if len(services) == 0 {
-		return false
-	}
 	degraded, _ := structured["degraded"].([]any)
 	return len(degraded) == 0
 }

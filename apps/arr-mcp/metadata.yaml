@@ -19,11 +19,11 @@ integrations:
     compatible:
       - app: traefik
         default: true
-  # Seerr is what this app exists to serve: an agent that cannot reach the
-  # request manager has nothing to answer. Required, so installing this pulls
-  # Seerr with it and the graph orders Seerr's convergence ahead of this node.
+  # Seerr is the request manager this app exists to serve. Optional, like the
+  # Servarrs and the media server: install it to answer requests, or leave it
+  # out and wire only what is installed.
   requestManager:
-    required: true
+    required: false
     multi: false
     requires:
       - apiKey
