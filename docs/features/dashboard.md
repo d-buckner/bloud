@@ -44,16 +44,16 @@ A launcher or a remote install of a catalog app renders as a `LauncherTile`
 and is not an installed app, so it gets its own affordances rather than the
 lifecycle ones:
 
-- **Add** lives in the page header next to **Add widget**, not in the catalog.
-  A custom app is not a catalog entry, and putting it in the catalog list made
-  it look like one: the same card shape, the same place you go to install, and
-  no install behind it.
+- **Add** lives in the page header grouped with **Add widget** in one action
+  cluster, not in the catalog. An external app is not a catalog entry, and
+  putting it in the catalog list made it look like one: the same card shape,
+  the same place you go to install, and no install behind it.
 - **Right-click** opens a menu with **Configure** and **Remove**. Configure
-  edits the record the operator declared (name, endpoint, icon, and for a
-  remote install the contract values and credentials, generated from the
-  provider's `provides:` the same way the add form generates them). The
-  record's kind and source are not editable: changing what a record *is*
-  means removing it and adding the other thing.
+  edits the record the operator declared: name and endpoint always, the icon
+  for a launcher, and for a remote install the credentials and values the
+  provider's `provides:` does not already answer, generated the same way the
+  add form generates them. The record's kind and source are not editable:
+  changing what a record *is* means removing it and adding the other thing.
 - **Remove** confirms first, and the confirmation says what it does not do:
   nothing on the remote machine is touched, so a credential Bloud minted
   over there stays until it is revoked in that app's own settings.
