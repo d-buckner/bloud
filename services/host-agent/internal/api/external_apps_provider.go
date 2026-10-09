@@ -86,6 +86,13 @@ func (m *externalAppsModule) ProvidersHandler() http.HandlerFunc {
 
 // providerContractFields derives the form fields for every contract a provider
 // app offers.
+//
+// The value half comes from `declaredValueKeys`, the exact function the
+// validator applies to what the operator sends back. Deriving the two from the
+// same source is what keeps the form honest: a field the form renders is a field
+// the validator knows, and a field the validator requires is a field the form
+// asks for. Two independent derivations of the same registry is how a form ends
+// up demanding something the server will refuse, or hiding something it needs.
 func providerContractFields(app *catalog.App) []externalProviderContract {
 	contracts := make([]string, 0, len(app.Provides))
 	for name := range app.Provides {
@@ -100,21 +107,30 @@ func providerContractFields(app *catalog.App) []externalProviderContract {
 		if !known {
 			continue
 		}
-		fields := make([]externalProviderField, 0, len(spec.Values)+len(spec.Secrets))
-		for _, vs := range spec.Values {
+		declared := declaredValueKeys(spec, offer)
+		keys := make([]string, 0, len(declared))
+		for key := range declared {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		fields := make([]externalProviderField, 0, len(keys)+len(spec.Secrets))
+		for _, key := range keys {
 			// A value the provider declares statically is a fact about the app,
 			// not about this instance, so the catalog already answers it for a
-			// remote copy. It is offered prefilled rather than demanded: the
-			// operator can override it, but registering a second Radarr should
-			// not require retyping a feed path that never varies.
-			static := offer.Values[vs.Key]
+			// remote copy. It is marked not-required and carried as `Default`,
+			// which is what lets the form leave it out entirely: registering a
+			// second Radarr should not require retyping a feed path that never
+			// varies. The API still accepts an override for a client that wants
+			// one; the dashboard no longer offers the box.
+			static := offer.Values[key]
 			fields = append(fields, externalProviderField{
-				Key:      vs.Key,
-				Label:    humanizeFieldKey(vs.Key),
+				Key:      key,
+				Label:    humanizeFieldKey(key),
 				Kind:     "value",
-				Required: static == "" && !vs.Optional,
+				Required: static == "" && declared[key].required,
 				Default:  static,
-				Help:     runtimeValueHelp(offer, vs.Key),
+				Help:     runtimeValueHelp(offer, key),
 			})
 		}
 		for _, secret := range spec.Secrets {

@@ -284,18 +284,44 @@ there is nothing to skip, because a launcher is never a candidate node.
 
 ### B. The operator surface
 
-Derived from the contract registry, not hand-written per app. For an app
-declared external, the form asks for:
+Derived from the contract registry, not hand-written per app. The form asks
+for the endpoint plus only the fields the operator actually owns:
 
 - the **endpoint** (an HTTP or HTTPS origin; `BaseURL` for consumers, so no path, and a
   path lives on the contract's `values`, never in the origin);
-- for each contract the app `provides:`: every `Secret` (required), every
-  non-`Optional` `Value` (required), and each `Optional` value (optional).
+- one input per distinct required **secret name** across every contract the
+  app `provides:`. One credential fills every contract that declares the
+  same name: Radarr's `pvr` and `icsFeed` offers both publish `apiKey`, it
+  is the same key, and the server shares it (`sharedSecret`), so asking
+  twice only lets the two copies disagree;
+- one input per required **value the catalog does not already answer**. A
+  value the provider declares statically under `provides: <contract>:
+  values:` is a fact about the app rather than about this install, so the
+  form never shows it and the server merges it back in on save.
 
-For AFFiNE that renders as: endpoint, `appApi.password`, `appApi.username`,
-`appApi.workspaceId` (the last is optional in the registry). No per-app code.
-The registry's `Secrets`/`Values` are the single source of truth for the form,
-exactly as they are for `validateProvides`.
+Optional values stay out of the form entirely. An optional field with
+nothing to say reads as an empty binding either way, so the input only
+manufactures a blank.
+
+The record's **name** is not asked for on add either. It is the catalog
+app's own display name, and a field prefilled with the only thing it can
+hold is a field that gets skipped, not read. Renaming is the Configure
+modal's job, which is the same surface that already holds the endpoint and
+the credential. A launcher still asks for a name, because a launcher has no
+catalog app to answer it.
+
+For a remote Sonarr or Radarr that leaves the endpoint and one API key. For
+AFFiNE it leaves the endpoint, `appApi.password`, and `appApi.username`
+(`workspaceId` is optional in the registry). No per-app code, and no
+contract grouping either: which roles a record fills is not something a
+person needs in order to fill the form in.
+
+The registry's `Secrets`/`Values` stay the single source of truth for what
+the form asks, exactly as they are for `validateProvides`, and the value
+half of the derivation reads the same `declaredValueKeys` the validator
+applies to what the form sends back. Two independent derivations of one
+registry is how a form ends up demanding what the server refuses, or hiding
+what it needs.
 
 Open sub-question: should an app *opt in* to being externalizable (an
 `external: {}` capability block with prose, like `clientAccess.reaches`), or is

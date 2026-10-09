@@ -9,6 +9,10 @@
  * credential the operator typed, which it rejects. So blank secrets must be
  * dropped from the body rather than sent as empty strings, and that is exactly
  * the kind of rule a test should own.
+ *
+ * What a remote app still *needs* before it can be saved lives next door, in
+ * `providerInputs.ts`: this module builds bodies, that one decides which
+ * fields exist and whether they are filled.
  */
 
 export interface ExternalAppForm {
@@ -60,42 +64,4 @@ export function providerPatch(form: ExternalAppForm): ExternalAppPatch {
 		patch.secrets = supplied;
 	}
 	return patch;
-}
-
-/**
- * Whether one required contract field still needs input.
- *
- * A secret already on file counts as filled: the form cannot show a value it
- * was never given, so it should not have to invent one to close the dialog.
- */
-function fieldIsFilled(
-	field: { contract: string; key: string; kind: 'value' | 'secret' },
-	form: ExternalAppForm,
-	storedSecrets: string[]
-): boolean {
-	if (field.kind === 'value') {
-		return (form.values[field.contract]?.[field.key] ?? '').trim() !== '';
-	}
-	return (form.secrets[field.contract] ?? '').trim() !== '' || storedSecrets.includes(field.contract);
-}
-
-/**
- * Whether a required field is still missing. A secret already on file counts as
- * satisfying its own requirement, because the form cannot show a value it was
- * never given and should not have to invent one to close the dialog.
- */
-export function missingRequiredFields(
-	form: ExternalAppForm,
-	required: { contract: string; key: string; label: string; kind: 'value' | 'secret' }[],
-	storedSecrets: string[]
-): string[] {
-	const missing: string[] = [];
-	if (!form.name.trim()) missing.push('name');
-	if (!form.url.trim()) missing.push('endpoint');
-	for (const field of required) {
-		if (!fieldIsFilled(field, form, storedSecrets)) {
-			missing.push(field.label);
-		}
-	}
-	return missing;
 }
