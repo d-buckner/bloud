@@ -138,15 +138,30 @@ func randomSecret() (string, error) {
 // shows up in Jellyfin's own Dashboard -> Security -> API Keys under this
 // app's name, so an operator can revoke the agent without rotating the admin
 // password, and the admin password stays out of this container's environment.
+//
+// The account logged into is the one the provider published, never a name this
+// configurator assumes. A Jellyfin Bloud booted publishes the managed bootstrap
+// account it made; a Jellyfin the operator registered from off-host publishes
+// the account they typed into Settings, which is the only way anyone downstream
+// can learn it. Hardcoding the local account name here made the remote case fail
+// unconditionally: the login 401s against a server whose admin is called
+// anything else, and the node never converges.
 func (c *Configurator) ensureJellyfinAPIKey(ctx context.Context, server configurator.MediaServerBinding) (string, error) {
 	if c.secrets == nil {
 		return "", nil
+	}
+	if server.AdminUsername == "" {
+		// Not a "not yet" state. `adminUsername` is a static value the Jellyfin
+		// catalog entry declares, so a binding that carries an address and a
+		// password and no username is a wiring bug, and naming that is worth
+		// more than a 401 that names the wrong thing.
+		return "", fmt.Errorf("the %s media server published no admin username, so %s cannot log in to mint a key", server.App, appName)
 	}
 	if stored := c.secrets.GetAppSecret(appName, jellyfinAPIKeyKey); stored != "" {
 		return stored, nil
 	}
 	jf := newJellyfinClient(c.providerClient(server.ProviderRef))
-	key, err := jf.ensureAPIKey(ctx, jellyfinAdminUsername, server.AdminPassword, jellyfinKeyName)
+	key, err := jf.ensureAPIKey(ctx, server.AdminUsername, server.AdminPassword, jellyfinKeyName)
 	if err != nil {
 		return "", err
 	}

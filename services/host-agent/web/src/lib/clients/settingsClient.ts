@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { get, post, put, del } from './httpClient';
+import { get, post, put, patch as patchRequest, del } from './httpClient';
 import type { IntentResponse } from '$lib/types';
 
 export interface PublicURLSettings {
@@ -153,4 +153,26 @@ export function addExternalProvider(input: {
 
 export function removeExternalApp(id: string): Promise<IntentResponse> {
 	return del<IntentResponse>(`/api/external-apps/${id}`);
+}
+
+/**
+ * One field group a PATCH may carry for an existing external app. Every key is
+ * optional: the server merges the patch onto the stored record, so a field left
+ * out keeps what it has rather than being blanked.
+ *
+ * `secrets` follows the same rule with sharper consequences. Omitting a
+ * contract's credential means "keep the one on file", not "this provider has
+ * none", because the list response never echoes a secret back and a form that
+ * had to resend what it cannot read could only ever wipe it.
+ */
+export interface ExternalAppUpdate {
+	name?: string;
+	url?: string;
+	icon?: string;
+	values?: Record<string, Record<string, string>>;
+	secrets?: Record<string, string>;
+}
+
+export function updateExternalApp(id: string, patch: ExternalAppUpdate): Promise<IntentResponse> {
+	return patchRequest<IntentResponse>(`/api/external-apps/${id}`, patch);
 }

@@ -5,9 +5,10 @@
 
 	interface Props {
 		itemId: string;
+		onContextMenu?: (event: MouseEvent, itemId: string) => void;
 	}
 
-	let { itemId }: Props = $props();
+	let { itemId, onContextMenu }: Props = $props();
 
 	let launcher = $derived($launchers.find((l) => l.id === itemId));
 	let displayName = $derived(launcher?.name ?? itemId);
@@ -18,6 +19,17 @@
 		if (!url) return;
 		event.preventDefault();
 		window.open(url, '_blank', 'noopener,noreferrer');
+	}
+
+	/**
+	 * Right-click opens the operator's menu for this record. The default browser
+	 * menu is suppressed because the tile is Bloud's own control, not a page
+	 * element, and "Save link as" on a tile that stands for an integration is
+	 * not an action anyone means.
+	 */
+	function handleContextMenu(event: MouseEvent) {
+		event.preventDefault();
+		onContextMenu?.(event, itemId);
 	}
 </script>
 
@@ -32,6 +44,7 @@
 	title={displayName}
 	onclick={activate}
 	onkeydown={activate}
+	oncontextmenu={handleContextMenu}
 >
 	<div class="app-icon-wrapper">
 		{#if launcher?.app}

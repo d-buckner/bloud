@@ -77,9 +77,12 @@ func (j *jellyfinClient) ensureAPIKey(ctx context.Context, username, password, k
 	return key, nil
 }
 
-// authenticate logs in as the bootstrap admin and returns a session token.
-// The credential is the one the `mediaServer` contract publishes; it is used
-// here for exactly one call, to mint the key this app actually runs on.
+// authenticate logs in with the provider's admin credential and returns a session
+// token. The credential is the one the `mediaServer` contract publishes; it is
+// used here for exactly one call, to mint the key this app actually runs on. The
+// username appears in the error text on purpose: the contract declares it a value
+// rather than a secret, and "which account got refused" is the one thing an
+// operator pointed at a remote Jellyfin needs to know.
 func (j *jellyfinClient) authenticate(ctx context.Context, username, password string) (string, error) {
 	var out authResponse
 	err := j.cl.POST("/Users/AuthenticateByName").
@@ -88,7 +91,7 @@ func (j *jellyfinClient) authenticate(ctx context.Context, username, password st
 		OK(http.StatusOK).
 		DoInto(ctx, &out)
 	if err != nil {
-		return "", fmt.Errorf("authenticating as the jellyfin bootstrap admin: %w", err)
+		return "", fmt.Errorf("authenticating as %q on the jellyfin media server: %w", username, err)
 	}
 	if out.AccessToken == "" {
 		return "", fmt.Errorf("jellyfin returned an empty session token")

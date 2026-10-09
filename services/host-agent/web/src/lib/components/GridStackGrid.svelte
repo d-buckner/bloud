@@ -16,9 +16,11 @@
 	interface Props {
 		onAppClick?: (app: App) => void;
 		onAppContextMenu?: (e: MouseEvent, app: App) => void;
+		/** Right-click on a launcher or remote-app tile, by its external record id. */
+		onLauncherContextMenu?: (e: MouseEvent, itemId: string) => void;
 	}
 
-	let { onAppClick, onAppContextMenu }: Props = $props();
+	let { onAppClick, onAppContextMenu, onLauncherContextMenu }: Props = $props();
 
 	/**
 	 * Columns the layout is authored at. Narrower viewports get fewer columns
@@ -80,7 +82,7 @@
 			});
 		}
 		if (element.type === 'launcher') {
-			return mount(LauncherTile, { target, props: { itemId: element.id } });
+			return mount(LauncherTile, { target, props: { itemId: element.id, onContextMenu: onLauncherContextMenu } });
 		}
 		if (!widget) return null;
 		return mount(WidgetWrapper, {

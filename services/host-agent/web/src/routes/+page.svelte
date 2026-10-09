@@ -11,6 +11,10 @@
 	import UninstallModal from '$lib/components/UninstallModal.svelte';
 	import RenameModal from '$lib/components/RenameModal.svelte';
 	import AppInstallModal from '$lib/components/AppInstallModal.svelte';
+	import ExternalAppModal from '$lib/components/ExternalAppModal.svelte';
+	import ExternalAppContextMenu from '$lib/components/ExternalAppContextMenu.svelte';
+	import ExternalAppConfigModal from '$lib/components/ExternalAppConfigModal.svelte';
+	import ExternalAppRemoveModal from '$lib/components/ExternalAppRemoveModal.svelte';
 	import WidgetPicker from '$lib/widgets/WidgetPicker.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -19,6 +23,7 @@
 	import { launchers } from '$lib/stores/launchers';
 	import { enabledWidgetIds } from '$lib/stores/grid';
 	import { installApp, uninstallApp, renameApp } from '$lib/clients/appFacade';
+	import { fetchExternalApps, removeExternalApp, type ExternalApp } from '$lib/clients/settingsClient';
 	import { getAppUrl } from '$lib/utils/appUrl';
 
 	// Clicking an in-flight or unhealthy tile opens the live install view
@@ -41,6 +46,22 @@
 	let clientAccessApp = $state<App | null>(null);
 	let showWidgetPicker = $state(false);
 	let installModalApp = $state<App | null>(null);
+
+	// External tiles (launchers and remote installs) are not installed apps, so
+	// they get their own menu and their own two modals rather than borrowing the
+	// lifecycle ones. The menu carries only the record id and what the tile
+	// already knows; the full record is fetched for the one action that needs it.
+	let externalMenuId = $state<string | null>(null);
+	let externalMenuPos = $state({ x: 0, y: 0 });
+	let externalConfigApp = $state<ExternalApp | null>(null);
+	let externalRemoveTarget = $state<{ name: string; isProvider: boolean } | null>(null);
+	let externalRemoveId = $state<string | null>(null);
+	let showExternalAppModal = $state(false);
+
+	let externalRecords = $state<ExternalApp[]>([]);
+	let externalRecordsInFlight: Promise<ExternalApp[]> | null = null;
+
+	let externalMenuLauncher = $derived($launchers.find((l) => l.id === externalMenuId));
 
 	// Live reference: re-resolve from the store each render so the modal
 	// tracks status/progress updates for the app the user clicked.
@@ -93,6 +114,71 @@
 		contextMenuPos = { x: e.clientX, y: e.clientY };
 	}
 
+	/**
+	 * Read the external records, coalescing concurrent calls onto one request.
+	 *
+	 * The list is fetched rather than widened into the home snapshot because the
+	 * config form needs fields the tile never uses: the stored contract values
+	 * and which contracts hold a credential. A second source of truth on the
+	 * same screen is the thing to avoid here, not a second request.
+	 */
+	function refreshExternalApps(): Promise<ExternalApp[]> {
+		if (externalRecordsInFlight) return externalRecordsInFlight;
+		externalRecordsInFlight = fetchExternalApps()
+			.then((records) => {
+				externalRecords = records;
+				return records;
+			})
+			.catch((err) => {
+				console.error('Could not load external apps:', err);
+				return externalRecords;
+			})
+			.finally(() => {
+				externalRecordsInFlight = null;
+			});
+		return externalRecordsInFlight;
+	}
+
+	function handleLauncherContextMenu(e: MouseEvent, itemId: string) {
+		e.preventDefault();
+		// Start the read now, not on the click that follows. The menu itself needs
+		// nothing but the tile, so it opens instantly; by the time the pointer
+		// reaches a menu item the record is already in.
+		void refreshExternalApps();
+		externalMenuId = itemId;
+		externalMenuPos = { x: e.clientX, y: e.clientY };
+	}
+
+	async function handleConfigureExternalApp(itemId: string) {
+		const records = await refreshExternalApps();
+		const record = records.find((a) => a.id === itemId);
+		if (!record) {
+			console.error('No external app record for', itemId);
+			return;
+		}
+		externalConfigApp = record;
+	}
+
+	function handleRemoveExternalApp() {
+		const launcher = externalMenuLauncher;
+		externalRemoveId = externalMenuId;
+		externalRemoveTarget = {
+			name: launcher?.name ?? 'this app',
+			// A tile stands for a catalog app exactly when it carries one; a bare
+			// contract provider never reaches the grid at all.
+			isProvider: !!launcher?.app
+		};
+	}
+
+	async function doRemoveExternalApp() {
+		if (!externalRemoveId) return;
+		try {
+			await removeExternalApp(externalRemoveId);
+		} catch (err) {
+			console.error('Remove failed:', err);
+		}
+	}
+
 	// Context menu handlers
 	function handleRenameClick(app: App) {
 		renameAppName = app.catalog_id;
@@ -140,6 +226,10 @@
 			<Icon name="plus" size={15} />
 			Add widget
 		</Button>
+		<Button variant="secondary" size="sm" onclick={() => (showExternalAppModal = true)}>
+			<Icon name="external-link" size={15} />
+			Add custom app
+		</Button>
 	</header>
 
 	{#if !mounted || $loading}
@@ -149,7 +239,11 @@
 	{:else if isEmpty}
 		<EmptyState />
 	{:else}
-		<GridStackGrid onAppClick={handleAppClick} onAppContextMenu={handleContextMenu} />
+		<GridStackGrid
+			onAppClick={handleAppClick}
+			onAppContextMenu={handleContextMenu}
+			onLauncherContextMenu={handleLauncherContextMenu}
+		/>
 	{/if}
 </div>
 
@@ -188,6 +282,34 @@
 />
 
 <WidgetPicker open={showWidgetPicker} onclose={() => (showWidgetPicker = false)} />
+
+<ExternalAppContextMenu
+	itemId={externalMenuId}
+	displayName={externalMenuLauncher?.name ?? 'external app'}
+	isProvider={!!externalMenuLauncher?.app}
+	position={externalMenuPos}
+	onConfigure={handleConfigureExternalApp}
+	onRemove={handleRemoveExternalApp}
+	onClose={() => (externalMenuId = null)}
+/>
+
+<!-- Keyed on the record id so switching to a different record remounts the
+     form instead of leaving the previous record's half-typed edits on screen. -->
+{#key externalConfigApp?.id ?? null}
+	<ExternalAppConfigModal
+		app={externalConfigApp}
+		onclose={() => (externalConfigApp = null)}
+		onsaved={() => void refreshExternalApps()}
+	/>
+{/key}
+
+<ExternalAppRemoveModal
+	target={externalRemoveTarget}
+	onclose={() => (externalRemoveTarget = null)}
+	onremove={doRemoveExternalApp}
+/>
+
+<ExternalAppModal open={showExternalAppModal} onclose={() => (showExternalAppModal = false)} />
 
 <style>
 	.page {
