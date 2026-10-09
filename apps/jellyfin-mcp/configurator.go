@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package jellyfinmcp wires jellyfin-mcp (Knuckles-Team/jellyfin-mcp) into
+// Package jellyfinmcp wires jellyfin-mcp (jaredtrent/jellyfin-mcp) into
 // Bloud as an MCP tool server over the media library Jellyfin already serves.
 //
 // jellyfin-mcp serves streamable HTTP itself, so there is no bridge process in
 // front of it: this app is one container that speaks MCP on one port and talks
-// the Jellyfin REST API out to apps-jellyfin. The wrapper is not a browser and
-// cannot join the identity provider, so it reaches Jellyfin with a dedicated
-// API key that Bloud mints on its behalf through the bootstrap admin
+// the Jellyfin REST API out to the media server. The wrapper is not a browser
+// and cannot join the identity provider, so it reaches Jellyfin with a
+// dedicated API key that Bloud mints on its behalf through the bootstrap admin
 // credential the `mediaServer` contract publishes.
 //
-// The inbound side is authenticated too. The image verifies a bearer against a
-// HMAC key it is configured with, so Bloud generates that key and mints the
-// long-lived token it signs, and publishes the token as the `mcp` contract's
-// httpToken. A harness therefore presents a credential this listener checks,
-// not a name that authenticates against nothing.
+// The inbound side is authenticated too. The listener requires a bearer taken
+// from its configuration, so Bloud generates one and publishes it as the `mcp`
+// contract's httpToken. A harness therefore presents a credential this
+// listener checks, not a name that authenticates against nothing.
 //
 // The image reads its configuration from process environment variables and
 // nothing else, so the resolved bindings reach it through a generated env file
@@ -54,16 +53,14 @@ const (
 	// The environment variable names the image reads for the values that
 	// `environment:` cannot render. Kept as constants so the renderer and the
 	// tests name the same keys the upstream image expects.
-	envJellyfinURL        = "JELLYFIN_URL"
-	envJellyfinAPIKey     = "JELLYFIN_API_KEY"
-	envVerificationSecret = "FASTMCP_SERVER_AUTH_JWT_PUBLIC_KEY"
-
-	// The issuer and audience every inbound token must carry. These must match
-	// FASTMCP_SERVER_AUTH_JWT_ISSUER and FASTMCP_SERVER_AUTH_JWT_AUDIENCE in
-	// metadata.yaml: the verifier requires them, so a token minted with any
-	// other pair is refused even when it is signed with the right key.
-	jwtIssuer   = "bloud"
-	jwtAudience = "jellyfin-mcp"
+	envJellyfinURL    = "JELLYFIN_URL"
+	envJellyfinAPIKey = "JELLYFIN_API_KEY"
+	// envBearerToken is the inbound MCP bearer. It goes in through the env file
+	// rather than the `--http-token` flag so the credential stays out of the
+	// process list, where any local process could read it. The image refuses to
+	// bind a non-localhost address without it, which is what makes an unset one
+	// a loud failure rather than an open listener.
+	envBearerToken = "HTTP_TOKEN"
 
 	// The provider side of this app: the Jellyfin catalog entry whose
 	// `mediaServer` contract this consumes, and the name the API key this app
@@ -77,12 +74,11 @@ const (
 	jellyfinKeyName = "jellyfin-mcp"
 
 	// The secrets-store keys this app owns. `httpToken` is the published one,
-	// declared under `provides.mcp.secrets`; the other two are private, which
-	// is what keeps the HMAC key and the Jellyfin credential from landing in
-	// some other consumer's binding.
-	httpTokenKey          = "httpToken"
-	verificationSecretKey = "jwtVerificationSecret"
-	jellyfinAPIKeyKey     = "jellyfinApiKey"
+	// declared under `provides.mcp.secrets`; the other is private, which is what
+	// keeps the Jellyfin credential from landing in some other consumer's
+	// binding.
+	httpTokenKey      = "httpToken"
+	jellyfinAPIKeyKey = "jellyfinApiKey"
 )
 
 // Configurator handles the jellyfin-mcp node lifecycle: mint the credentials
@@ -129,13 +125,12 @@ func (c *Configurator) Name() string {
 }
 
 // PreStart writes the env file the container spec declares as its envFile. It
-// carries the four values `environment:` cannot render: the Jellyfin address
-// from the `mediaServer` binding, the Jellyfin API key this app mints, the
-// HMAC secret the inbound bearer is verified against, and the token that
-// secret signs.
+// carries the three values `environment:` cannot render: the Jellyfin address
+// from the `mediaServer` binding, the Jellyfin API key this app mints, and the
+// bearer this app's own listener requires.
 //
-// Both credentials are generated on the first pass and reused afterwards, so
-// a restart does not invalidate the namespace a harness registered, and the
+// Both credentials are generated on the first pass and reused afterwards, so a
+// restart does not invalidate the namespace a harness registered, and the
 // Jellyfin key is looked up by name before a new one is created, so a Bloud
 // database reset adopts the key the server already has rather than stacking a
 // second one under the same name.
@@ -145,17 +140,14 @@ func (c *Configurator) Name() string {
 // keeps "not ready" distinguishable from "configured with nothing", which the
 // app would otherwise read as the latter and fail on.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
-	secret, err := c.ensureVerificationSecret()
-	if err != nil {
-		return configurator.NoRestart(), err
-	}
-	if _, err := c.ensureInboundToken(secret); err != nil {
+	if _, err := c.ensureInboundToken(); err != nil {
 		return configurator.NoRestart(), err
 	}
 
 	server, wired := mediaServerBinding(state)
 	apiKey := ""
 	if wired {
+		var err error
 		apiKey, err = c.ensureJellyfinAPIKey(ctx, server)
 		if err != nil {
 			// The wrapper's whole purpose is its tools, and a wrapper that
@@ -168,7 +160,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		c.logger.Warn("jellyfin-mcp: no media server bound yet; writing a config without a Jellyfin address")
 	}
 
-	content := renderEnvFile(server, wired, apiKey, secret)
+	content := renderEnvFile(server, wired, apiKey, c.currentBearer())
 	path := filepath.Join(state.DataPath, configDir, envFileName)
 
 	// ModeHostOnly, not ModeSharedConfig: the file is never read inside the
@@ -183,28 +175,44 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		return configurator.NoRestart(), nil
 	}
 	c.logger.Info("wrote jellyfin-mcp config", "path", path,
-		"mediaServer", wired, "apiKey", apiKey != "", "bearer", secret != "")
+		"mediaServer", wired, "apiKey", apiKey != "", "bearer", c.currentBearer() != "")
 	return configurator.MustRestart("jellyfin-mcp config rewritten"), nil
 }
 
-// PostStart verifies the server answers the MCP handshake with the bearer a
-// real consumer presents. The container's own /health is not enough: it
-// returns 200 as long as the process is up, whether or not authentication is
-// actually being enforced and whether or not the Jellyfin side works, so a
-// probe against it promotes a node that cannot serve a single authorized MCP
-// request. This POSTs a real `initialize` to the same path a harness calls,
-// with the published token, and requires the server's own identity back.
+// PostStart verifies two things, in this order, because the second is only
+// meaningful once the first holds.
+//
+// First, that the server answers the MCP handshake with the bearer a real
+// consumer presents. The container's own /health is not enough: it returns 200
+// as long as the process is up, whether or not authentication is actually being
+// enforced, so a probe against it promotes a node that cannot serve a single
+// authorized MCP request.
+//
+// Then, that one real tool call through that session comes back with an answer
+// rather than a refusal. This is the gate that matters for this app. The
+// wrapper completes its handshake and answers /health whether or not its
+// Jellyfin credential works: it reads the unauthenticated /System/Info/Public
+// at startup and logs "Connected to Jellyfin" even with a key the server
+// refuses. Measured with a deliberately wrong key, the container came up
+// healthy and every tool call failed. A tool call is the only probe that can
+// fail for a reason on the provider's side, and the provider's side is the
+// thing that broke.
 //
 // Because PostStart also runs on every resync pass, a server that stops
-// serving after it converged is surfaced rather than left silently up.
+// serving after it converged, or a key revoked in Jellyfin's own UI, is
+// surfaced rather than left silently up.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
 	if _, wired := mediaServerBinding(state); !wired {
 		return fmt.Errorf("waiting for the %s media server: no media server is bound, so this node would serve a tool surface with nothing behind it", appName)
 	}
-	if err := c.api.waitServing(ctx, c.currentBearer()); err != nil {
+	bearer := c.currentBearer()
+	if err := c.api.waitServing(ctx, bearer); err != nil {
 		return fmt.Errorf("waiting for the jellyfin-mcp server: %w", err)
 	}
-	c.logger.Info("jellyfin-mcp is serving MCP")
+	if err := c.api.waitMediaServerReached(ctx, bearer); err != nil {
+		return fmt.Errorf("asking jellyfin-mcp to reach its media server: %w", err)
+	}
+	c.logger.Info("jellyfin-mcp is serving MCP and reaching Jellyfin through it")
 	return nil
 }
 
