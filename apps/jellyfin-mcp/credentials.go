@@ -4,111 +4,47 @@ package jellyfinmcp
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // --- inbound bearer ---
 
-// ensureVerificationSecret returns the HMAC key this app's listener verifies
-// inbound bearers against, generating and persisting one on the first pass and
-// reusing it afterwards.
-//
-// It is stored as a private app secret rather than passed straight into the
-// token: the key must outlive the token it signs, because regenerating the key
-// invalidates every token already handed out, and a harness holds the token it
-// registered with for as long as the namespace exists.
-func (c *Configurator) ensureVerificationSecret() (string, error) {
-	if c.secrets == nil {
-		return "", nil
-	}
-	if existing := c.secrets.GetAppSecret(appName, verificationSecretKey); existing != "" {
-		return existing, nil
-	}
-	secret, err := randomSecret()
-	if err != nil {
-		return "", fmt.Errorf("generating the %s verification secret: %w", appName, err)
-	}
-	if err := c.secrets.SetAppSecret(appName, verificationSecretKey, secret); err != nil {
-		return "", fmt.Errorf("persisting the %s verification secret: %w", appName, err)
-	}
-	c.logger.Info("generated the jellyfin-mcp inbound verification secret")
-	return secret, nil
-}
-
-// ensureInboundToken returns the bearer a harness presents, minting and
+// ensureInboundToken returns the bearer a harness presents, generating and
 // publishing one on the first pass and reusing it afterwards.
 //
-// The token is a JWT because that is the only shape this image's `jwt` auth
-// mode accepts, and it carries no expiry. A short-lived token would need a
-// minter next to it: the harness caches the bearer it registered with, so an
-// expiring credential means a namespace that works until the day it silently
-// 401s. What Bloud has instead of expiry is rotation: clear `httpToken` and
-// `jwtVerificationSecret` from the secrets store and the next pass mints a
-// fresh pair, which invalidates the old bearer at the listener.
-func (c *Configurator) ensureInboundToken(secret string) (string, error) {
+// It is an opaque string rather than a structured token, because that is what
+// the listener checks: the image takes HTTP_TOKEN and requires an exact match,
+// with no signature, no audience, and no expiry to verify. There is nothing to
+// mint and nothing to sign, and a JWT here would be a format the server ignores
+// while looking like a credential it checks.
+//
+// It carries no expiry for the same reason it carries no signature. A harness
+// caches the bearer it registered with, so a credential that expires is a
+// namespace that works until the day it silently 401s, and fixing it needs a
+// minter wired to the registration lifecycle. What Bloud has instead of expiry
+// is rotation: clear `httpToken` from the secrets store and the next pass
+// generates a fresh bearer, which invalidates the old one at the listener.
+func (c *Configurator) ensureInboundToken() (string, error) {
 	if c.secrets == nil {
 		return "", nil
 	}
 	if existing := c.secrets.GetAppSecret(appName, httpTokenKey); existing != "" {
 		return existing, nil
 	}
-	if secret == "" {
-		return "", fmt.Errorf("cannot mint the %s bearer without a verification secret", appName)
-	}
-	token, err := mintToken(secret, jwtIssuer, jwtAudience, "bloud:"+appName)
+	token, err := randomSecret()
 	if err != nil {
-		return "", fmt.Errorf("minting the %s bearer: %w", appName, err)
+		return "", fmt.Errorf("generating the %s MCP bearer: %w", appName, err)
 	}
 	if err := c.secrets.SetAppSecret(appName, httpTokenKey, token); err != nil {
 		return "", fmt.Errorf("publishing the %s bearer: %w", appName, err)
 	}
-	c.logger.Info("minted the jellyfin-mcp MCP bearer")
+	c.logger.Info("generated the jellyfin-mcp MCP bearer")
 	return token, nil
-}
-
-// mintToken builds an HS256 JWT: the standard base64url header, payload, and
-// signature. Written against the encoding rather than a JWT library because
-// the whole requirement is one HMAC over two strings, and a dependency that
-// does it would still have to be told not to set an expiry.
-func mintToken(secret, issuer, audience, subject string) (string, error) {
-	header, err := encodeJSONSegment(map[string]string{"alg": "HS256", "typ": "JWT"})
-	if err != nil {
-		return "", err
-	}
-	payload, err := encodeJSONSegment(map[string]any{
-		"iss": issuer,
-		"aud": audience,
-		"sub": subject,
-		"iat": time.Now().UTC().Unix(),
-	})
-	if err != nil {
-		return "", err
-	}
-	unsigned := header + "." + payload
-	mac := hmac.New(sha256.New, []byte(secret))
-	if _, err := mac.Write([]byte(unsigned)); err != nil {
-		return "", err
-	}
-	return unsigned + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
-}
-
-// encodeJSONSegment renders a JSON object as a base64url segment with the
-// padding stripped, which is what a JWT segment is.
-func encodeJSONSegment(v any) (string, error) {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return "", fmt.Errorf("encoding JWT segment: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 // randomSecret returns 32 bytes of entropy as URL-safe base64.
@@ -126,15 +62,15 @@ func randomSecret() (string, error) {
 // minting one through Jellyfin's own API on the first pass and reusing the
 // stored key afterwards.
 //
-// A key rather than the bootstrap admin password, because the image cannot
-// use a password at all: its client sets `X-Emby-Token` from JELLYFIN_API_KEY
-// and probes /System/Info, and JELLYFIN_USERNAME/JELLYFIN_PASSWORD are read
-// into fields nothing logs in with. Measured against the pinned image: a
-// credentials-only config fails every tool call with "Jellyfin authentication
-// failed". So the key is not a preference, it is the only credential shape
-// this wrapper accepts.
+// A key rather than the bootstrap admin password, for two reasons that point
+// the same way. The image has no password login at all: it reads JELLYFIN_URL,
+// JELLYFIN_API_KEY, and an optional JELLYFIN_USER_ID, and there is no username
+// and password for it to use. And the key has to travel in the `Authorization`
+// header, because Jellyfin 12 ships with legacy `X-Emby-Token` authorization
+// disabled by default, which is the exact thing the wrapper this app replaced
+// got wrong.
 //
-// Minting one is also the better boundary even if the password worked. The key
+// Minting one is the better boundary even if the password worked. The key
 // shows up in Jellyfin's own Dashboard -> Security -> API Keys under this
 // app's name, so an operator can revoke the agent without rotating the admin
 // password, and the admin password stays out of this container's environment.
@@ -180,11 +116,11 @@ func (c *Configurator) ensureJellyfinAPIKey(ctx context.Context, server configur
 // empty one, which the server reads differently.
 //
 // A value containing a quote or a line break is rejected rather than escaped.
-// Every value here is generated (a base64url secret, a JWT) or resolved from
-// catalog metadata (a container URL), so none should ever contain one;
-// failing loudly beats writing a file whose quoting no longer means what it
-// says.
-func renderEnvFile(server configurator.MediaServerBinding, wired bool, apiKey, secret string) string {
+// Every value here is generated (a base64url secret) or resolved from catalog
+// metadata or the provider (a container URL, a Jellyfin key), so none should
+// ever contain one; failing loudly beats writing a file whose quoting no longer
+// means what it says.
+func renderEnvFile(server configurator.MediaServerBinding, wired bool, apiKey, bearer string) string {
 	var b strings.Builder
 	b.WriteString("# Generated by Bloud; rewritten on every reconciliation.\n")
 
@@ -195,8 +131,8 @@ func renderEnvFile(server configurator.MediaServerBinding, wired bool, apiKey, s
 	if apiKey != "" {
 		settings = append(settings, [2]string{envJellyfinAPIKey, apiKey})
 	}
-	if secret != "" {
-		settings = append(settings, [2]string{envVerificationSecret, secret})
+	if bearer != "" {
+		settings = append(settings, [2]string{envBearerToken, bearer})
 	}
 	for _, kv := range settings {
 		if strings.ContainsAny(kv[1], "'\r\n") {

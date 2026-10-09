@@ -82,6 +82,7 @@ func (x *Call) attemptOnce(ctx context.Context, attempt int, ready ReadyFunc) (r
 		// a complete answer is judged on its own merits rather than on the
 		// stream's refusal to end.
 		if ready != nil && len(body) > 0 {
+			x.captureResponseHeaders(resp.Header)
 			return result{status: resp.StatusCode, body: body}, nil
 		}
 		return result{}, x.httpError(req, resp.StatusCode, capBody([]byte("read body: "+readErr.Error())), attempt)
@@ -99,8 +100,10 @@ func (x *Call) attemptOnce(ctx context.Context, attempt int, ready ReadyFunc) (r
 
 	switch oc {
 	case outcomeSuccess:
+		x.captureResponseHeaders(resp.Header)
 		return result{status: resp.StatusCode, body: body}, nil
 	case outcomeAlreadyDone:
+		x.captureResponseHeaders(resp.Header)
 		return result{status: resp.StatusCode, body: body, alreadyDone: true}, nil
 	default:
 		he := x.httpError(req, resp.StatusCode, capBody(body), attempt)

@@ -233,3 +233,53 @@ func TestJar_PresentsCookieOnLaterCalls(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok", string(body), "the cookie issued by the first call must be sent with the next")
 }
+
+func TestCaptureHeader_WritesTheNamedResponseHeader(t *testing.T) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Mcp-Session-Id", "session-1")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+
+	var session string
+	body, err := c.POST("/x").Body([]byte("{}"), "application/json").
+		OK(http.StatusOK).CaptureHeader("Mcp-Session-Id", &session).Do(context.Background())
+	require.NoError(t, err)
+	assert.NotEmpty(t, body)
+	assert.Equal(t, "session-1", session)
+}
+
+// TestCaptureHeader_LeavesDestAloneOnAFailure pins the documented contract: a
+// failed attempt does not write, so a caller that pre-set the destination can
+// still tell "never answered" from "answered without that header".
+func TestCaptureHeader_LeavesDestAloneOnAFailure(t *testing.T) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Mcp-Session-Id", "session-1")
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	session := "untouched"
+	_, err := c.GET("/x").CaptureHeader("Mcp-Session-Id", &session).Do(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, "untouched", session)
+}
+
+// TestCaptureHeader_LatestSuccessfulAttemptWins: a retry that lands on a
+// different answer must leave the value still in force, not the one from the
+// attempt that failed.
+func TestCaptureHeader_LatestSuccessfulAttemptWins(t *testing.T) {
+	var n atomic.Int32
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if n.Add(1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Mcp-Session-Id", "session-2")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+
+	var session string
+	_, err := c.GET("/x").RetryStatus(http.StatusTooManyRequests).
+		CaptureHeader("Mcp-Session-Id", &session).Do(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "session-2", session)
+}

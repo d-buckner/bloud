@@ -34,6 +34,10 @@ type Call struct {
 	query       url.Values
 	headers     map[string]string
 
+	// captureHeaders names response headers to copy into caller-provided
+	// strings when an attempt succeeds. See CaptureHeader.
+	captureHeaders map[string]*string
+
 	timeoutOverride time.Duration
 	anonymous       bool
 	buildErr        error
@@ -114,6 +118,36 @@ func (x *Call) Header(k, v string) *Call {
 	}
 	x.headers[k] = v
 	return x
+}
+
+// CaptureHeader copies one response header into *dest when an attempt
+// succeeds. dest is left untouched on a failed attempt, so a caller can tell
+// "never answered" from "answered without that header" by pre-setting it to
+// the empty string, which is what the only honest reading of both is.
+//
+// This exists because some protocols answer in a header rather than a body, and
+// a caller that cannot read the answer cannot use the protocol. An MCP
+// streamable-HTTP server, for example, hands its session id back in
+// `Mcp-Session-Id` and refuses every later request that does not carry it.
+//
+// Retries overwrite dest with the latest successful answer, which is the only
+// value still valid: an earlier attempt's session may be the one that failed.
+func (x *Call) CaptureHeader(k string, dest *string) *Call {
+	if x.captureHeaders == nil {
+		x.captureHeaders = map[string]*string{}
+	}
+	x.captureHeaders[k] = dest
+	return x
+}
+
+// captureResponseHeaders writes the declared response headers into their
+// destinations. Called only on an outcome the call classifies as success.
+func (x *Call) captureResponseHeaders(h http.Header) {
+	for name, dest := range x.captureHeaders {
+		if dest != nil {
+			*dest = h.Get(name)
+		}
+	}
 }
 
 // Timeout sets the per-request deadline for this call: how long a single HTTP
