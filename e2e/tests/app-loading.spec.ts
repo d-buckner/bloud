@@ -109,7 +109,10 @@ async function deploy(page: string, answer: AppAnswer): Promise<Deployment> {
       // What Traefik hands back while the container is down: the waiting page,
       // marked, over an error status. The first request of all is the
       // navigation that got the page, before any poll, so it lands here too.
-      res.writeHead(503, {
+      // 502 because that is the only status left that can produce this: the
+      // middleware used to cover 503 too, which is an app answering about
+      // itself and must never be stood in for.
+      res.writeHead(502, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
         'Retry-After': '2',

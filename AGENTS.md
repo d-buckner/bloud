@@ -648,11 +648,15 @@ combined with instance/SSH-target env vars). Instance overrides:
    of a 502. The
    orchestrator manages user apps only. That page covers Bloud's own catch-all
    and nothing else: an app domain has its own router, so every routable app
-   also gets a Traefik `errors` middleware over 502-504 pointing at
+   also gets a Traefik `errors` middleware over 502 and 504 pointing at
    `GET /bloud-loading/{name}` (`internal/api/app_loading.go`), which shows
-   that app's icon and name and reloads once the app serves again. A 500 is
-   deliberately outside the range: that is the app answering, not an app that
-   is coming back.
+   that app's icon and name and reloads once the app serves again. A 500 and a
+   503 are deliberately outside the range: those are the app answering, not an
+   app that is coming back. Hermes proved the 503 half of that, and the wrong
+   way round: its dashboard answers 503 whenever its identity provider cannot
+   vouch for the session and keeps the cookie on purpose, so covering 503 left
+   a browser sitting on "re-loading" over a healthy install while the app's own
+   diagnosis was thrown away. See `apps/hermes/INTEGRATION.md`.
 6. **SSO strategies** are exactly: `native-oidc`, `ldap`, `forward-auth`, `none`
    (Immich + AFFiNE + Hermes + Paperless-ngx: native-oidc, Jellyfin: ldap,
    Navidrome: forward-auth). `none` means the app does not join the identity
