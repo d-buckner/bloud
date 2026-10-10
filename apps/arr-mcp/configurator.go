@@ -73,6 +73,18 @@ const (
 	// tokenName is the label arr-mcp's config UI shows for the bearer a
 	// harness presents.
 	tokenName = "bloud-hermes"
+
+	// tokenTier is what that bearer may do. arr-mcp gates a write twice: the
+	// token's tier, and a per-service permissions block (see
+	// servicePermissions), and both must allow it. `write` grants the `safe`
+	// tier, which is every mutation the service itself can undo: filing and
+	// approving a request, adding a film, starting a search, monitoring, pausing
+	// a download. It deliberately stops short of `destructive`, which is what
+	// delete_media, delete_request, clean_queue and remove_queue_item need.
+	//
+	// This is a default, not a ceiling: the tier is one constant, and the audit
+	// table records every write the agent makes under this token.
+	tokenTier = "write"
 )
 
 // Configurator handles the arr-mcp node lifecycle: mint the credentials this
@@ -190,7 +202,7 @@ func (c *Configurator) buildConfig(ctx context.Context, state *configurator.AppS
 		Services: configServices{},
 	}
 	if bearer != "" {
-		cfg.Auth.Tokens = append(cfg.Auth.Tokens, configToken{Name: tokenName, Tier: "read", Hash: sha256TokenHash(bearer)})
+		cfg.Auth.Tokens = append(cfg.Auth.Tokens, configToken{Name: tokenName, Tier: tokenTier, Hash: sha256TokenHash(bearer)})
 	}
 	if password != "" {
 		hash, err := scryptHash(password)
@@ -204,10 +216,10 @@ func (c *Configurator) buildConfig(ctx context.Context, state *configurator.AppS
 		if err != nil {
 			return configFile{}, fmt.Errorf("provisioning the %s Seerr API key: %w", appName, err)
 		}
-		cfg.Services.Seerr = &serviceConfig{URL: rm.BaseURL, APIKey: key, DefaultUser: rm.Username}
+		cfg.Services.Seerr = &serviceConfig{URL: rm.BaseURL, APIKey: key, DefaultUser: rm.Username, Permissions: writableService()}
 	}
 	for _, pvr := range pvrBindings(state) {
-		svc := &serviceConfig{URL: pvr.BaseURL, APIKey: pvr.APIKey}
+		svc := &serviceConfig{URL: pvr.BaseURL, APIKey: pvr.APIKey, Permissions: writableService()}
 		switch pvr.App {
 		case radarrAppName:
 			cfg.Services.Radarr = svc
@@ -225,7 +237,7 @@ func (c *Configurator) buildConfig(ctx context.Context, state *configurator.AppS
 		// bootstrap admin the key was minted as is that account: it exists on
 		// every provider (Bloud-booted or operator-registered), and it is the
 		// identity the full-privilege key already carries.
-		cfg.Services.Jellyfin = &serviceConfig{URL: server.BaseURL, APIKey: key, DefaultUser: server.AdminUsername}
+		cfg.Services.Jellyfin = &serviceConfig{URL: server.BaseURL, APIKey: key, DefaultUser: server.AdminUsername, Permissions: writableService()}
 	}
 	return cfg, nil
 }
@@ -384,7 +396,23 @@ type configServices struct {
 }
 
 type serviceConfig struct {
-	URL         string `yaml:"url"`
-	APIKey      string `yaml:"api_key"`
-	DefaultUser string `yaml:"default_user,omitempty"`
+	URL         string             `yaml:"url"`
+	APIKey      string             `yaml:"api_key"`
+	DefaultUser string             `yaml:"default_user,omitempty"`
+	Permissions servicePermissions `yaml:"permissions"`
+}
+
+// servicePermissions is the second gate on a write, per service instance. The
+// image defaults both flags to false, so leaving this block out of a rendered
+// config would leave every write refused no matter what tokenTier says.
+type servicePermissions struct {
+	SafeWrite   bool `yaml:"safe_write"`
+	Destructive bool `yaml:"destructive"`
+}
+
+// writableService is the permission block for every service Bloud wires: safe
+// writes on, destructive off, matching tokenTier. A service Bloud did not
+// wire gets no block at all, because it gets no entry in the config either.
+func writableService() servicePermissions {
+	return servicePermissions{SafeWrite: true, Destructive: false}
 }

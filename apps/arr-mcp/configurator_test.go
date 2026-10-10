@@ -65,7 +65,7 @@ func TestPreStartUnboundIsOfflineAndIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	s := string(content)
 	require.Contains(t, s, "username: bloud")
-	require.Contains(t, s, "tier: read")
+	require.Contains(t, s, "tier: write")
 	require.Contains(t, s, "sha256:")
 	require.Contains(t, s, "scrypt$")
 	require.NotContains(t, s, "seerr:", "an unbound config writes no service blocks")
@@ -153,6 +153,49 @@ func TestPreStartSetsJellyfinDefaultUser(t *testing.T) {
 	require.Contains(t, s, "url: http://apps-jellyfin:8096")
 	require.Contains(t, s, "api_key: cached-key")
 	require.Contains(t, s, "default_user: bloud-bootstrap-admin")
+}
+
+// TestPreStartGrantsSafeWritesOnly pins the write contract the harness depends
+// on. arr-mcp gates a write twice, and refuses unless both gates allow it: the
+// token's tier, and a per-service permissions block that defaults to all-false.
+// Pinning only one of them would let the other drift back to "nothing works"
+// unnoticed, which is exactly how a read-only default survives a change that
+// meant to remove it.
+//
+// `write` plus safe_write is the pair that files and approves a request, adds a
+// film, and starts a search. Destructive stays off: delete_media, delete_request
+// and the queue tools need it, and nothing here should be able to lose a file.
+func TestPreStartGrantsSafeWritesOnly(t *testing.T) {
+	secrets := newFakeSecrets()
+	secrets.values[seerrAPIKeyKey] = "derived-key"
+	secrets.values[jellyfinAPIKeyKey] = "cached-key"
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets})
+	state := &configurator.AppState{
+		DataPath: t.TempDir(),
+		Integrations: configurator.Integrations{
+			RequestManagers: []configurator.RequestManagerBinding{{
+				ProviderRef: configurator.ProviderRef{App: "seerr", Node: "apps-seerr", Port: 5055, BaseURL: "http://apps-seerr:5055", Installed: true},
+				Username:    "bloud-bootstrap-admin", Password: "jellyfin-pw",
+			}},
+			PVRs: []configurator.PVRBinding{
+				{ProviderRef: configurator.ProviderRef{App: "radarr", Node: "apps-radarr", Port: 7878, BaseURL: "http://apps-radarr:7878", Installed: true}, APIKey: "radarr-key"},
+			},
+			MediaServers: []configurator.MediaServerBinding{{
+				ProviderRef:   configurator.ProviderRef{App: "jellyfin", Node: "apps-jellyfin", Port: 8096, BaseURL: "http://apps-jellyfin:8096", Installed: true},
+				AdminUsername: "bloud-bootstrap-admin", AdminPassword: "pw",
+			}},
+		},
+	}
+
+	s := writeConfig(t, c, state)
+	require.Contains(t, s, "tier: write", "the token must carry the tier the safe writes need")
+	// One block per wired service, and every wired service gets one: a service
+	// left at the image's all-false default is a tool that refuses for a reason
+	// nothing in the config explains.
+	require.Equal(t, 3, strings.Count(s, "safe_write: true"), "every wired service must allow safe writes")
+	require.Equal(t, 3, strings.Count(s, "destructive: false"), "every wired service must refuse destructive writes")
+	require.NotContains(t, s, "destructive: true")
+	require.NotContains(t, s, "tier: destructive")
 }
 
 // TestScryptHashIsDeterministic pins the reason the salt is derived rather than

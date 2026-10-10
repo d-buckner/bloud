@@ -63,10 +63,23 @@ is only needed for things outside Bloud's catalog.
 
 ## Permission tiers
 
-The single token Bloud mints carries `tier: read`, and the per-service
-`permissions` block is left at its default of all-false. The agent can read the
-stack but not write or destroy, which is the whole point of shipping a
-read-defaulted provider.
+arr-mcp gates a write twice, and refuses unless both gates allow it: the tier of
+the token that presented the bearer, and a `permissions` block on the service
+the write targets. The image defaults that block to all-false, so raising only
+the token tier would still refuse every write; the refusal names the YAML key to
+set, which is the only clue a harness gets.
+
+Bloud writes both. The single token it mints carries `tier: write`, and every
+service it wires gets `safe_write: true, destructive: false`. So the agent can
+file and approve a request, add a film, start a search, monitor, pause a
+download, and generally run the stack; it cannot delete media, delete a request
+record, or clear a queue. That is the line arr-mcp itself draws: a `safe` write
+is one the service can undo, a `destructive` one loses something.
+
+The tier is one constant (`tokenTier` in `configurator.go`), and every write the
+agent makes lands in the image's own audit table regardless of tier. There is
+deliberately no environment switch for it: a default that can be flipped by an
+env var nobody remembers setting is a default nobody can reason about.
 
 ## Health and readiness
 
