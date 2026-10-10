@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -293,31 +294,84 @@ func paperlessNgxToken(t *testing.T, password string) string {
 }
 
 // paperlessNgxTokenFor exchanges an account's credentials for an API token.
+//
+// The 429 retry is not defensive padding. Paperless-ngx throttles this endpoint to
+// 5 requests per minute (PAPERLESS_TOKEN_THROTTLE_RATE, default 5/min), and that
+// budget is shared with Bloud's own configurator, which calls the same endpoint on
+// every reconciliation pass to verify the admin credential still authenticates. A
+// suite that asks for three tokens inside one minute is racing a limiter the app is
+// deliberately running, so the honest response is to wait out the window the
+// response names, not to widen a brute-force guard so a test fits under it.
 func paperlessNgxTokenFor(t *testing.T, username, password string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{
 		"username": username,
 		"password": password,
 	})
+
+	deadline := time.Now().Add(paperlessNgxThrottleBudget)
+	for attempt := 1; ; attempt++ {
+		payload, status, err := postPaperlessToken(body)
+		switch {
+		case err != nil:
+			t.Fatalf("POST /api/token/ for %s: %v", username, err)
+		case status == http.StatusTooManyRequests:
+			wait := paperlessNgxThrottleWait(payload)
+			if time.Now().Add(wait).After(deadline) {
+				t.Fatalf("POST /api/token/ for %s stayed throttled: %s", username, payload)
+			}
+			t.Logf("POST /api/token/ for %s throttled, waiting %s (attempt %d)", username, wait, attempt)
+			time.Sleep(wait)
+		case status != http.StatusOK:
+			t.Fatalf("POST /api/token/ for %s: status %d: %s", username, status, payload)
+		default:
+			var out struct {
+				Token string `json:"token"`
+			}
+			if err := json.Unmarshal(payload, &out); err != nil {
+				t.Fatalf("decoding token response: %v (%s)", err, payload)
+			}
+			if out.Token == "" {
+				t.Fatalf("token response carries no token: %s", payload)
+			}
+			return out.Token
+		}
+	}
+}
+
+// paperlessNgxThrottleBudget bounds how long the suite will sit out throttle
+// windows for one token. Two minutes is two full windows, which is generous for a
+// limiter whose window is 60s and short enough that a genuinely locked-out suite
+// still fails inside the test timeout.
+const paperlessNgxThrottleBudget = 2 * time.Minute
+
+// paperlessNgxThrottleWait reads the window DRF names in its throttle body
+// ("Request was throttled. Expected available in 52 seconds.") and adds a second,
+// so the retry lands after the window closes rather than inside it. The fallback
+// covers a body that does not say.
+func paperlessNgxThrottleWait(payload []byte) time.Duration {
+	const fallback = 15 * time.Second
+	m := paperlessNgxThrottleRe.FindSubmatch(payload)
+	if m == nil {
+		return fallback
+	}
+	secs, err := strconv.Atoi(string(m[1]))
+	if err != nil || secs <= 0 {
+		return fallback
+	}
+	return time.Duration(secs)*time.Second + time.Second
+}
+
+var paperlessNgxThrottleRe = regexp.MustCompile(`available in (\d+) second`)
+
+func postPaperlessToken(body []byte) ([]byte, int, error) {
 	resp, err := http.Post(paperlessNgxURL+"/api/token/", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("POST /api/token/: %v", err)
+		return nil, 0, err
 	}
 	payload, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /api/token/ for %s: status %d: %s", username, resp.StatusCode, payload)
-	}
-	var out struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(payload, &out); err != nil {
-		t.Fatalf("decoding token response: %v (%s)", err, payload)
-	}
-	if out.Token == "" {
-		t.Fatalf("token response carries no token: %s", payload)
-	}
-	return out.Token
+	return payload, resp.StatusCode, nil
 }
 
 // paperlessNgxIngestsUploadedDocument uploads a plain-text document through the
