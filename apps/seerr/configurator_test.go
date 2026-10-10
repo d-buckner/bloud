@@ -34,6 +34,9 @@ func quietLogger() *slog.Logger {
 // so this only has to satisfy the dependency the configurator is built with.
 type fakeSecrets struct {
 	password string
+	// contractValues records SetAppContractValue calls keyed by contract/key,
+	// so a test can assert the runtime values the configurator publishes.
+	contractValues map[string]string
 }
 
 func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return f.password, nil }
@@ -45,10 +48,18 @@ const jellyfinAdminUser = "bloud-bootstrap-admin"
 
 func (f *fakeSecrets) GetAppSecret(string, string) string { return "" }
 
-func (f *fakeSecrets) SetAppSecret(string, string, string) error                { return nil }
-func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
-func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
-func (f *fakeSecrets) DeleteAppSecrets(string) error                            { return nil }
+func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
+func (f *fakeSecrets) SetAppContractValue(_, contract, key, value string) error {
+	if f.contractValues == nil {
+		f.contractValues = map[string]string{}
+	}
+	f.contractValues[contract+"/"+key] = value
+	return nil
+}
+func (f *fakeSecrets) GetAppContractValue(_, contract, key string) string {
+	return f.contractValues[contract+"/"+key]
+}
+func (f *fakeSecrets) DeleteAppSecrets(string) error { return nil }
 
 // recordedRequest is one request the fake Seerr received.
 type recordedRequest struct {
@@ -866,7 +877,8 @@ func TestPostStart_OnboardsThroughJellyfinAndInitializes(t *testing.T) {
 
 	fake := newFakeSeerr()
 	jellyfin := newFakeJellyfin(t)
-	c := newConfigurator(t, fake, &fakeSecrets{password: jellyfinPassword})
+	secrets := &fakeSecrets{password: jellyfinPassword}
+	c := newConfigurator(t, fake, secrets)
 
 	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, jellyfinPassword))
 	if _, err := c.PreStart(ctx, state); err != nil {
@@ -884,6 +896,13 @@ func TestPostStart_OnboardsThroughJellyfinAndInitializes(t *testing.T) {
 	assertLibrarySync(t, fake)
 	assertAdminCallsCarryKey(t, fake, appAPIKey)
 	assertInitializeOrder(t, fake)
+
+	// requestManager.defaultUser is the Seerr account arr-mcp acts as: the
+	// Jellyfin bootstrap admin Seerr's onboarding created its admin from, whose
+	// display name Seerr reports as that Jellyfin username.
+	if got := secrets.contractValues["requestManager/defaultUser"]; got != jellyfinAdminUser {
+		t.Errorf("requestManager/defaultUser = %q, want %q", got, jellyfinAdminUser)
+	}
 
 	// A second reconciliation is a no-op.
 	before := len(fake.all())

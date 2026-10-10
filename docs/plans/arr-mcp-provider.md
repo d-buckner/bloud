@@ -120,12 +120,17 @@ creates its admin account (`adminEmail = "bloud-admin@localhost"`,
 there is no `provides:` block in `apps/seerr/metadata.yaml` and no
 `SetAppContractValue` call. Both are additions to code paths that exist.
 
-`defaultUser` is a provider **value**, not a secret, and it is static metadata
-rather than runtime-published, because Bloud creates that account itself. That is
-exactly how `apps/jellyfin` offers `adminUsername: bloud-bootstrap-admin`. It is
-not listed under `operatorValues`: the account is Bloud's own and there is no
-operator override to offer. It is needed at all because arr-mcp refuses every
-Seerr tool until one is named.
+`defaultUser` is a provider **value**, not a secret. It is runtime-published
+rather than static metadata, and the value is the Jellyfin bootstrap admin
+**username** the `mediaServer` binding carries, not the admin **email**. Seerr
+reports its onboarded admin's display name as that Jellyfin username, which is
+what arr-mcp matches `default_user` against, so the published string is the one
+the consumer's lookup finds. Publishing at runtime rather than declaring
+statically is also what keeps an off-host Jellyfin correct: the account Bloud
+did not boot has whatever username its operator chose, and the remote-app form
+asks for it under the same `runtimeValues` channel every other runtime-minted
+value uses. It is needed at all because arr-mcp refuses every Seerr per-user
+tool until one is named.
 
 ## The config UI credential is a client credential, not a new mechanism
 

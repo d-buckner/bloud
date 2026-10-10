@@ -56,8 +56,13 @@ sso:
 provides:
   requestManager:
     secrets: [apiKey]
-    values:
-      defaultUser: bloud-admin@localhost
+    # defaultUser is the Seerr account arr-mcp acts as. It is the account
+    # Seerr's onboarding created from the Jellyfin bootstrap admin, whose
+    # display name Seerr reports as the Jellyfin admin username. That username
+    # arrives on the mediaServer binding and differs per install (Bloud-booted
+    # Jellyfin vs. one the operator registered), so it is published at runtime
+    # by the configurator rather than declared here.
+    runtimeValues: [defaultUser]
 
 containers:
   # One container, one volume: Seerr keeps everything (settings.json, the

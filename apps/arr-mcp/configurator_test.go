@@ -88,7 +88,7 @@ func TestPreStartRendersSeerr(t *testing.T) {
 					Installed: true,
 				},
 				APIKey:      "seerr-key",
-				DefaultUser: "bloud-admin@localhost",
+				DefaultUser: "bloud-bootstrap-admin",
 			}},
 		},
 	}
@@ -97,7 +97,7 @@ func TestPreStartRendersSeerr(t *testing.T) {
 	require.Contains(t, s, "seerr:")
 	require.Contains(t, s, "url: http://apps-seerr:5055")
 	require.Contains(t, s, "api_key: seerr-key")
-	require.Contains(t, s, "default_user: bloud-admin@localhost")
+	require.Contains(t, s, "default_user: bloud-bootstrap-admin")
 }
 
 // TestPreStartRendersPVRs pins the optional multi contract: whichever Servarrs
@@ -194,7 +194,7 @@ func TestPostStartToleratesStatelessServer(t *testing.T) {
 					Installed: true,
 				},
 				APIKey:      "seerr-key",
-				DefaultUser: "bloud-admin@localhost",
+				DefaultUser: "bloud-bootstrap-admin",
 			}},
 		},
 	}
