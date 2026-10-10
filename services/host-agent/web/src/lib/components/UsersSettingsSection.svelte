@@ -157,11 +157,27 @@
 				<div class="form-row">
 					<div class="form-field">
 						<label for="new-username">Username</label>
-						<input id="new-username" type="text" bind:value={newUsername} required />
+						<input
+							id="new-username"
+							type="text"
+							autocomplete="username"
+							autocapitalize="none"
+							bind:value={newUsername}
+							required
+						/>
 					</div>
 					<div class="form-field">
 						<label for="new-password">Password</label>
-						<input id="new-password" type="password" bind:value={newPassword} required />
+						<!-- new-password, not off: a password manager will offer to generate
+						     here, which is the right answer for a credential the operator is
+						     creating for someone else and will never type twice. -->
+						<input
+							id="new-password"
+							type="password"
+							autocomplete="new-password"
+							bind:value={newPassword}
+							required
+						/>
 					</div>
 					<div class="form-field">
 						<label for="new-role">Role</label>
@@ -171,7 +187,11 @@
 						</select>
 					</div>
 				</div>
-				<button class="btn btn-primary" type="submit" disabled={creatingUser}>
+				<button
+					class="btn btn-primary"
+					type="submit"
+					disabled={creatingUser || !newUsername.trim() || !newPassword}
+				>
 					{creatingUser ? 'Creating...' : 'Create User'}
 				</button>
 			</form>
@@ -179,7 +199,7 @@
 	{/if}
 
 	{#if usersError}
-		<div class="error-message">{usersError}</div>
+		<div class="error-message" role="alert">{usersError}</div>
 	{/if}
 </section>
 
@@ -318,8 +338,11 @@
 	}
 
 	.btn-sm:disabled {
-		opacity: 0.5;
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		border-color: var(--color-border);
 		cursor: not-allowed;
+		opacity: 1;
 	}
 
 	.btn-sm-danger {
@@ -381,8 +404,7 @@
 
 	.form-field input:focus,
 	.form-field select:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 		box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
 	}
 
@@ -392,7 +414,16 @@
 
 	.form-row .form-field {
 		flex: 1;
-		min-width: 140px;
+		min-width: 0;
+	}
+
+	/* The Add User row is three fields. At 390px three columns are unreadable and
+	   the row is what pushed the page wider than the screen, so below 640px it is
+   	one field per line. */
+	@media (max-width: 640px) {
+		.form-row {
+			flex-direction: column;
+		}
 	}
 
 	.btn {
@@ -407,8 +438,11 @@
 	}
 
 	.btn:disabled {
-		opacity: 0.6;
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		border-color: var(--color-border);
 		cursor: not-allowed;
+		opacity: 1;
 	}
 
 	.btn-primary {

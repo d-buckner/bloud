@@ -47,3 +47,90 @@ code {
 button {
 	font-family: var(--font-serif);
 }
+
+/* One focus treatment for the whole application.
+
+   Before this, focus was whatever each component remembered to write: 1px, 2px
+   and 3px rings in four different greys, and a browser-default blue on the
+   primary buttons, because a component that opted out with `outline: none` and
+   drew a border-colour change instead left nothing behind for the keyboard.
+   `:where()` keeps the specificity at zero so any component can still refine the
+   ring for its own surface, but the default is now something that is always
+   there. --color-focus is chosen to clear 3:1 on every surface it can land on,
+   including the near-black primary button. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: 2px;
+	border-radius: inherit;
+}
+
+/* Tap targets: WCAG 2.5.5 asks for 44x44, and Bloud is opened on a phone as
+   often as on a laptop. The audit measured sign-out at 25x25, the header
+   actions 26px tall, and nav links at 43px, so this is a rule here rather than
+   a per-component habit.
+
+   Links inside running prose are exempt on purpose. A 44px line box around a
+   word in a sentence is exactly the "inline" exception 2.5.5 carves out, and
+   enforcing it there would only shred the text. Checkbox and radio are exempt
+   too: their hit area is the label they are wrapped with. */
+:where(button, select, summary) {
+	min-height: var(--tap-target-min);
+	min-width: var(--tap-target-min);
+}
+
+:where(input):not([type="checkbox"]):not([type="radio"]) {
+	min-height: var(--tap-target-min);
+}
+
+/* An icon-only control has no text to give it width, so it has to be told. A
+   glyph alone is a 16px target wearing a button. */
+:where(.icon-button) {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: var(--tap-target-min);
+	min-height: var(--tap-target-min);
+}
+
+/* Skip link: the first thing on the page for anyone who arrives by Tab, and
+   invisible to everyone else until they are. It has to be positioned rather
+   than `display: none`, because a hidden element is not focusable and the whole
+   point is that focusing it is what reveals it. */
+.skip-link {
+	position: absolute;
+	left: var(--space-md);
+	top: var(--space-md);
+	z-index: 100;
+	padding: var(--space-sm) var(--space-md);
+	background: var(--color-accent);
+	color: #fff;
+	font-family: var(--font-sans);
+	font-size: 0.875rem;
+	text-decoration: none;
+	border-radius: var(--radius-md);
+	transform: translateY(-200%);
+}
+
+.skip-link:focus-visible {
+	transform: none;
+}
+
+/* Text a screen reader reads and an eye does not see.
+
+   Needed wherever a page needs a heading or a status the visual design has no
+   room for: the Developer route has no title of its own because the diagram is
+   the whole page, and a result count would be noise next to the grid it
+   describes. Clipping with clip-path rather than `display: none` because a
+   hidden element is not announced at all. */
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+	border: 0;
+}
+

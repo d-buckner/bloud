@@ -74,10 +74,6 @@
 		color: var(--color-text-muted);
 	}
 
-	.notes-input:focus {
-		outline: none;
-	}
-
 	.notes-footer {
 		display: flex;
 		justify-content: space-between;

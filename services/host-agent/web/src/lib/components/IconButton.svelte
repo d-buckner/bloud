@@ -29,7 +29,7 @@
 	{onclick}
 	{title}
 	{disabled}
-	aria-label={title}
+	aria-label={title || label}
 >
 	<Icon name={icon} {size} />
 	{#if label}
@@ -44,6 +44,10 @@
 		justify-content: center;
 		gap: var(--space-sm);
 		padding: var(--space-sm);
+		/* A glyph alone is a 16px target wearing a button. The hit area is the
+		   padding around it, and the padding has to be told. */
+		min-width: var(--tap-target-min);
+		min-height: var(--tap-target-min);
 		background: transparent;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
@@ -66,8 +70,11 @@
 		color: var(--color-text);
 	}
 
-	.icon-btn:focus {
-		outline: 2px solid var(--color-accent);
+	/* --color-focus, not --color-accent: the accent is the near-black the buttons
+	   themselves are filled with, so an accent ring is 1.00:1 against its own
+	   control. :focus-visible, so a click does not leave the ring behind. */
+	.icon-btn:focus-visible {
+		outline: 2px solid var(--color-focus);
 		outline-offset: 2px;
 	}
 

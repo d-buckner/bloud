@@ -6,12 +6,32 @@
 	--color-bg: #FAF9F6;
 	--color-bg-elevated: #FFFFFF;
 	--color-bg-subtle: #F5F4F1;
+	/* Every token in this group carries words, so every one clears 4.5:1 on both
+	   surfaces words can sit on: the cream canvas and the white card.
+	   --color-text-muted was #A8A29E, measuring 2.40:1 on the canvas and 2.52:1
+	   on a card. That is not "low emphasis", it is unreadable, and it was the
+	   single root cause of 52 failing text nodes across the four routes. The new
+	   value keeps the same warm hue and the step below --color-text-secondary
+	   (7.25:1) while leaving margin over the 4.5:1 floor, so a future nudge to
+	   the canvas colour cannot quietly put it back under. */
 	--color-text: #1C1917;
 	--color-text-secondary: #57534E;
-	--color-text-muted: #A8A29E;
+	--color-text-muted: #6E6A66;
+	/* Not text. The retired muted value stays available for what is genuinely
+	   decoration: a glyph inside a control that already has its own label, a
+	   hover border. Anything that says a word uses --color-text-muted. */
+	--color-text-faint: #A8A29E;
 	--color-border: #E7E5E4;
 	--color-border-strong: #D6D3D1;
 	--color-border-subtle: #F0EFED;
+
+	/* The one focus ring. It has to survive every surface it can land on, and the
+	   near-black primary button is one of them: --color-accent measures 1.00:1
+	   against itself, which is why the accent-coloured rings scattered through the
+	   components left the browser's own blue showing through wherever one was
+	   missing. This warm amber is 4.77:1 on the canvas, 5.02:1 on a card, 4.57:1
+	   on the subtle fill, and 3.48:1 on the accent. */
+	--color-focus: #B45309;
 
 	/* Accent colors */
 	--color-accent: #1C1917;
@@ -54,4 +74,10 @@
 
 	/* Layout */
 	--sidebar-width: 220px;
+
+	/* The smallest tap target, in CSS rather than in habit. WCAG 2.5.5 asks for
+	   44x44 and Bloud is opened on a phone as often as on a laptop; the audit
+	   measured the sign-out control at 25x25 and the header actions 26px tall.
+	   See the rule in base.css that applies it. */
+	--tap-target-min: 44px;
 }

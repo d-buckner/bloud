@@ -55,6 +55,10 @@
 		return result;
 	});
 
+	// Announced, not printed next to the grid: the count is the only feedback a
+	// filter gives to someone who cannot see the grid redraw.
+	let resultCount = $derived(filteredApps.length);
+
 
 	onMount(async () => {
 		try {
@@ -104,13 +108,22 @@
 		<div class="filters">
 			<div class="filters-row">
 				<div class="search-wrapper">
-					<span class="search-icon">
+					<span class="search-icon" aria-hidden="true">
 						<Icon name="search" size={18} />
 					</span>
+					<!-- type="search" so the browser offers its own clear affordance and a
+					     phone shows the right keyboard; the field had no name at all before,
+					     so a screen reader announced only "edit". aria-controls is what ties
+					     the field to the grid it changes, and the live region below is what
+					     says what the change did, because a filter that redraws a grid in
+					     silence has no visible effect for someone who is not looking at it. -->
 					<input
-						type="text"
+						type="search"
 						class="search-input"
 						placeholder="Search apps..."
+						aria-label="Search apps"
+						autocomplete="off"
+						aria-controls="catalog-results"
 						bind:value={searchQuery}
 					/>
 					{#if searchQuery}
@@ -122,10 +135,14 @@
 			</div>
 
 			{#if categories.length > 0}
-				<div class="category-pills">
+				<!-- aria-pressed rather than a tablist: these are filters over one list,
+				     not views of separate content, and the active state was a black pill
+				     with nothing behind it. -->
+				<div class="category-pills" role="group" aria-label="Filter apps by category">
 					<button
 						class="pill"
 						class:active={selectedCategory === null}
+						aria-pressed={selectedCategory === null}
 						onclick={() => selectedCategory = null}
 					>
 						all
@@ -134,6 +151,7 @@
 						<button
 							class="pill"
 							class:active={selectedCategory === category}
+							aria-pressed={selectedCategory === category}
 							onclick={() => selectedCategory = category}
 						>
 							{category}
@@ -141,6 +159,12 @@
 					{/each}
 				</div>
 			{/if}
+
+			<p class="visually-hidden" role="status" aria-live="polite">
+				{resultCount}
+				{resultCount === 1 ? 'app' : 'apps'} match
+				{#if selectedCategory}in {selectedCategory}{/if}
+			</p>
 		</div>
 
 		{#if filteredApps.length === 0}
@@ -149,7 +173,7 @@
 				<button class="clear-filters-btn" onclick={clearFilters}>Clear filters</button>
 			</div>
 		{:else}
-			<div class="apps-grid">
+			<div class="apps-grid" id="catalog-results">
 				{#each filteredApps as app (app.catalogId)}
 					<CatalogAppCard
 						{app}
@@ -242,7 +266,12 @@
 
 	.search-wrapper {
 		position: relative;
+		/* Width available, capped, rather than a fixed box: a 320px field in a
+		   390px viewport with page padding leaves nothing, and the audit measured
+			 the catalog 140px wider than the screen it was on. */
+		width: 100%;
 		max-width: 320px;
+		min-width: 0;
 	}
 
 	.search-icon {
@@ -258,7 +287,9 @@
 		width: 100%;
 		padding: var(--space-sm) var(--space-md);
 		padding-left: 40px;
-		padding-right: 36px;
+		/* Room for a 44px clear button, which is what the tap-target rule makes it. */
+		padding-right: 48px;
+		min-width: 0;
 		font-family: var(--font-serif);
 		font-size: 0.9375rem;
 		border: 1px solid var(--color-border);
@@ -273,21 +304,22 @@
 	}
 
 	.search-input:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 		box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
 	}
 
 	.search-clear {
 		position: absolute;
-		right: 8px;
+		right: 2px;
 		top: 50%;
 		transform: translateY(-50%);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 24px;
-		height: 24px;
+		/* The global 44px minimum applies to this button, so the field has to be
+		   tall enough to hold it and the glyph has to stay centred inside it. */
+		width: var(--tap-target-min);
+		height: var(--tap-target-min);
 		padding: 0;
 		background: transparent;
 		border: none;
@@ -343,6 +375,19 @@
 			flex-direction: column;
 			gap: var(--space-md);
 			align-items: flex-start;
+		}
+	}
+
+	/* The page gutter is 32px a side, which is 64px of a 390px screen before any
+	   content. Trimming it is what gives the chip row and the search field room
+	   to stop pushing the document wider than the viewport. */
+	@media (max-width: 480px) {
+		.page {
+			padding: var(--space-lg) var(--space-md);
+		}
+
+		.search-wrapper {
+			max-width: none;
 		}
 	}
 </style>

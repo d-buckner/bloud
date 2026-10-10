@@ -14,6 +14,12 @@
 	} from '$lib/utils/providerInputs';
 
 	interface Props {
+		/**
+		 * Notified after a successful add. The only caller ever wanted it so the
+		 * modal could re-read its list; that list is gone, so nothing passes it
+		 * now. Kept as an optional hook rather than a hole in the component's
+		 * contract, because "I saved something" is the caller's business.
+		 */
 		onsaved?: () => void;
 	}
 
@@ -184,8 +190,7 @@
 
 	.provider-form input:focus,
 	.provider-form select:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 	}
 
 	.field-help {

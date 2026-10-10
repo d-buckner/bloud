@@ -52,9 +52,30 @@
 		white-space: nowrap;
 	}
 
+	/* A disabled control has to look switched off, not switched to a different
+	   colour. The old treatment was `opacity: 0.6` over the near-black fill, and
+	   near-black at 60% over the cream canvas composites to #757370: a mid-grey
+	   button, which is precisely what an "enabled but grey" button would look
+	   like. The audit found Save and Test connection indistinguishable for that
+	   reason, and a user who cannot tell whether a control is live does not press
+	   it either way.
+
+	   So disabled is drawn as the absence of a fill: the subtle background, the
+	   muted label, a hairline border. It is the one button state that is not a
+	   filled rectangle at all. The native `disabled` attribute carries the state
+	   to assistive tech; nothing here needs aria-disabled on top of it. */
 	.btn:disabled {
-		opacity: 0.6;
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		border-color: var(--color-border);
+		box-shadow: none;
 		cursor: not-allowed;
+		opacity: 1;
+	}
+
+	.btn.ghost:disabled,
+	.btn.danger:disabled {
+		background: var(--color-bg-subtle);
 	}
 
 	.btn.sm {

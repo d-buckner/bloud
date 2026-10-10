@@ -143,15 +143,13 @@
 	}
 
 	.app-card:has(.card-action:focus-visible) {
-		outline: 2px solid var(--color-accent);
+		outline: 2px solid var(--color-focus);
 		outline-offset: 2px;
 	}
 
 	.card-action {
 		display: block;
 		max-width: 100%;
-		overflow: hidden;
-		text-overflow: ellipsis;
 		padding: 0;
 		margin: 0;
 		background: none;
@@ -160,6 +158,12 @@
 		font: inherit;
 		text-align: left;
 		cursor: pointer;
+		/* Wraps instead of truncating. "AFFiNE" and "AFFiNE ..." are two apps that
+		   install two different things, "Hermes" and "Hermes ..." likewise, and
+		   "Cal" is everything that survived of Calino. A truncated product name is
+		   not a shorter name, it is a different one. */
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 
 	/* The stretched hit area: the whole card is the control, the way it always
@@ -219,8 +223,8 @@
 		margin: 0;
 		font-size: 1rem;
 		font-weight: 500;
-		white-space: nowrap;
 		min-width: 0;
+		max-width: 100%;
 	}
 
 	.app-size {
@@ -246,6 +250,10 @@
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
 		line-height: 1.4;
+		/* Two lines, then a real ellipsis at a word boundary. The -webkit- prefix
+		   is still the only way to get the clamp and the glyph together; without it
+		   the description was cut mid-word, which reads as a bug rather than as
+		   there being more to read. */
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
 		line-clamp: 2;

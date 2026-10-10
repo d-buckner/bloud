@@ -4,12 +4,7 @@
 	import CloseButton from './CloseButton.svelte';
 	import Button from './Button.svelte';
 	import ExternalProviderForm from './ExternalProviderForm.svelte';
-	import {
-		fetchExternalApps,
-		addExternalApp,
-		removeExternalApp,
-		type ExternalApp
-	} from '$lib/clients/settingsClient';
+	import { addExternalApp } from '$lib/clients/settingsClient';
 
 	interface Props {
 		open: boolean;
@@ -18,34 +13,19 @@
 
 	let { open, onclose }: Props = $props();
 
-	let apps = $state<ExternalApp[]>([]);
-	let loading = $state(true);
 	let saving = $state(false);
 	let error = $state('');
-	let kind = $state<'launcher' | 'provider'>('launcher');
 
-	// The add form. A launcher is name + URL + optional icon, nothing more.
+	// Remote app first, and the default. It is the tab that does the work: a
+	// remote install is wired to the apps already on this instance, while a
+	// launcher is a bookmark. The default should open on the thing the user
+	// came here to do, not on the lesser of the two.
+	let kind = $state<'provider' | 'launcher'>('provider');
+
+	// The launcher form. A launcher is name + URL + optional icon, nothing more.
 	let name = $state('');
 	let url = $state('');
 	let icon = $state('');
-
-	// Reload on every open so an app added or removed elsewhere is reflected,
-	// and a stale list never outlives the visit.
-	$effect(() => {
-		if (open) void reload();
-	});
-
-	async function reload() {
-		loading = true;
-		error = '';
-		try {
-			apps = await fetchExternalApps();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not load external apps';
-		} finally {
-			loading = false;
-		}
-	}
 
 	async function handleAdd() {
 		if (!name.trim() || !url.trim()) return;
@@ -56,27 +36,11 @@
 			name = '';
 			url = '';
 			icon = '';
-			await reload();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not add external app';
 		} finally {
 			saving = false;
 		}
-	}
-
-	async function handleRemove(id: string) {
-		error = '';
-		try {
-			await removeExternalApp(id);
-			await reload();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not remove external app';
-		}
-	}
-
-	function kindLabel(app: ExternalApp): string {
-		if (app.kind === 'provider') return `remote ${app.app ?? 'app'}`;
-		return 'launcher';
 	}
 </script>
 
@@ -85,9 +49,14 @@
 		<div>
 			<h2 id="external-app-title">External app</h2>
 			<p class="modal-subtitle">
-				Something Bloud does not run: a shortcut to a site you already use, or a
-				remote install of a catalog app that keeps wiring to your other apps.
+				Something Bloud does not run: a remote install of a catalog app that keeps
+				wiring to your other apps, or a shortcut to a site you already use.
 			</p>
+			<!-- This modal only adds. What is already added is managed where it is
+			     used: launchers and remote installs are tiles on the dashboard, and
+			     their right-click menu configures and removes them; the inference
+			     provider is edited in Settings to AI. A second list here was a second,
+			     worse way to do the same thing. -->
 		</div>
 		<CloseButton onclick={onclose} />
 	</header>
@@ -97,84 +66,76 @@
 			<button
 				type="button"
 				role="tab"
-				class="kind-tab"
-				class:active={kind === 'launcher'}
-				aria-selected={kind === 'launcher'}
-				onclick={() => (kind = 'launcher')}
-			>
-				Launcher
-			</button>
-			<button
-				type="button"
-				role="tab"
+				id="ext-tab-provider"
 				class="kind-tab"
 				class:active={kind === 'provider'}
 				aria-selected={kind === 'provider'}
+				aria-controls="ext-tab-panel"
 				onclick={() => (kind = 'provider')}
 			>
 				Remote app
 			</button>
+			<button
+				type="button"
+				role="tab"
+				id="ext-tab-launcher"
+				class="kind-tab"
+				class:active={kind === 'launcher'}
+				aria-selected={kind === 'launcher'}
+				aria-controls="ext-tab-panel"
+				onclick={() => (kind = 'launcher')}
+			>
+				Launcher
+			</button>
 		</div>
 
-		{#if kind === 'launcher'}
-			<form class="add-form" onsubmit={(e) => { e.preventDefault(); handleAdd(); }}>
-				<label for="ext-name">Name</label>
-				<input
-					id="ext-name"
-					type="text"
-					placeholder="e.g. My NAS"
-					bind:value={name}
-					disabled={saving}
-					autocomplete="off"
-				/>
-				<label for="ext-url">URL</label>
-				<input
-					id="ext-url"
-					type="url"
-					placeholder="https://example.com"
-					bind:value={url}
-					disabled={saving}
-					autocomplete="off"
-					spellcheck="false"
-				/>
-				<label for="ext-icon">Icon URL (optional)</label>
-				<input
-					id="ext-icon"
-					type="text"
-					placeholder="https://example.com/icon.png"
-					bind:value={icon}
-					disabled={saving}
-					autocomplete="off"
-					spellcheck="false"
-				/>
-				<Button variant="primary" size="sm" type="submit" disabled={saving || !name.trim() || !url.trim()}>
-					{saving ? 'Adding…' : 'Add'}
-				</Button>
-			</form>
-		{:else}
-			<ExternalProviderForm onsaved={reload} />
-		{/if}
-
-		{#if loading}
-			<p class="hint">Loading…</p>
-		{:else if apps.length > 0}
-			<ul class="external-list">
-				{#each apps as app (app.id)}
-					<li class="external-row">
-						<div class="external-meta">
-							<span class="external-name">
-								{app.name}
-								<span class="external-kind">{kindLabel(app)}</span>
-							</span>
-							<span class="external-url">{app.url}</span>
-						</div>
-						<Button variant="ghost" size="sm" onclick={() => handleRemove(app.id)}>
-							Remove
-						</Button>
-					</li>
-				{/each}
-			</ul>
-		{/if}
+		<!-- One panel, named by whichever tab is standing: role="tab" with nothing
+		     to control is a promise the assistive technology cannot keep. -->
+		<div
+			role="tabpanel"
+			id="ext-tab-panel"
+			class="kind-panel"
+			aria-labelledby={kind === 'provider' ? 'ext-tab-provider' : 'ext-tab-launcher'}
+		>
+			{#if kind === 'launcher'}
+				<form class="add-form" onsubmit={(e) => { e.preventDefault(); handleAdd(); }}>
+					<label for="ext-name">Name</label>
+					<input
+						id="ext-name"
+						type="text"
+						placeholder="e.g. My NAS"
+						bind:value={name}
+						disabled={saving}
+						autocomplete="off"
+					/>
+					<label for="ext-url">URL</label>
+					<input
+						id="ext-url"
+						type="url"
+						placeholder="https://example.com"
+						bind:value={url}
+						disabled={saving}
+						autocomplete="off"
+						spellcheck="false"
+					/>
+					<label for="ext-icon">Icon URL (optional)</label>
+					<input
+						id="ext-icon"
+						type="text"
+						placeholder="https://example.com/icon.png"
+						bind:value={icon}
+						disabled={saving}
+						autocomplete="off"
+						spellcheck="false"
+					/>
+					<Button variant="primary" size="sm" type="submit" disabled={saving || !name.trim() || !url.trim()}>
+						{saving ? 'Adding…' : 'Add'}
+					</Button>
+				</form>
+			{:else}
+				<ExternalProviderForm />
+			{/if}
+		</div>
 
 		{#if error}
 			<p class="error">{error}</p>
@@ -256,64 +217,13 @@
 	}
 
 	.add-form input:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 	}
 
-	.external-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
+	.kind-panel {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.external-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
 		gap: var(--space-md);
-		padding: var(--space-sm) var(--space-md);
-		background: var(--color-bg);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-	}
-
-	.external-meta {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		min-width: 0;
-	}
-
-	.external-name {
-		font-weight: 500;
-		display: flex;
-		gap: var(--space-sm);
-		align-items: baseline;
-	}
-
-	.external-kind {
-		font-size: 0.6875rem;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: var(--color-text-muted);
-		font-weight: 400;
-	}
-
-	.external-url {
-		color: var(--color-text-muted);
-		font-size: 0.8125rem;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.hint {
-		color: var(--color-text-muted);
-		font-size: 0.875rem;
-		margin: 0;
 	}
 
 	.error {

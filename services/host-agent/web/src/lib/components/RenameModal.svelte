@@ -104,8 +104,7 @@
 	}
 
 	.modal-body input:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 	}
 
 	.modal-footer {
