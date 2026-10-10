@@ -18,7 +18,9 @@ so the published credential is checked by the thing it was given.
 
 - `requestManager` (Seerr): the key Seerr generated for itself, published by
   `apps/seerr` under the same contract, plus the `default_user` account requests
-  are attributed to.
+  are attributed to. That account is the Jellyfin bootstrap admin Seerr onboarded
+  from, published as a runtime value because its username is per-install (see
+  `apps/seerr/INTEGRATION.md`).
 - `pvr` (Radarr/Sonarr): the key each Servarr publishes under its own `pvr`
   offer.
 - `mediaServer` (Jellyfin): a named API key this app mints through the bootstrap
