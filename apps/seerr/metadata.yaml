@@ -48,6 +48,17 @@ integrations:
 sso:
   strategy: none
 
+# Seerr is a source app: it provides the request manager an agent asks to take
+# requests on the user's behalf. The key is the one Seerr generated for itself
+# (settings.json main.apiKey), published at runtime by the configurator; the
+# account is the admin Seerr creates during onboarding, the identity every
+# request is attributed to.
+provides:
+  requestManager:
+    secrets: [apiKey]
+    values:
+      defaultUser: bloud-admin@localhost
+
 containers:
   # One container, one volume: Seerr keeps everything (settings.json, the
   # SQLite database, logs, cache) in /app/config. SQLite is the built-in

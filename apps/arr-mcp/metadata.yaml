@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: arr-mcp
+displayName: Arr MCP
+description: MCP tool server over the request and arr stack, so an agent can answer what was requested and what is stuck
+category: productivity
+port: 6060
+estimatedSizeMB: 800
+
+# No browser UI of its own: the wrapper serves an MCP endpoint and nothing to
+# click, so the dashboard draws no tile for it. The image does ship a config UI
+# on /ui, but Bloud claims and manages it rather than treating it as the app's
+# page; the only consumer-facing surface is the MCP endpoint.
+headless: true
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # Seerr is what this app exists to serve: an agent that cannot reach the
+  # request manager has nothing to answer. Required, so installing this pulls
+  # Seerr with it and the graph orders Seerr's convergence ahead of this node.
+  requestManager:
+    required: true
+    multi: false
+    requires:
+      - apiKey
+    compatible:
+      - app: seerr
+        default: true
+  # The Servarrs a request is handed to. Optional and multi: whichever are
+  # installed are wired, and installing one later re-runs this node through the
+  # integration staleness path.
+  pvr:
+    required: false
+    multi: true
+    requires:
+      - apiKey
+    compatible:
+      - app: sonarr
+      - app: radarr
+  # The media server a request is ultimately watched on. Optional: the agent
+  # can answer requests without knowing the library. The key this app calls
+  # Jellyfin with is minted on its behalf through the bootstrap admin login the
+  # `mediaServer` contract publishes, the same way apps/jellyfin-mcp does it.
+  mediaServer:
+    required: false
+    multi: false
+    requires:
+      - adminPassword
+    compatible:
+      - app: jellyfin
+        default: true
+
+# The `mcp` contract a harness (Hermes) consumes, under an `arr-mcp` namespace.
+# `httpToken` is the bearer this app's own listener requires: the listener
+# rejects both a missing and an incorrect one, so the credential a harness
+# presents is checked by the thing it was given.
+#
+# The config UI password is a client credential: the operator needs it to log
+# in and manage tokens, and Bloud reveals it once through the client-credentials
+# flow rather than writing it to a file the app itself reads.
+provides:
+  mcp:
+    secrets: [httpToken]
+    values:
+      serverName: arr-mcp
+      path: /mcp
+  clientPassword:
+    secrets: [password]
+    clientAccess:
+      secret: password
+      reveal: once
+      rotate: bloud
+      label: "Config UI password"
+      reaches: "the arr-mcp config UI, which shows every configured service and can mint and revoke MCP tokens"
+      snippet: url-and-password
+
+containers:
+  - name: apps-arr-mcp
+    # arr-mcp 1.41.1. Pinned by digest as well as by tag, the same shape as
+    # apps/jellyfin-mcp: the tag carries the intent and the digest carries the
+    # evidence. Multi-arch (amd64 and arm64). Upstream ships several releases a
+    # day, so a bump is a review of the tool surface rather than a dependency
+    # refresh.
+    image: ghcr.io/bardesss/arr-mcp:1.41.1@sha256:efa7b7addcbce5b761fd9e7aef00d33aedc89be0a095d51300af9514d9acd209
+    network: apps-net
+    restartPolicy: always
+    environment:
+      ARR_MCP_PORT: "6060"
+    ports:
+      - host: 6060
+        container: 6060
+    # The image reads /config/config.yaml and writes it back when its config UI
+    # saves. Bloud writes the file in PreStart; the directory is world-writable
+    # for the same reason apps/seerr's config dir is: the image runs as a uid
+    # Bloud cannot set, and the UI's save needs to replace the file.
+    volumes:
+      - source: "{{appDataDir}}/config"
+        destination: /config
+    healthCheck:
+      # /healthz is liveness only: it answers 200 as long as the process is up,
+      # even when the config failed validation. The functional gate is PostStart,
+      # where the MCP handshake against a broken config fails (the server serves
+      # 503 on /mcp in repair mode).
+      test:
+        ["CMD-SHELL", "wget -qO- http://127.0.0.1:6060/healthz >/dev/null || exit 1"]
+      interval: 5
+      timeout: 10
+      retries: 30

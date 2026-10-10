@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -83,6 +84,80 @@ func (a *jellyfinAPI) authenticate(ctx context.Context, username, password strin
 		return "", err
 	}
 	return out.AccessToken, nil
+}
+
+// --- API keys ---
+
+// apiKeyList is the /auth/keys response: the server's whole API key table.
+type apiKeyList struct {
+	Items []struct {
+		AccessToken string `json:"AccessToken"`
+		AppName     string `json:"AppName"`
+	} `json:"Items"`
+}
+
+// EnsureAPIKey returns the value of the Jellyfin API key named keyName, creating
+// it when the server has no key under that name. It is the consumer-side mint
+// the MCP wrappers over Jellyfin need: log in with the bootstrap admin
+// credential, adopt the named key if it exists, and create it only when it does
+// not. Lookup before create, because create is not idempotent: Jellyfin appends
+// a new key every time, so a configurator that minted without looking would
+// stack identical keys on every database reset that re-ran the pass.
+func EnsureAPIKey(ctx context.Context, f configurator.ClientFactory, baseURLFn func() string, username, password, keyName string) (string, error) {
+	return newAPI(f, baseURLFn).ensureAPIKey(ctx, username, password, keyName)
+}
+
+func (a *jellyfinAPI) ensureAPIKey(ctx context.Context, username, password, keyName string) (string, error) {
+	session, err := a.authenticate(ctx, username, password)
+	if err != nil {
+		return "", err
+	}
+	if key, found, err := a.findAPIKey(ctx, session, keyName); err != nil {
+		return "", err
+	} else if found {
+		return key, nil
+	}
+	if err := a.createAPIKey(ctx, session, keyName); err != nil {
+		return "", err
+	}
+	key, found, err := a.findAPIKey(ctx, session, keyName)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("jellyfin created no API key named %q", keyName)
+	}
+	return key, nil
+}
+
+// findAPIKey looks the key named keyName up in the server's key table.
+func (a *jellyfinAPI) findAPIKey(ctx context.Context, session, keyName string) (string, bool, error) {
+	var list apiKeyList
+	err := a.cl.GET("/auth/keys").
+		Header("Authorization", mediaBrowserAuth(session)).
+		OK(http.StatusOK).
+		DoInto(ctx, &list)
+	if err != nil {
+		return "", false, fmt.Errorf("reading the jellyfin API key table: %w", err)
+	}
+	for _, item := range list.Items {
+		if item.AppName == keyName && item.AccessToken != "" {
+			return item.AccessToken, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// createAPIKey asks Jellyfin for a key named keyName. The name is a query
+// parameter, not a request body: the endpoint takes `?app=`.
+func (a *jellyfinAPI) createAPIKey(ctx context.Context, session, keyName string) error {
+	if _, err := a.cl.POST("/auth/keys?app="+url.QueryEscape(keyName)).
+		Header("Authorization", mediaBrowserAuth(session)).
+		OK(http.StatusOK, http.StatusNoContent).
+		Do(ctx); err != nil {
+		return fmt.Errorf("creating the jellyfin API key %q: %w", keyName, err)
+	}
+	return nil
 }
 
 // --- system info + readiness waits ---

@@ -4,7 +4,11 @@
 and `apps/jellyfin-mcp`, all consumed by Hermes. AFFiNE's own MCP server is
 deliberately not exposed.
 **Last updated:** 2026-10-14
-**Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md)
+**Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md),
+[plans/arr-mcp-provider.md](../plans/arr-mcp-provider.md) for a provider that
+fills several contracts at once, and
+[plans/native-mcp-endpoint.md](../plans/native-mcp-endpoint.md) for the tools a
+wrapper cannot write
 
 ---
 

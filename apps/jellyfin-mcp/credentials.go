@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"codeberg.org/d-buckner/bloud/apps/jellyfin"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -96,8 +97,7 @@ func (c *Configurator) ensureJellyfinAPIKey(ctx context.Context, server configur
 	if stored := c.secrets.GetAppSecret(appName, jellyfinAPIKeyKey); stored != "" {
 		return stored, nil
 	}
-	jf := newJellyfinClient(c.providerClient(server.ProviderRef))
-	key, err := jf.ensureAPIKey(ctx, server.AdminUsername, server.AdminPassword, jellyfinKeyName)
+	key, err := jellyfin.EnsureAPIKey(ctx, c.clients, func() string { return server.LocalURL }, server.AdminUsername, server.AdminPassword, jellyfinKeyName)
 	if err != nil {
 		return "", err
 	}

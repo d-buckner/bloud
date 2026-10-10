@@ -340,6 +340,22 @@ type PVRBinding struct {
 	APIKey string
 }
 
+// RequestManagerBinding is the app an agent asks to take requests on the
+// user's behalf: the consumer needs the key its API authenticates with and the
+// account requests are attributed to.
+type RequestManagerBinding struct {
+	ProviderRef
+	// APIKey is the key the provider's API authenticates with, published under
+	// its `requestManager` contract. Empty while the provider has not published
+	// it yet (treat that as "not ready", never as an empty credential).
+	APIKey string
+	// DefaultUser is the account requests are attributed to when the agent does
+	// not name one. A Bloud-booted provider publishes the managed account it
+	// made during onboarding; an off-host provider has no account Bloud knows,
+	// so the value is empty there and the agent must name a user explicitly.
+	DefaultUser string
+}
+
 // MediaServerBinding is an app that serves media and owns the accounts a
 // consumer onboards against: the consumer needs the bootstrap admin password to
 // log in.
@@ -517,6 +533,7 @@ type ICSFeedBinding struct {
 // not a change to every consumer.
 type Integrations struct {
 	PVRs            []PVRBinding
+	RequestManagers []RequestManagerBinding
 	MediaServers    []MediaServerBinding
 	DownloadClients []DownloadClientBinding
 	SSO             []SSOBinding

@@ -109,7 +109,7 @@ func newFakeJellyfin(t *testing.T) *fakeJellyfin {
 		f.logins++
 		f.usernames = append(f.usernames, body.Username)
 		f.mu.Unlock()
-		if !strings.Contains(r.Header.Get("Authorization"), `Client="jellyfin-mcp"`) {
+		if !strings.Contains(r.Header.Get("Authorization"), `Client="Bloud"`) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

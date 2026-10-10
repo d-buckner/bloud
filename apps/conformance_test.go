@@ -45,6 +45,7 @@ type appSpec struct {
 var conformanceTable = []appSpec{
 	{Dir: "affine", Node: "apps-affine", DefaultPort: 3010, WithSSO: true},
 	{Dir: "affine-mcp", Node: "apps-affine-mcp", DefaultPort: 9222},
+	{Dir: "arr-mcp", Node: "apps-arr-mcp", DefaultPort: 6060},
 	{Dir: "calino", Node: "apps-calino", DefaultPort: 8180},
 	{Dir: "dav-mcp", Node: "apps-dav-mcp", DefaultPort: 9333},
 	{Dir: "hermes", Node: "apps-hermes", DefaultPort: 9119, WithSSO: true},

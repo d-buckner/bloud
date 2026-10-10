@@ -23,6 +23,7 @@ import (
 	// runtime-dependent and always needed.
 	_ "codeberg.org/d-buckner/bloud/apps/affine"
 	_ "codeberg.org/d-buckner/bloud/apps/affine-mcp"
+	_ "codeberg.org/d-buckner/bloud/apps/arr-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/calino"
 	_ "codeberg.org/d-buckner/bloud/apps/dav-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/hermes"
@@ -56,6 +57,7 @@ func NodeNames() []string {
 	return []string{
 		"apps-affine",
 		"apps-affine-mcp",
+		"apps-arr-mcp",
 		"apps-calino",
 		"apps-dav-mcp",
 		"apps-hermes",

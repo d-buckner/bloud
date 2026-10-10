@@ -28,7 +28,6 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
@@ -214,15 +213,6 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	}
 	c.logger.Info("jellyfin-mcp is serving MCP and reaching Jellyfin through it")
 	return nil
-}
-
-// providerClient builds the client a configurator uses to reach a provider
-// *from the host* (its own API calls): the binding's LocalURL, never the
-// address stored for the app's containers.
-func (c *Configurator) providerClient(ref configurator.ProviderRef) *appclient.Client {
-	return c.clients.New(appclient.Spec{Name: ref.App, BaseURLFn: func() string {
-		return ref.LocalURL
-	}})
 }
 
 // currentBearer reads the MCP bearer this app publishes without generating

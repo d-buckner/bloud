@@ -296,6 +296,8 @@ func (o *Orchestrator) bindContract(
 	switch contract {
 	case "pvr":
 		out.PVRs = append(out.PVRs, configurator.PVRBinding{ProviderRef: ref, APIKey: o.publishedSecret(src, contract, offer, requires)})
+	case "requestManager":
+		out.RequestManagers = append(out.RequestManagers, o.requestManagerBinding(ref, contract, offer, src, requires))
 	case "mediaServer":
 		out.MediaServers = append(out.MediaServers, configurator.MediaServerBinding{
 			ProviderRef:   ref,
@@ -363,15 +365,35 @@ func (o *Orchestrator) bindContract(
 			CalendarName: offer.Values["calendarName"],
 		})
 	default:
-		// Contracts with no payload (proxy, database) need no consumer input
-		// beyond the address, which the graph edge already encodes. A contract
-		// that *does* carry a payload and lands here is a bug in this switch,
-		// and silence would look exactly like "the provider published nothing",
-		// so say so.
-		if spec, known := catalog.ContractFor(contract); known && (len(spec.Secrets) > 0 || len(spec.Values) > 0) {
-			o.logger.Warn("integration contract carries a payload but has no binding here; consumers of it receive nothing",
-				"contract", contract, "provider", src.id)
-		}
+		// A contract that carries a payload and lands here is a bug: silence
+		// would look like "the provider published nothing", so say so.
+		o.warnUnboundPayload(contract, src)
+	}
+}
+
+// warnUnboundPayload logs when a contract that carries a payload reaches the
+// default arm of bindContract, which is the only signal that a binding was
+// forgotten: silence would look exactly like "the provider published nothing".
+func (o *Orchestrator) warnUnboundPayload(contract string, src providerSource) {
+	if spec, known := catalog.ContractFor(contract); known && (len(spec.Secrets) > 0 || len(spec.Values) > 0) {
+		o.logger.Warn("integration contract carries a payload but has no binding here; consumers of it receive nothing",
+			"contract", contract, "provider", src.id)
+	}
+}
+
+// requestManagerBinding builds one request-manager binding: the provider's key
+// and the account requests are attributed to when the agent names none.
+func (o *Orchestrator) requestManagerBinding(
+	ref configurator.ProviderRef,
+	contract string,
+	offer catalog.ContractProvides,
+	src providerSource,
+	requires []string,
+) configurator.RequestManagerBinding {
+	return configurator.RequestManagerBinding{
+		ProviderRef: ref,
+		APIKey:      o.publishedSecret(src, contract, offer, requires),
+		DefaultUser: o.contractValue(src, contract, offer, "defaultUser"),
 	}
 }
 

@@ -979,7 +979,9 @@ combined with instance/SSH-target env vars). Instance overrides:
    opt-in plain-HTTP dev switch; see its `INTEGRATION.md`), `apps/affine-mcp`
    (the wrapper shape: consumes the `appApi` credential from AFFiNE, generates
    and publishes its own MCP bearer, writes the image's saved config file; see
-   its `INTEGRATION.md`).
+   its `INTEGRATION.md`), `apps/arr-mcp` (multi-contract MCP wrapper:
+   `requestManager` + `pvr` + `mediaServer`, writes the image's `config.yaml`,
+   claims its config UI via `clientPassword`; see its `INTEGRATION.md`).
 
 ## Integration validation runs the real dependency-graph path
 

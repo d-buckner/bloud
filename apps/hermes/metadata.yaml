@@ -53,6 +53,12 @@ integrations:
       # it here is what lets Hermes register the namespace; `mcp` is optional
       # and multi, so neither app is required.
       - app: affine-mcp
+      # The request and arr stack. Seerr holds the requests and `apps/arr-mcp`
+      # exposes them together with whichever Servarrs are installed, so "what
+      # was requested and what is stuck" reaches the apps the household already
+      # uses. Same shape as the wrappers around it: Hermes changes nothing when
+      # another MCP app appears.
+      - app: arr-mcp
       # The calendar. Radicale holds the family calendar and the synced
       # Radarr/Sonarr feeds, and `apps/dav-mcp` exposes them as a tool
       # namespace, which is what turns "what's on the shared calendar this

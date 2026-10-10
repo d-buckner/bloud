@@ -72,6 +72,13 @@ var contracts = []Contract{
 	// pushes indexers into it, Seerr hands it requests).
 	{Name: "pvr", Secrets: []string{"apiKey"}},
 
+	// A request manager (Seerr) hands the consumer the key its own API
+	// authenticates with, plus the account requests are attributed to. The
+	// account is a value rather than a secret because it is a label the manager
+	// itself shows, not a credential: Seerr attributes every request the agent
+	// makes to the user named here, which Bloud created during onboarding.
+	{Name: "requestManager", Secrets: []string{"apiKey"}, Values: []ValueSpec{{Key: "defaultUser"}}},
+
 	// An ICS calendar feed a calendar server subscribes to on the user's
 	// behalf. The provider hands over the path to its feed and the key that
 	// authenticates it; the consumer (Radicale's ics-sync storage plugin)
