@@ -30,7 +30,7 @@ and it never picks one. arr-mcp is that rule with three contracts instead of one
 ```yaml
 integrations:
   requestManager:
-    required: true
+    required: false
     compatible:
       - app: seerr
         default: true
@@ -53,9 +53,9 @@ declared edges order each provider's convergence, and the staleness re-run
 re-runs `PostStart` when a provider transitions. No framework change is needed
 beyond the one new contract below.
 
-`requestManager` is `required: true` so an install always arrives with something
-to serve. That choice is deliberate and is discussed under "Two things this
-deliberately does not do".
+All three integrations are optional, so an install with none of the providers
+installed converges with an empty tool set rather than failing. The choice is
+deliberate and is discussed under "Two things this deliberately does not do".
 
 `downloadClient` is out of scope for this change. It is not a rejection: the
 contract carries no credential today, and adding the line later is a metadata
@@ -192,9 +192,9 @@ strategy, validation level, file globs and `e2e-project`, per
 
 **It does not add a cross-contract "at least one of these N".** `required` is
 per-contract, so Bloud cannot express "installing this needs some provider from
-this set". The tempting fix is a new framework concept. The cheap one is what is
-in the metadata above: make `requestManager` required, so the app always installs
-with something to serve, and let the optional contracts only ever add. The
+this set". The tempting fix is a new framework concept. The chosen behaviour is
+simpler: every integration is optional, so an arr-mcp with nothing installed
+converges with an empty tool set and grows capability as apps are added. The
 expressiveness gap is real and small; it is recorded rather than closed.
 
 **It does not add a permission model.** arr-mcp supports per-instance permission

@@ -231,3 +231,44 @@ func TestPostStartToleratesStatelessServer(t *testing.T) {
 
 	require.NoError(t, c.PostStart(t.Context(), state))
 }
+
+// TestPostStartPassesWithNothingWired pins that an arr-mcp installed without
+// Seerr (or any provider) still converges: the handshake proves the server is
+// serving, and stack_health answering with an empty services list is a valid
+// empty state, not a fault.
+func TestPostStartPassesWithNothingWired(t *testing.T) {
+	secrets := newFakeSecrets()
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: configurator.ClientFactory{}})
+	state := &configurator.AppState{DataPath: t.TempDir()}
+	_, err := c.PreStart(t.Context(), state)
+	require.NoError(t, err)
+	bearer := c.currentBearer()
+	require.NotEmpty(t, bearer)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != mcpEndpoint {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+bearer {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		body := string(raw)
+		switch {
+		case strings.Contains(body, `"initialize"`):
+			sseMessage(w, `{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"arr-mcp","version":"1.41.1"}}}`)
+		case strings.Contains(body, `"notifications/initialized"`):
+			w.WriteHeader(http.StatusAccepted)
+		case strings.Contains(body, `"tools/call"`):
+			sseMessage(w, `{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"No configured services."}],"structuredContent":{"services":[],"degraded":[]}}}`)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c.baseURL = srv.URL
+
+	require.NoError(t, c.PostStart(t.Context(), state))
+}

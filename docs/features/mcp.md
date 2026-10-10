@@ -65,8 +65,8 @@ history, including the point where the built-in provider was removed.
 
 `apps/arr-mcp` is the third provider and the first that fills several contracts
 at once: `requestManager` (Seerr), `pvr` (the Servarrs) and `mediaServer`
-(Jellyfin), all optional except the first. The wrapper shape is unchanged from
-the other two; it is declared once per target instead of once per app.
+(Jellyfin), all optional. The wrapper shape is unchanged from the other two; it
+is declared once per target instead of once per app.
 
 One of those targets uses a trick the wrapper shape grew: the `appApi` contract
 hands a wrapper an existing account's password, but Jellyfin has a better
