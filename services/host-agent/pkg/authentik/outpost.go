@@ -4,7 +4,6 @@ package authentik
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 )
@@ -80,24 +79,14 @@ func (c *Client) findEmbeddedOutpost(ctx context.Context) (*OutpostResponse, err
 // rather than the server's internal bind address. Safe to call repeatedly: only patches
 // when the value differs.
 func (c *Client) EnsureEmbeddedOutpostHost(ctx context.Context, baseURL string) error {
-	outpost, err := c.findEmbeddedOutpost(ctx)
+	// The list endpoint serializes an outpost with every field the detail endpoint
+	// does, config included, so one request serves both the read and the write.
+	full, err := c.embeddedOutpostRaw(ctx)
 	if err != nil {
-		return fmt.Errorf("finding embedded outpost: %w", err)
+		return err
 	}
-	if outpost == nil {
+	if full == nil {
 		return nil // Not set up yet; will be called again after setup
-	}
-
-	// Fetch full outpost object to get current config
-	path := "/api/v3/outposts/instances/" + outpost.PK + "/"
-	body, err := c.cl.GET(path).Do(ctx)
-	if err != nil {
-		return fmt.Errorf("fetching outpost: %w", err)
-	}
-
-	var full map[string]any
-	if err := json.Unmarshal(body, &full); err != nil {
-		return fmt.Errorf("parsing outpost: %w", err)
 	}
 
 	config, _ := full["config"].(map[string]any)
@@ -111,10 +100,32 @@ func (c *Client) EnsureEmbeddedOutpostHost(ctx context.Context, baseURL string) 
 	config["authentik_host"] = baseURL
 	full["config"] = config
 
-	if err := c.cl.PUT(path).JSON(full).OK(http.StatusOK).Exec(ctx); err != nil {
+	pk, _ := full["pk"].(string)
+	if err := c.cl.PUT("/api/v3/outposts/instances/" + pk + "/").JSON(full).OK(http.StatusOK).Exec(ctx); err != nil {
 		return fmt.Errorf("updating outpost host: %w", err)
 	}
 	return nil
+}
+
+// embeddedOutpostRaw returns the embedded outpost exactly as Authentik rendered
+// it, or nil when there is none. The raw form is what a full PUT has to send back,
+// so the caller can diff and write from the same value.
+func (c *Client) embeddedOutpostRaw(ctx context.Context) (map[string]any, error) {
+	var result struct {
+		Results []map[string]any `json:"results"`
+	}
+	if err := c.cl.GET("/api/v3/outposts/instances/").
+		Query("search", "Embedded").
+		DoInto(ctx, &result); err != nil {
+		return nil, fmt.Errorf("searching outposts: %w", err)
+	}
+
+	for _, outpost := range result.Results {
+		if outpost["name"] == "authentik Embedded Outpost" {
+			return outpost, nil
+		}
+	}
+	return nil, nil
 }
 
 // updateOutpostProviders updates the providers list for an outpost

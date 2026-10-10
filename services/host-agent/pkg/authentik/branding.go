@@ -11,13 +11,27 @@ import (
 	"time"
 )
 
+// The three names Bloud owns in Authentik's login UI. They appear on both the
+// read and the write side of EnsureLoginConfiguration, so they live here once.
+const (
+	bloudFlowSlug            = "default-authentication-flow"
+	bloudFlowTitle           = "Sign in to Bloud"
+	bloudIdentificationStage = "default-authentication-identification"
+)
+
 // EnsureLoginConfiguration applies Bloud-specific login page settings:
 // - Sets the authentication flow title to "Sign in to Bloud"
 // - Configures the identification stage to only accept username (not email)
 // This is idempotent: safe to call on every PostStart.
 //
+// It reads before it writes. On a steady-state pass both settings already say
+// what Bloud wants, and the whole step is two GETs. Without the read the step
+// patched both settings, slept 3 seconds to catch a blueprint overwriting them,
+// and re-read both -- on every convergence pass, forever, which was 3 seconds of
+// every pass on an idle box spent doing nothing (issue #306).
+//
 // Authentik creates default flows asynchronously via blueprints after the health endpoint
-// returns ready, so we retry until our changes stick. The blueprint for the default
+// returns ready, so the patch path retries until our changes stick. The blueprint for the default
 // authentication flow runs during startup and can overwrite a patch applied just before it
 // completes. We detect this by re-reading the flow title 3 seconds after patching: if a
 // blueprint reset it, the outer loop retries, eventually patching after all blueprints finish.
@@ -31,6 +45,13 @@ func (c *Client) EnsureLoginConfiguration(ctx context.Context) error {
 		timeout  = 2 * time.Minute
 		interval = 10 * time.Second
 	)
+
+	// A read that fails is not a reason to give up: the flow may not exist yet,
+	// which is precisely the case the patch loop below waits out. Fall through.
+	if ok, err := c.loginConfigurationMatches(ctx); err == nil && ok {
+		return nil
+	}
+
 	deadline := time.Now().Add(timeout)
 
 	for {
@@ -49,14 +70,32 @@ func (c *Client) EnsureLoginConfiguration(ctx context.Context) error {
 	}
 }
 
+// loginConfigurationReportsMatch reports whether both login settings already
+// say what Bloud wants, so the caller can skip the patch-and-verify loop.
+func (c *Client) loginConfigurationMatches(ctx context.Context) (bool, error) {
+	title, err := c.getFlowTitle(ctx, bloudFlowSlug)
+	if err != nil {
+		return false, err
+	}
+	if title != bloudFlowTitle {
+		return false, nil
+	}
+
+	userFields, err := c.getIdentificationStageUserFields(ctx, bloudIdentificationStage)
+	if err != nil {
+		return false, err
+	}
+	return len(userFields) == 1 && userFields[0] == "username", nil
+}
+
 // applyAndVerifyLoginConfiguration patches the flow title and identification stage, then
 // waits 3 seconds and re-reads both to confirm a blueprint didn't overwrite them.
 func (c *Client) applyAndVerifyLoginConfiguration(ctx context.Context) error {
-	if err := c.ensureFlowTitle(ctx, "default-authentication-flow", "Sign in to Bloud"); err != nil {
+	if err := c.ensureFlowTitle(ctx, bloudFlowSlug, bloudFlowTitle); err != nil {
 		return fmt.Errorf("ensuring flow title: %w", err)
 	}
 
-	if err := c.ensureIdentificationStageUsernameOnly(ctx, "default-authentication-identification"); err != nil {
+	if err := c.ensureIdentificationStageUsernameOnly(ctx, bloudIdentificationStage); err != nil {
 		return fmt.Errorf("ensuring identification stage: %w", err)
 	}
 
@@ -66,15 +105,15 @@ func (c *Client) applyAndVerifyLoginConfiguration(ctx context.Context) error {
 		return err
 	}
 
-	title, err := c.getFlowTitle(ctx, "default-authentication-flow")
+	title, err := c.getFlowTitle(ctx, bloudFlowSlug)
 	if err != nil {
 		return fmt.Errorf("verifying flow title: %w", err)
 	}
-	if title != "Sign in to Bloud" {
+	if title != bloudFlowTitle {
 		return fmt.Errorf("flow title was reset to %q by a blueprint, will retry", title)
 	}
 
-	userFields, err := c.getIdentificationStageUserFields(ctx, "default-authentication-identification")
+	userFields, err := c.getIdentificationStageUserFields(ctx, bloudIdentificationStage)
 	if err != nil {
 		return fmt.Errorf("verifying identification stage: %w", err)
 	}
@@ -172,6 +211,10 @@ func (c *Client) ensureIdentificationStageUsernameOnly(ctx context.Context, stag
 // which forbid @import rules in branding_custom_css.
 // This is idempotent: safe to call on every PostStart.
 //
+// The PATCH is skipped when the brand already carries this CSS. The lookup that
+// finds the brand already returns the field, so the check is free, and on an idle
+// instance it is the difference between a read and a write every minute.
+//
 // The default brand is created by an Authentik migration, which can lag
 // behind the server readiness probe on slow hosts (cold CI runners). A
 // PostStart error is terminal in the reconciler (ERROR status is never
@@ -183,10 +226,10 @@ func (c *Client) EnsureBranding(ctx context.Context, css string) error {
 		retryDelay  = 4 * time.Second
 	)
 
-	brandPK := ""
+	brand := brandRef{}
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		brandPK, lastErr = c.defaultBrandPK(ctx)
+		brand, lastErr = c.defaultBrand(ctx)
 		if lastErr == nil {
 			break
 		}
@@ -199,11 +242,14 @@ func (c *Client) EnsureBranding(ctx context.Context, css string) error {
 			}
 		}
 	}
-	if brandPK == "" {
+	if brand.PK == "" {
 		return lastErr
 	}
+	if brand.CustomCSS == css {
+		return nil
+	}
 
-	return c.cl.PATCH("/api/v3/core/brands/" + brandPK + "/").
+	return c.cl.PATCH("/api/v3/core/brands/" + brand.PK + "/").
 		JSON(map[string]string{"branding_custom_css": css}).
 		OK(http.StatusOK).
 		Exec(ctx)
@@ -213,23 +259,27 @@ func (c *Client) EnsureBranding(ctx context.Context, css string) error {
 // still running).
 var errBrandNotFound = fmt.Errorf("default brand not found")
 
-// defaultBrandPK returns the UUID of the default Authentik brand
-// (domain = "authentik-default"), or errBrandNotFound while it does not exist.
-func (c *Client) defaultBrandPK(ctx context.Context) (string, error) {
+// brandRef is the slice of an Authentik brand this package diffs.
+type brandRef struct {
+	PK        string `json:"brand_uuid"`
+	CustomCSS string `json:"branding_custom_css"`
+}
+
+// defaultBrand returns the default Authentik brand (domain =
+// "authentik-default"), or errBrandNotFound while it does not exist.
+func (c *Client) defaultBrand(ctx context.Context) (brandRef, error) {
 	var result struct {
-		Results []struct {
-			PK string `json:"brand_uuid"`
-		} `json:"results"`
+		Results []brandRef `json:"results"`
 	}
 	if err := c.cl.GET("/api/v3/core/brands/").
 		Query("domain", "authentik-default").
 		OK(http.StatusOK).
 		DoInto(ctx, &result); err != nil {
-		return "", fmt.Errorf("fetching brands: %w", err)
+		return brandRef{}, fmt.Errorf("fetching brands: %w", err)
 	}
 
 	if len(result.Results) == 0 {
-		return "", errBrandNotFound
+		return brandRef{}, errBrandNotFound
 	}
-	return result.Results[0].PK, nil
+	return result.Results[0], nil
 }

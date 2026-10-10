@@ -615,7 +615,16 @@ combined with instance/SSH-target env vars). Instance overrides:
    sees. A cap of two once denied the third of three real changes to Radicale's
    `sharing.csv` -- which Radicale reads only at startup, verified by hand --
    and left the container serving a tree that disagreed with the file on disk
-   until the next install. See `resync_watchdog.go`.
+   until the next install. See `resync_watchdog.go`. A resync that never restarts
+   anything can still be wrong, and the restart watch cannot see that one: a node
+   whose no-op pass costs seconds is not failing, it is just expensive, and it
+   sits in front of every install queued behind it. `resync_cost.go` is the second
+   watch, same shape and same rule (observe, never withhold): a node whose resync
+   keeps exceeding `DefaultResyncCostBudget` (5s) raises a WARN and an entry on
+   `OrchestratorStatus.ResyncCostSignals`. The case it caught was Authentik
+   spending 15.6s of every pass re-provisioning itself; the fix was to make the
+   no-op path a read, never to skip the diff. See
+   `apps/authentik/integration.md`.
 3. **Apps own their infrastructure.** Apps that need databases declare their own
    postgres/redis containers in `containers:` (e.g. Immich: pgvector postgres +
    redis + server + ML). There is no shared per-app database in the product path.

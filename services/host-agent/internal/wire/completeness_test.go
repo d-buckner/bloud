@@ -31,6 +31,11 @@ var optionalConfigFields = map[string]string{
 	// when this stays zero. It is a field rather than a constant so a future
 	// operator override has somewhere to land without a new seam.
 	"ResyncRestartWarnAt": "zero means the watchdog applies DefaultResyncRestartWarnAt",
+	// The resync cost budget is not a per-deployment knob either, for the same
+	// reason: the product value is what an idle instance costs, which the watch
+	// applies when this stays zero.
+	"ResyncCostBudget": "zero means the watch applies DefaultResyncCostBudget",
+	"ResyncCostWarnAt": "zero means the watch applies DefaultResyncCostWarnAt",
 }
 
 // forEachExportedField walks every exported field of OrchestratorConfig,

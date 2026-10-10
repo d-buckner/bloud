@@ -200,6 +200,7 @@ func (o *Orchestrator) Status() OrchestratorStatus {
 		LoopStopped:          o.Stopped(),
 		LastConverged:        o.LastConverged(),
 		ResyncRestartSignals: o.ResyncRestartSignals(),
+		ResyncCostSignals:    o.ResyncCostSignals(),
 	}
 }
 

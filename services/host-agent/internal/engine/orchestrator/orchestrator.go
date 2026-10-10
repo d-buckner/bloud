@@ -50,6 +50,12 @@ type OrchestratorStatus struct {
 	// never settles. The restarts still happen; this is the record that says
 	// something is wrong. Empty when no node has crossed the threshold.
 	ResyncRestartSignals []ResyncRestartSignal `json:"resyncRestartSignals,omitempty"`
+	// ResyncCostSignals lists the nodes whose config resync keeps exceeding the
+	// cost budget. Nothing is failing on those nodes, which is exactly why they
+	// need a signal of their own: a no-op that costs seconds every pass is a slow
+	// instance, not a broken one, and it is invisible to every other watch.
+	// Empty when no node has crossed the threshold.
+	ResyncCostSignals []ResyncCostSignal `json:"resyncCostSignals,omitempty"`
 }
 
 // ActivityEvent records a single orchestrator lifecycle event.
@@ -166,6 +172,11 @@ type Orchestrator struct {
 	// hand-constructed Orchestrator has a working one. See resync_watchdog.go.
 	resyncWatchOnce  sync.Once
 	resyncWatchValue *resyncWatch
+
+	// resync cost watch: raises a signal when one node's resync keeps costing
+	// more than the no-op bargain allows. Also observes only. See resync_cost.go.
+	resyncCostOnce  sync.Once
+	resyncCostValue *resyncCostWatch
 }
 
 // NewOrchestrator creates a fully-configured Orchestrator backed by the

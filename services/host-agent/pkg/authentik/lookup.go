@@ -23,6 +23,9 @@ func (c *Client) findFlowID(ctx context.Context, slug string) (string, error) {
 	return result.PK, nil
 }
 
+// findGroupID resolves a group by its exact name. `name` is Authentik's exact
+// filter for groups; `search` is the full-text one, which is both slower and
+// willing to answer with a group whose name merely resembles the one asked for.
 func (c *Client) findGroupID(ctx context.Context, name string) (string, error) {
 	var result struct {
 		Results []struct {
@@ -31,10 +34,10 @@ func (c *Client) findGroupID(ctx context.Context, name string) (string, error) {
 		} `json:"results"`
 	}
 	if err := c.cl.GET("/api/v3/core/groups/").
-		Query("search", name).
+		Query("name", name).
 		OK(http.StatusOK).
 		DoInto(ctx, &result); err != nil {
-		return "", fmt.Errorf("searching groups: %w", err)
+		return "", fmt.Errorf("looking up group %s: %w", name, err)
 	}
 
 	for _, group := range result.Results {
@@ -46,27 +49,63 @@ func (c *Client) findGroupID(ctx context.Context, name string) (string, error) {
 	return "", fmt.Errorf("group %s not found", name)
 }
 
-func (c *Client) findUserID(ctx context.Context, username string) (int, error) {
-	var result struct {
-		Results []struct {
-			PK       int    `json:"pk"`
-			Username string `json:"username"`
-		} `json:"results"`
+// GroupRef is a group as far as membership management needs to know it: the
+// primary key that addresses it (a UUID, since Group's real PK is `group_uuid`)
+// and which users it already holds.
+type GroupRef struct {
+	PK    string `json:"pk"`
+	Name  string `json:"name"`
+	Users []int  `json:"users"`
+}
+
+// HasUser reports whether the group already holds that user.
+func (g *GroupRef) HasUser(pk int) bool {
+	for _, u := range g.Users {
+		if u == pk {
+			return true
+		}
 	}
-	if err := c.cl.GET("/api/v3/core/users/").
-		Query("search", username).
+	return false
+}
+
+// lookupAdminsGroup resolves Authentik's superuser group together with its
+// membership, in one request: the list serializer carries `users` next to `pk`.
+//
+// Reading membership from the call that resolves the group is what lets an
+// add_user be skipped instead of issued every pass. Authentik's add_user is
+// idempotent, so re-issuing it was never wrong, only a write per pass per service
+// account for a fact one GET already answers.
+func (c *Client) lookupAdminsGroup(ctx context.Context) (*GroupRef, error) {
+	var result struct {
+		Results []GroupRef `json:"results"`
+	}
+	if err := c.cl.GET("/api/v3/core/groups/").
+		Query("name", AdminsGroup).
 		OK(http.StatusOK).
 		DoInto(ctx, &result); err != nil {
-		return 0, fmt.Errorf("searching users: %w", err)
+		return nil, fmt.Errorf("looking up group %s: %w", AdminsGroup, err)
 	}
 
-	for _, user := range result.Results {
-		if user.Username == username {
-			return user.PK, nil
+	for i := range result.Results {
+		if result.Results[i].Name == AdminsGroup {
+			return &result.Results[i], nil
 		}
 	}
 
-	return 0, nil // Not found
+	return nil, fmt.Errorf("group %s not found", AdminsGroup)
+}
+
+// findUserID resolves a user by exact username, returning 0 when there is no
+// such account. See lookupUser for why the filter is exact.
+func (c *Client) findUserID(ctx context.Context, username string) (int, error) {
+	user, err := c.lookupUser(ctx, username)
+	if err != nil {
+		return 0, err
+	}
+	if user == nil {
+		return 0, nil // Not found
+	}
+	return user.PK, nil
 }
 
 func (c *Client) tokenExists(ctx context.Context, identifier string) (bool, error) {

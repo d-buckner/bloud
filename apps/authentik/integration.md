@@ -115,26 +115,110 @@ open another app's files to get it:
   wires that into its API server's token refresh) and the e2e helpers read it
   too. It is not the interface apps consume.
 
-## Admin Account
+## Identity bootstrap
 
-`PostStart` runs `apps/authentik/scripts/set_admin_password.py` in the server
-container. It creates the `admin` user (in the configured `BLOUD_ADMIN_EMAIL`,
-added to `authentik Admins`) and sets its password from `BLOUD_ADMIN_PASSWORD`;
-both values come from the host agent's `config.AuthentikAdminPassword` and
-`config.AuthentikAdminEmail`, which are the `BLOUD_AUTHENTIK_ADMIN_PASSWORD`
-env var when set and the generated `authentikBootstrapPassword` in `secrets.json`
-otherwise.
+Bloud needs two things inside Authentik before any of the above is reachable: the
+`admin` account, and an API token to call the API with. Both are created by
+`ensureAPIToken` and `EnsureAdminUser`, and which mechanism does it depends on
+whether the API will already accept the token:
 
-- The password is set only when the user is created, and the script saves the
-  object explicitly. Authentik's `User.set_password` only mutates the instance
-  (it bumps `password_change_date` and emits the `password_changed` signal), so
-  a missing save leaves an empty password column: `has_usable_password()` still
-  reports `True`, and no password authenticates. The failure surfaces as
-  "Invalid password" from our LDAP outpost's bind flow and as a re-prompt from
-  the login flow, not as a configuration error.
+- **The API, normally.** `EnsureAPIToken` reads
+  `/api/v3/core/tokens/?identifier=bloud-api-token`, reads the key back with
+  `view_key`, and writes only on a mismatch. `EnsureAdminUser` reads
+  `/api/v3/core/users/?username=admin` and writes only what is missing. A
+  steady-state pass is four GETs and no writes.
+- **The Django shell, at bootstrap.** When Authentik answers 401/403 the token
+  does not work, and nothing about the API can be called before it does, so
+  `scripts/set_admin_password.py` and `scripts/ensure_api_token.py` run through
+  `Deps.Exec`. That is once per install, and once more if the token is deleted or
+  rotated by hand in the Authentik admin: the scripts re-impose Bloud's own
+  value, so the repair is the same code as the bootstrap.
+
+Two details the API forces that the shell did not need:
+
+- **`set_key` after create.** `TokenSerializer` only exposes `key` in the
+  blueprint context, so a token created over the API always gets a random key.
+  `POST /core/tokens/{id}/set_key/` is the API's only way to impose the value
+  host-agent authenticates with, and it is a separate call.
+- **Waiting for `authentik Admins`.** The group is created by a blueprint that
+  runs after the health endpoint reports ready. `waitForAdminsGroup` polls for
+  the same window the shell script polled for, so a cold install cannot park the
+  SSO stack in ERROR over a group that turns up seconds later.
+
+The admin password keeps the rule the shell script documented: it is set only
+when the account is created, so an operator who changed it in Bloud's setup
+wizard keeps it. What changed is where that rule lives, not what it protects.
+
+## Resync cost
+
+`PostStart` re-runs on every convergence pass, on an idle box roughly every
+minute. That makes its cost a property of the whole instance rather than of one
+app, and this configurator was the worst offender: measured on an idle native
+instance, `apps-authentik-server`'s `PostStart` ran on 97% of all passes at a
+15.6s average, which was about a fifth of the reconciler's wall clock spent on a
+no-op (issue #306). The pieces were two `ak shell` spawns (~3.3s each), a 3 second
+sleep inside `EnsureLoginConfiguration` that only makes sense when something was
+just patched, unconditional `PATCH`es of the brand CSS and the flow settings, and
+about twenty API round trips, several of them the slow `?search=` full-text
+filter.
+
+What the fix is, and what it deliberately is not: the no-op path was made cheap,
+not skipped. Skipping the diff is what lets drift in the provider go unseen, and
+the diff is the entire reason the resync exists. So every step reads first and
+writes on a mismatch, and the two steps that cannot read first (see below) are
+now watched instead of invisible.
+
+The read-first conversions, in order of what they were worth:
+
+- the two `ak shell` spawns, which are gone from this path entirely;
+- the 3 second sleep, which now only runs when a flow was actually patched;
+- the brand CSS `PATCH` and the flow settings `PATCH`, both skipped when the
+  value already matches;
+- the group membership `add_user`, which now comes free: `lookupGroup` reads the
+  group and its members in one request, so a service account already in
+  `authentik Admins` costs no write, and the provider's `search_group` reuses the
+  same read instead of resolving the group a second time;
+- the embedded outpost's detail `GET`, which the list response already answers:
+  the list serializer carries `config`, so one request serves both the read and
+  the write;
+- the `?search=` lookups, replaced by Authentik's exact `?username=` / `?name=`
+  filters, which are both more precise and cheaper.
+
+Still unconditional, because Authentik offers no read for them:
+
+- **The three service-account passwords** (`ldap-service`, `caldav-service`,
+  `calendar-service`). There is no endpoint that answers "does this account
+  already hold that password", so keeping the directory in step with the secret
+  store is a write. Each costs a server-side hash per pass.
+- **The LDAP outpost token read** (`GetLDAPOutpostToken`), which is a read of a
+  value the LDAP container's spec needs every pass anyway.
+
+The engine now measures this rather than trusting it: `resync_cost.go` times each
+node's resync and raises a signal after consecutive passes over
+`DefaultResyncCostBudget`, surfaced on the developer status as
+`resyncCostSignals`. A slow no-op never restarts a container, so the restart
+watchdog could not see it.
+
+## Admin account
+
+The `admin` user is created in the configured `BLOUD_ADMIN_EMAIL`, added to
+`authentik Admins`, with its password from `BLOUD_ADMIN_PASSWORD`; both values
+come from the host agent's `config.AuthentikAdminPassword` and
+`config.AuthentikAdminEmail`, which are the `BLOUD_AUTHENTIK_ADMIN_PASSWORD` env
+var when set and the generated `authentikBootstrapPassword` in `secrets.json`
+otherwise. See **Identity bootstrap** above for which mechanism creates it.
+
+- When the shell path does create the user, `User.set_password` only mutates the
+  instance (it bumps `password_change_date` and emits the `password_changed`
+  signal), so a missing save leaves an empty password column:
+  `has_usable_password()` still reports `True`, and no password authenticates.
+  The failure surfaces as "Invalid password" from our LDAP outpost's bind flow
+  and as a re-prompt from the login flow, not as a configuration error. Over the
+  API the same care is structural: the create cannot carry a password, so it is a
+  `set_password` call.
 - An operator who changes the password (Bloud's setup wizard sets it through
   Authentik's API, which saves) keeps it: every later reconciliation finds the
-  user present and leaves its password alone.
+  user present, sees `is_superuser` already true, and leaves its password alone.
 - `admin` is the product's administrator, not Authentik's own bootstrap
   `akadmin`. Authentik 2025.10.x does not consume `AUTHENTIK_BOOTSTRAP_PASSWORD`,
   so that built-in user keeps Authentik's default credential; anything that
