@@ -49,20 +49,20 @@ sso:
   strategy: none
 
 # Seerr is a source app: it provides the request manager an agent asks to take
-# requests on the user's behalf. The key is the one Seerr generated for itself
-# (settings.json main.apiKey), published at runtime by the configurator; the
-# account is the admin Seerr creates during onboarding, the identity every
-# request is attributed to.
+# requests on the user's behalf. The credential it hands over is the Jellyfin
+# login its own admin was created from (Seerr has no independent local account
+# and no token-minting API): the username, published at runtime because it
+# arrives on the mediaServer binding and differs per install, and the password.
+# The consumer logs into Seerr with the pair and derives Seerr's own API key.
 provides:
   requestManager:
-    secrets: [apiKey]
-    # defaultUser is the Seerr account arr-mcp acts as. It is the account
-    # Seerr's onboarding created from the Jellyfin bootstrap admin, whose
-    # display name Seerr reports as the Jellyfin admin username. That username
-    # arrives on the mediaServer binding and differs per install (Bloud-booted
-    # Jellyfin vs. one the operator registered), so it is published at runtime
-    # by the configurator rather than declared here.
-    runtimeValues: [defaultUser]
+    secrets: [password]
+    # username is the Jellyfin account Seerr's admin was created from, which is
+    # also the display name Seerr reports for that admin. It arrives on the
+    # mediaServer binding and differs per install (Bloud-booted Jellyfin vs.
+    # one the operator registered), so the configurator publishes it at runtime
+    # rather than declaring it here.
+    runtimeValues: [username]
 
 containers:
   # One container, one volume: Seerr keeps everything (settings.json, the

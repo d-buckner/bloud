@@ -20,6 +20,7 @@ const (
 	httpTokenKey      = "httpToken"
 	clientPasswordKey = "password"
 	jellyfinAPIKeyKey = "jellyfinApiKey"
+	seerrAPIKeyKey    = "seerrApiKey"
 
 	// scrypt parameters arr-mcp's own password verifier expects. They match the
 	// image's hashPassword exactly: Node's crypto.scrypt with N=16384 (the

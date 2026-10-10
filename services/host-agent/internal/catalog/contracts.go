@@ -72,12 +72,15 @@ var contracts = []Contract{
 	// pushes indexers into it, Seerr hands it requests).
 	{Name: "pvr", Secrets: []string{"apiKey"}},
 
-	// A request manager (Seerr) hands the consumer the key its own API
-	// authenticates with, plus the account requests are attributed to. The
-	// account is a value rather than a secret because it is a label the manager
-	// itself shows, not a credential: Seerr attributes every request the agent
-	// makes to the user named here, which Bloud created during onboarding.
-	{Name: "requestManager", Secrets: []string{"apiKey"}, Values: []ValueSpec{{Key: "defaultUser"}}},
+	// A request manager (Seerr) hands the consumer the credentials its own
+	// login is built on, so the consumer can derive the key the API
+	// authenticates with. Seerr's admin account is created from a Jellyfin
+	// login, so its credential is a Jellyfin username and password: the
+	// consumer logs into Seerr with them and reads Seerr's `main.apiKey` out of
+	// its settings. The username is a value because it is also the label the
+	// manager shows (the account's display name, which requests are attributed
+	// to); the password is the secret.
+	{Name: "requestManager", Secrets: []string{"password"}, Values: []ValueSpec{{Key: "username"}}},
 
 	// An ICS calendar feed a calendar server subscribes to on the user's
 	// behalf. The provider hands over the path to its feed and the key that
