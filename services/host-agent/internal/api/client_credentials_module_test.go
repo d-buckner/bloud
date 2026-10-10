@@ -25,10 +25,13 @@ const ccSecret = "s3cr3t-client-password-DO-NOT-LEAK"
 // fakeSecrets is an in-memory stand-in for the host secret store.
 type fakeSecrets struct {
 	values map[string]string
+	// contractValues holds values published through SetAppContractValue, keyed
+	// app/contract/key, so a test can seed what a provider published at runtime.
+	contractValues map[string]string
 }
 
 func newFakeSecrets() *fakeSecrets {
-	return &fakeSecrets{values: map[string]string{}}
+	return &fakeSecrets{values: map[string]string{}, contractValues: map[string]string{}}
 }
 
 func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return "", nil }
@@ -39,8 +42,14 @@ func (f *fakeSecrets) SetAppSecret(app, key, value string) error {
 	f.values[app+"/"+key] = value
 	return nil
 }
-func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
-func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
+func (f *fakeSecrets) SetAppContractValue(app, contract, key, value string) error {
+	f.contractValues[app+"/"+contract+"/"+key] = value
+	return nil
+}
+
+func (f *fakeSecrets) GetAppContractValue(app, contract, key string) string {
+	return f.contractValues[app+"/"+contract+"/"+key]
+}
 func (f *fakeSecrets) DeleteAppSecrets(app string) error {
 	for k := range f.values {
 		if strings.HasPrefix(k, app+"/") {

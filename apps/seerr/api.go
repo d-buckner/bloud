@@ -5,7 +5,10 @@ package seerr
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -48,6 +51,16 @@ const (
 	// (server/routes/auth.ts). It doubles as the already-done signal for a
 	// re-run whose earlier attempt created the admin.
 	alreadyConfiguredError = "Jellyfin hostname already configured"
+
+	// csrfTokenHeader / csrfTokenCookie name the double-submit CSRF pair Seerr
+	// issues when settings.network.csrfProtection is on (server/index.ts mounts
+	// csurf with the `_csrf` cookie and mirrors the token into XSRF-TOKEN for its
+	// own axios client). Off by default, which is why every other call in this
+	// file posts with no token at all; read back when present so a hardened
+	// instance works the same as the default one.
+	csrfTokenHeader = "X-CSRF-TOKEN"
+	csrfTokenCookie = "XSRF-TOKEN"
+	csrfCookie      = "_csrf"
 
 	// seriesTypeStandard is the "standard" value of SonarrSettings' seriesType
 	// and animeSeriesType enums (server/lib/settings/index.ts:94-95; the other
@@ -153,31 +166,60 @@ func (s dvrSettings) samePerAppToggles(o dvrSettings) bool {
 }
 
 // seerrAPI is the typed surface over Seerr's HTTP API for one instance.
+//
+// Two clients, because Seerr has two auth positions. `cl` is the one the
+// configurator uses: every admin call it makes carries X-API-Key, so it needs
+// no cookies and must not accumulate any. `session` is the one the remote
+// sign-in exchange uses: Seerr hands an admin its API key only to a logged-in
+// user (server/routes/settings/index.ts omits apiKey for anyone else), and a
+// login session is a cookie, so that flow needs a jar.
 type seerrAPI struct {
-	cl *appclient.Client
+	cl      *appclient.Client
+	session *appclient.Client
+	jar     http.CookieJar
+	baseURL func() string
 }
 
 // newAPI builds the typed client against a base-URL resolver.
 func newAPI(f configurator.ClientFactory, baseURLFn func() string) *seerrAPI {
-	return &seerrAPI{cl: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn})}
+	// The only error case is a nil cookie-jar option, which this call does not
+	// pass.
+	jar, _ := cookiejar.New(nil)
+	return &seerrAPI{
+		cl:      f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn}),
+		session: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn, Jar: jar}),
+		jar:     jar,
+		baseURL: baseURLFn,
+	}
 }
 
 // publicSettings is the subset of Seerr's public settings Bloud reads
 // (server/lib/settings/index.ts: PublicSettings).
-type publicSettings struct {
-	Initialized bool `json:"initialized"`
-}
-
-// settingsPublic reads the instance's initialization state. The route is
-// registered before the ADMIN guard (server/routes/index.ts), which makes it
-// both the readiness probe the container healthcheck uses and the gate the
-// onboarding flow is built on.
-func (a *seerrAPI) settingsPublic(ctx context.Context) (publicSettings, error) {
-	var out publicSettings
-	if err := a.cl.GET(apiRoot+"/settings/public").OK(http.StatusOK).DoInto(ctx, &out); err != nil {
-		return publicSettings{}, err
+// publicSettings is the part of GET /settings/public this code reads.
+//
+// Initialized is a pointer because the two kinds of "not initialized" are not
+// the same problem: a Seerr still in its own wizard answers the field as false,
+// and an address that is not a Seerr answers it not at all. Telling them apart is
+// the difference between sending an operator to finish a setup and sending them to
+// a different URL.
+// initialized reports whether the instance has been through its own first-run
+// wizard. GET /settings/public answers `initialized` (server/routes/index.ts
+// registers it before the ADMIN guard, which is why it doubles as the container
+// healthcheck), and it is the only way to tell the two kinds of "not yet" apart:
+// a Seerr still in its own wizard answers the field as false, and an address that
+// is not a Seerr answers it not at all. Guessing wrong there sends the operator to
+// finish a setup that is already done.
+func (a *seerrAPI) initialized(ctx context.Context) (bool, error) {
+	var out struct {
+		Initialized *bool `json:"initialized"`
 	}
-	return out, nil
+	if err := a.cl.GET(apiRoot+"/settings/public").OK(http.StatusOK).DoInto(ctx, &out); err != nil {
+		return false, err
+	}
+	if out.Initialized == nil {
+		return false, fmt.Errorf("%s answered /settings/public without an 'initialized' field, so it is not a Seerr API", a.baseURL())
+	}
+	return *out.Initialized, nil
 }
 
 // jellyfinLogin is exactly the body the first-run wizard posts to
@@ -215,6 +257,141 @@ func (a *seerrAPI) loginWithJellyfin(ctx context.Context, login jellyfinLogin) e
 			return status == http.StatusInternalServerError && bytes.Contains(body, []byte(alreadyConfiguredError))
 		}).
 		Exec(ctx)
+}
+
+// seerrUser is the account a successful sign-in acts as. `filter()` on the
+// server keeps email and username and drops every credential field, so this is
+// the whole readable shape (server/entity/User.ts).
+type seerrUser struct {
+	Email    string `json:"email"`
+	Username string `json:"username"`
+}
+
+// displayName is how the signed-in account is named to other apps: the address
+// Seerr itself shows and attributes requests to, falling back to the login name
+// for an account created from a Jellyfin user that has no email.
+func (u seerrUser) displayName() string {
+	if u.Email != "" {
+		return u.Email
+	}
+	return u.Username
+}
+
+// signInAs signs the session client in as one account and returns the Seerr
+// user that session acts as.
+//
+// Two routes are tried, in this order, because one username/password box has to
+// cover both shapes of "the admin account of a Seerr Bloud does not run":
+//
+//   - POST /auth/jellyfin with username and password only. On a configured
+//     instance this logs the credentials into the Jellyfin *Seerr* has
+//     configured (server/routes/auth.ts) and sets req.session.userId. The
+//     hostname must be omitted: once settings.jellyfin.ip is set the route
+//     refuses any caller that sends one, and seerr-api.yml requires only the
+//     two fields sent here.
+//   - POST /auth/local with email and password, for an instance whose admin is
+//     a local Seerr account (settings.main.localLogin, on by default). Only
+//     reached when the Jellyfin route refused, so a successful first sign-in is
+//     never overwritten by a second one for a different user.
+//
+// Both are unauthenticated routes, so no CSRF token is needed for the first
+// call; csrfToken covers an instance that has csrfProtection switched on.
+func (a *seerrAPI) signInAs(ctx context.Context, login configurator.Login) (seerrUser, error) {
+	csrf := a.csrfToken(ctx)
+	user, jerr := a.loginJellyfinExisting(ctx, login, csrf)
+	if jerr == nil {
+		return user, nil
+	}
+	user, lerr := a.loginLocal(ctx, login, a.csrfToken(ctx))
+	if lerr == nil {
+		return user, nil
+	}
+	return seerrUser{}, fmt.Errorf(
+		"neither sign-in was accepted (jellyfin: %v; local account: %v)", jerr, lerr)
+}
+
+// loginJellyfinExisting performs the already-configured form of the Jellyfin
+// sign-in: credentials only, no hostname, no server type.
+func (a *seerrAPI) loginJellyfinExisting(ctx context.Context, login configurator.Login, csrf string) (seerrUser, error) {
+	var user seerrUser
+	call := a.session.POST(apiRoot + "/auth/jellyfin").
+		Anonymous().
+		JSON(map[string]string{"username": login.Username, "password": login.Password}).
+		OK(http.StatusOK).
+		NoRetry()
+	if csrf != "" {
+		call = call.Header(csrfTokenHeader, csrf)
+	}
+	if err := call.DoInto(ctx, &user); err != nil {
+		return seerrUser{}, err
+	}
+	return user, nil
+}
+
+// loginLocal performs the local-account sign-in. Seerr reads the first field as
+// an email address, which is what lets one input take either an address or a
+// Jellyfin username: whichever the account actually is, one of the two routes
+// accepts it.
+func (a *seerrAPI) loginLocal(ctx context.Context, login configurator.Login, csrf string) (seerrUser, error) {
+	var user seerrUser
+	call := a.session.POST(apiRoot + "/auth/local").
+		Anonymous().
+		JSON(map[string]string{"email": login.Username, "password": login.Password}).
+		OK(http.StatusOK).
+		NoRetry()
+	if csrf != "" {
+		call = call.Header(csrfTokenHeader, csrf)
+	}
+	if err := call.DoInto(ctx, &user); err != nil {
+		return seerrUser{}, err
+	}
+	return user, nil
+}
+
+// mainAPIKey reads the API key out of the instance's own main settings, as the
+// signed-in session. GET /settings/main answers a non-admin with the whole
+// settings object minus apiKey (server/routes/settings/index.ts:
+// filteredMainSettings), so an empty result is a definitive "this account is
+// not an admin here", not a value that has not arrived yet.
+func (a *seerrAPI) mainAPIKey(ctx context.Context) (string, error) {
+	var out struct {
+		APIKey string `json:"apiKey"`
+	}
+	if err := a.session.GET(apiRoot+"/settings/main").
+		Anonymous().
+		OK(http.StatusOK).
+		NoRetry().
+		DoInto(ctx, &out); err != nil {
+		return "", err
+	}
+	return out.APIKey, nil
+}
+
+// csrfToken reads the CSRF token the instance issued to this jar, having asked
+// for one first. An instance with csrfProtection off issues nothing and this
+// returns "", which is the only correct thing to send it.
+func (a *seerrAPI) csrfToken(ctx context.Context) string {
+	// Any GET works; this one is public, anonymous, and already the readiness
+	// probe the container's own healthcheck uses, so it cannot fail for reasons
+	// that are this flow's fault.
+	if err := a.session.GET(apiRoot + "/settings/public").
+		Anonymous().
+		OK(http.StatusOK).
+		NoRetry().
+		Exec(ctx); err != nil {
+		return ""
+	}
+	u, err := url.Parse(a.baseURL())
+	if err != nil {
+		return ""
+	}
+	want := map[string]bool{csrfTokenCookie: true, csrfCookie: true}
+	for _, c := range a.jar.Cookies(u) {
+		if want[c.Name] && c.Value != "" {
+			return c.Value
+		}
+	}
+	return ""
 }
 
 // jellyfinLibrary is one entry of settings.jellyfin.libraries

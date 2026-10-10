@@ -13,4 +13,7 @@ func init() {
 	configurator.MustRegisterFactory(nodeName, func(deps configurator.Deps) configurator.NodeLifecycle {
 		return NewConfigurator(0, deps)
 	})
+	// The remote half of the same knowledge: how a sign-in becomes the key this
+	// app publishes. Stateless, so it registers as a value.
+	configurator.RegisterCredentialExchange(appName, credentialExchange{})
 }

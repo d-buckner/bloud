@@ -61,8 +61,7 @@ type externalAppResponse struct {
 	Name   string                       `json:"name"`
 	URL    string                       `json:"url"`
 	Icon   string                       `json:"icon"`
-	Values map[string]map[string]string `json:"values,omitempty"`
-	// SecretContracts names the contracts whose credential is stored, so the
+	Values map[string]map[string]string `json:"values,omitempty"` // SecretContracts names the contracts whose credential is stored, so the
 	// form can show "set" without showing what was set.
 	SecretContracts []string `json:"secretContracts,omitempty"`
 }
@@ -77,6 +76,18 @@ type setExternalAppRequest struct {
 	Icon    string                       `json:"icon"`
 	Values  map[string]map[string]string `json:"values"`
 	Secrets map[string]string            `json:"secrets"`
+	// Exchange carries the inputs of an app's credential exchange (see
+	// external_apps_exchange.go), keyed by input key. It replaces the contract
+	// secrets the form would otherwise have asked for: what arrives here is a
+	// sign-in, and what gets stored is whatever the remote app handed back for
+	// it. Like a secret, omitting it on an update means "leave the credential on
+	// file alone"; unlike a secret it is never read back.
+	Exchange map[string]string `json:"exchange,omitempty"`
+	// ExchangeLogin asks Bloud to sign in with the login it already holds for the
+	// role the app names, instead of with typed inputs. It exists so a password
+	// Bloud minted and stores never has to pass through a browser that cannot
+	// show it back.
+	ExchangeLogin bool `json:"exchangeLogin,omitempty"`
 }
 
 // Register mounts the external-app routes on an admin router.

@@ -7,8 +7,12 @@
 		type ExternalProviderOption
 	} from '$lib/clients/settingsClient';
 	import {
+		buildExchangePayload,
 		buildProviderPayload,
+		defaultUseStoredLogin,
+		deriveExchangeInputs,
 		deriveProviderInputs,
+		missingExchangeInputs,
 		missingProviderInputs,
 		type ProviderFieldValues
 	} from '$lib/utils/providerInputs';
@@ -27,6 +31,7 @@
 	let selected = $state('');
 	let url = $state('');
 	let fieldValues = $state<ProviderFieldValues>({});
+	let useStoredLogin = $state(false);
 
 	let current = $derived(options.find((o) => o.app === selected));
 	let selectable = $derived(options.filter((o) => !o.installed));
@@ -46,6 +51,13 @@
 	// app that declares the same secret name. For a remote Sonarr that is the
 	// endpoint and one API key, and nothing else.
 	let inputs = $derived(deriveProviderInputs(current?.contracts ?? []));
+
+	// The sign-in half, for the one kind of app that cannot be configured with a
+	// pasted key: a remote Seerr's credential is an API key nobody has ever
+	// looked at, but its admin is a username and password. The server says which
+	// fields that means and whether it already holds the login, so this component
+	// still does not know what a Seerr is.
+	let exchangeInputs = $derived(deriveExchangeInputs(current?.exchange, useStoredLogin));
 
 	$effect(() => {
 		void load();
@@ -68,13 +80,15 @@
 	function chooseApp(app: string) {
 		selected = app;
 		fieldValues = {};
+		useStoredLogin = defaultUseStoredLogin(options.find((o) => o.app === app)?.exchange);
 	}
 
 	const canSubmit = $derived(
 		!!selected &&
 			!!name.trim() &&
 			!!url.trim() &&
-			missingProviderInputs(inputs, fieldValues).length === 0
+			missingProviderInputs(inputs, fieldValues).length === 0 &&
+			missingExchangeInputs(exchangeInputs, fieldValues, useStoredLogin).length === 0
 	);
 
 	async function handleAdd() {
@@ -83,12 +97,15 @@
 		error = '';
 		try {
 			const payload = buildProviderPayload(inputs, fieldValues);
+			const signin = buildExchangePayload(exchangeInputs, fieldValues, useStoredLogin);
 			await addExternalProvider({
 				app: selected,
 				name: name.trim(),
 				url: url.trim(),
 				values: payload.values,
-				secrets: payload.secrets
+				secrets: payload.secrets,
+				exchange: signin.exchange,
+				exchangeLogin: signin.exchangeLogin
 			});
 			selected = '';
 			url = '';
@@ -145,6 +162,29 @@
 			{/if}
 		{/each}
 
+		{#if current?.exchange}
+			{#if current.exchange.storedLogin}
+				<label class="checkbox" for="prov-stored-login">
+					<input id="prov-stored-login" type="checkbox" bind:checked={useStoredLogin} disabled={saving} />
+					{current.exchange.storedLogin}
+				</label>
+			{/if}
+			{#each exchangeInputs as input (input.id)}
+				<label for={`prov-${input.id}`}>{input.label}</label>
+				<input
+					id={`prov-${input.id}`}
+					type={input.secret ? 'password' : 'text'}
+					bind:value={fieldValues[input.id]}
+					disabled={saving}
+					autocomplete="off"
+					spellcheck="false"
+				/>
+				{#if input.help}
+					<p class="field-help">{input.help}</p>
+				{/if}
+			{/each}
+		{/if}
+
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}
@@ -192,6 +232,21 @@
 		margin: 0;
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
+	}
+
+	/* A checkbox reads as a statement, not a field: the label sits beside the box
+	   rather than above it, which is what tells it apart from the inputs the
+	   operator still has to fill. */
+	.checkbox {
+		flex-direction: row;
+		align-items: center;
+		gap: var(--space-sm);
+		font-size: 0.875rem;
+		color: var(--color-text);
+	}
+
+	.checkbox input {
+		width: auto;
 	}
 
 	.hint {

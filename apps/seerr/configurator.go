@@ -28,6 +28,17 @@ const (
 	// and one the operator registered publishes the account they made there.
 	jellyfinAppName = "jellyfin"
 
+	// The two contracts Seerr sits between: it consumes a media server's login to
+	// onboard, and publishes the key its own API authenticates with. Named here
+	// because both the configurator and the remote sign-in exchange read them, and
+	// a contract name spelled twice is a contract name that drifts.
+	contractMediaServer    = "mediaServer"
+	contractRequestManager = "requestManager"
+
+	// valueDefaultUser is the requestManager value naming the account requests
+	// get attributed to.
+	valueDefaultUser = "defaultUser"
+
 	// configDirName holds Seerr's settings.json, SQLite database, logs and
 	// cache; it is mounted at /app/config.
 	configDirName    = "config"
@@ -264,11 +275,11 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	// deliberately writes nothing into the config dir (see PreStart).
 	settingsPath := filepath.Join(state.DataPath, configDirName, settingsFileName)
 
-	public, err := c.api.settingsPublic(ctx)
+	initialized, err := c.api.initialized(ctx)
 	if err != nil {
 		return fmt.Errorf("reading Seerr initialization state: %w", err)
 	}
-	if public.Initialized {
+	if initialized {
 		// Nothing left to onboard: the PVRs are what can have changed since, and
 		// the Jellyfin coupling is what can have *broken* since; nothing else
 		// notices when the media server is replaced (see
@@ -367,12 +378,12 @@ func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.App
 		return fmt.Errorf("completing Seerr setup (settings/initialize): %w", err)
 	}
 
-	after, err := c.api.settingsPublic(ctx)
+	after, err := c.api.initialized(ctx)
 	if err != nil {
 		return fmt.Errorf("confirming Seerr initialization: %w", err)
 	}
-	if !after.Initialized {
-		return fmt.Errorf("seerr: settings/initialize did not mark the instance initialized (observed initialized=%t)", after.Initialized)
+	if !after {
+		return fmt.Errorf("seerr: settings/initialize returned 200 but the instance still reports itself uninitialized")
 	}
 
 	// The PVR step is the last one: it needs the admin user the Jellyfin login

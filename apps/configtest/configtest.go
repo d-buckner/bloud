@@ -41,6 +41,11 @@ type Metadata struct {
 	Port       int                 `yaml:"port"`
 	SSO        MetadataSSO         `yaml:"sso"`
 	Containers []MetadataContainer `yaml:"containers"`
+	// Provides is the `provides:` block, kept as opaque keys: the harness only
+	// ever asks whether a contract name appears in it, and re-declaring the
+	// offer schema here would be a second definition free to drift from the
+	// catalog loader's.
+	Provides map[string]any `yaml:"provides"`
 }
 
 // MetadataSSO is the SSO block a configurator's callback path must match.

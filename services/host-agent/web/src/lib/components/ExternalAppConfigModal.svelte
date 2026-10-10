@@ -22,8 +22,12 @@
 	} from '$lib/clients/settingsClient';
 	import { launcherPatch, providerPatch, type ExternalAppForm } from '$lib/utils/externalAppPatch';
 	import {
+		buildExchangePayload,
 		buildProviderPayload,
+		defaultUseStoredLogin,
+		deriveExchangeInputs,
 		deriveProviderInputs,
+		missingExchangeInputs,
 		missingProviderInputs,
 		readProviderInput,
 		type ProviderFieldValues
@@ -46,6 +50,7 @@
 	let icon = $state('');
 	let fieldValues = $state<ProviderFieldValues>({});
 	let providers = $state<ExternalProviderOption[]>([]);
+	let useStoredLogin = $state(false);
 
 	let isProvider = $derived(app?.kind === 'provider');
 	let endpointLabel = $derived(isProvider ? 'Endpoint' : 'URL');
@@ -65,12 +70,22 @@
 
 	let inputs = $derived(deriveProviderInputs(schema?.contracts ?? []));
 
+	/**
+	 * The sign-in half, for an app whose credential is traded for a login instead
+	 * of pasted. Editing the endpoint of a remote Seerr is exactly as much a reason
+	 * to hand over the account as adding it was, and the same rule applies: an
+	 * exchange the operator did not fill in sends nothing, so the key on file
+	 * survives a save that never mentioned it.
+	 */
+	let exchangeInputs = $derived(deriveExchangeInputs(schema?.exchange, useStoredLogin));
+
 	let storedSecrets = $derived(app?.secretContracts ?? []);
 
 	let missing = $derived([
 		...(name.trim() ? [] : ['name']),
 		...(url.trim() ? [] : ['endpoint']),
-		...missingProviderInputs(inputs, fieldValues, storedSecrets)
+		...missingProviderInputs(inputs, fieldValues, storedSecrets),
+		...missingExchangeInputs(exchangeInputs, fieldValues, useStoredLogin)
 	]);
 
 	// The schema has to have landed before a save is offered. Not because the
@@ -138,8 +153,12 @@
 		loadingSchema = true;
 		try {
 			providers = await fetchExternalProviders();
-			const contracts = providers.find((option) => option.app === record.app)?.contracts ?? [];
-			seedContractInputs(record, contracts);
+			const schema = providers.find((option) => option.app === record.app);
+			seedContractInputs(record, schema?.contracts ?? []);
+			// Seeded with the checkbox already ticked when Bloud holds the login: the
+			// common case is an operator who should not have to type a password they
+			// never chose, and an unticked box would ask them for one they cannot read.
+			useStoredLogin = defaultUseStoredLogin(schema?.exchange);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not load the integration schema';
 		} finally {
@@ -175,12 +194,15 @@
 		error = '';
 		try {
 			const typed = buildProviderPayload(inputs, fieldValues);
+			const signin = buildExchangePayload(exchangeInputs, fieldValues, useStoredLogin);
 			const form: ExternalAppForm = {
 				name,
 				url,
 				icon,
 				values: mergeTypedValues(app.values, typed.values),
-				secrets: typed.secrets
+				secrets: typed.secrets,
+				exchange: signin.exchange,
+				exchangeLogin: signin.exchangeLogin
 			};
 			await updateExternalApp(app.id, isProvider ? providerPatch(form) : launcherPatch(form));
 			onsaved?.();
@@ -255,6 +277,34 @@
 						<p class="field-help">{input.help}</p>
 					{/if}
 				{/each}
+
+				{#if schema.exchange}
+					{#if schema.exchange.storedLogin}
+						<label class="checkbox" for="cfg-stored-login">
+							<input
+								id="cfg-stored-login"
+								type="checkbox"
+								bind:checked={useStoredLogin}
+								disabled={saving}
+							/>
+							{schema.exchange.storedLogin}
+						</label>
+					{/if}
+					{#each exchangeInputs as input (input.id)}
+						<label for={`cfg-${input.id}`}>{input.label}</label>
+						<input
+							id={`cfg-${input.id}`}
+							type={input.secret ? 'password' : 'text'}
+							bind:value={fieldValues[input.id]}
+							disabled={saving}
+							autocomplete="off"
+							spellcheck="false"
+						/>
+						{#if input.help}
+							<p class="field-help">{input.help}</p>
+						{/if}
+					{/each}
+				{/if}
 			{:else}
 				<p class="hint">
 					{app.app} is no longer in the catalog, so its integration fields cannot
@@ -333,6 +383,18 @@
 		margin: 0;
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
+	}
+
+	.checkbox {
+		flex-direction: row;
+		align-items: center;
+		gap: var(--space-sm);
+		font-size: 0.875rem;
+		color: var(--color-text);
+	}
+
+	.checkbox input {
+		width: auto;
 	}
 
 	.hint {

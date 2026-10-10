@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
 import {
+	buildExchangePayload,
 	buildProviderPayload,
+	defaultUseStoredLogin,
+	deriveExchangeInputs,
 	deriveProviderInputs,
+	missingExchangeInputs,
 	missingProviderInputs,
 	readProviderInput,
 	type ProviderInput
 } from '../providerInputs';
-import type { ExternalProviderContract } from '$lib/clients/settingsClient';
+import type { ExternalProviderContract, ExternalProviderExchange } from '$lib/clients/settingsClient';
 
 // The shapes below mirror what the backend derives from the real catalog: a
 // value the provider declares statically arrives with `default` set and
@@ -182,5 +186,97 @@ describe('missingProviderInputs', () => {
 
 	it('reports every missing input, in form order', () => {
 		expect(missingProviderInputs(deriveProviderInputs(affine), {})).toEqual(['Username', 'Password']);
+	});
+});
+
+// The sign-in half: what a form renders when the app's credential is traded for
+// a login rather than pasted. The backend decides which fields that means and
+// whether it already holds the login; these tests pin what the form does with the
+// answer, including the case that matters most: a save that says nothing about
+// credentials must not sign in again or blank what is on file.
+const signin = {
+	contract: 'requestManager',
+	inputs: [
+		{ key: 'username', label: 'Username', kind: 'value', required: true, help: 'An admin account' },
+		{ key: 'password', label: 'Password', kind: 'secret', required: true }
+	]
+} as ExternalProviderExchange;
+
+const signinWithLogin = {
+	...signin,
+	storedLogin: 'the Jellyfin login Bloud already has (daniel)'
+} as ExternalProviderExchange;
+
+describe('deriveExchangeInputs', () => {
+	it('renders both fields when there is nothing stored', () => {
+		const inputs = deriveExchangeInputs(signin, false);
+		expect(inputs.map((i) => [i.key, i.secret])).toEqual([
+			['username', false],
+			['password', true]
+		]);
+		expect(inputs[0].id).toBe('exchange:username');
+		expect(inputs[0].help).toBe('An admin account');
+	});
+
+	it('renders nothing when Bloud holds the login and the box is ticked', () => {
+		expect(deriveExchangeInputs(signinWithLogin, true)).toEqual([]);
+	});
+
+	it('renders nothing for an app with no exchange', () => {
+		expect(deriveExchangeInputs(undefined, false)).toEqual([]);
+	});
+});
+
+describe('defaultUseStoredLogin', () => {
+	it('is on only when there is a login to offer', () => {
+		expect(defaultUseStoredLogin(signinWithLogin)).toBe(true);
+		expect(defaultUseStoredLogin(signin)).toBe(false);
+		expect(defaultUseStoredLogin(undefined)).toBe(false);
+	});
+});
+
+describe('missingExchangeInputs', () => {
+	it('asks for nothing when the stored login is being used', () => {
+		expect(missingExchangeInputs(deriveExchangeInputs(signinWithLogin, true), {}, true)).toEqual([]);
+	});
+
+	it('names both fields when neither is typed', () => {
+		expect(missingExchangeInputs(deriveExchangeInputs(signin, false), {}, false)).toEqual([
+			'Username',
+			'Password'
+		]);
+	});
+
+	it('names only what is still blank', () => {
+		expect(
+			missingExchangeInputs(deriveExchangeInputs(signin, false), { 'exchange:username': 'daniel' }, false)
+		).toEqual(['Password']);
+	});
+});
+
+describe('buildExchangePayload', () => {
+	it('asks for the stored login when the box is ticked', () => {
+		expect(buildExchangePayload([], {}, true)).toEqual({ exchangeLogin: true });
+	});
+
+	it('sends the typed sign-in', () => {
+		const inputs = deriveExchangeInputs(signin, false);
+		const typed = { 'exchange:username': 'daniel', 'exchange:password': 'pw' };
+		expect(buildExchangePayload(inputs, typed, false)).toEqual({
+			exchange: { username: 'daniel', password: 'pw' }
+		});
+	});
+
+	// Half a credential is not a new credential. Sending the username alone would
+	// fail at the remote and read as a wrong password.
+	it('sends nothing when only part of the sign-in was typed', () => {
+		const inputs = deriveExchangeInputs(signin, false);
+		expect(buildExchangePayload(inputs, { 'exchange:username': 'daniel' }, false)).toEqual({});
+	});
+
+	// The rename case: an absent exchange is "leave the credential on file", and
+	// sending `exchangeLogin` by accident would sign in to the remote again.
+	it('sends nothing when the operator said nothing about credentials', () => {
+		expect(buildExchangePayload(deriveExchangeInputs(signin, false), {}, false)).toEqual({});
 	});
 });

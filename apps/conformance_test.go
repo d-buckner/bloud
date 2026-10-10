@@ -115,6 +115,47 @@ func TestConformance(t *testing.T) {
 	}
 }
 
+// TestCredentialExchangesNameAContractTheAppProvides is the same shape as every
+// other exemption table in this repo: a registration is data, it is reviewed, and
+// a registration that guards nothing is itself a failure.
+//
+// An exchange replaces the fields a remote-app form asks for. If it names a
+// contract the app stopped providing, the form offers a sign-in for a credential
+// nothing reads, and the contract's real secret fields are suppressed for nothing.
+// The apps module cannot import the catalog loader, so this checks the half it can
+// see: that the contract is in the app's own `provides:`, and that the inputs are
+// the two a sign-in is made of.
+func TestCredentialExchangesNameAContractTheAppProvides(t *testing.T) {
+	RegisterAll()
+
+	names := configurator.CredentialExchangeNames()
+	require.NotEmpty(t, names, "at least one app trades a sign-in for its credential")
+
+	for _, name := range names {
+		exchange, ok := configurator.LookupCredentialExchange(name)
+		require.True(t, ok, "registry listed %q but LookupCredentialExchange refused it", name)
+
+		md := configtest.LoadMetadata(t, name)
+		_, offered := md.Provides[exchange.Contract()]
+		require.True(t, offered,
+			"%s registers a credential exchange for %q, which its metadata does not provide",
+			name, exchange.Contract())
+
+		keys := map[string]bool{}
+		for _, input := range exchange.Inputs() {
+			require.NotEmpty(t, input.Label, "%s: input %q needs a label a person can read", name, input.Key)
+			keys[input.Key] = true
+		}
+		require.True(t, keys[configurator.ExchangeInputUsername],
+			"%s: a sign-in exchange must take a username", name)
+		require.True(t, keys[configurator.ExchangeInputPassword],
+			"%s: a sign-in exchange must take a password", name)
+
+		require.NotEmpty(t, exchange.LoginContract(),
+			"%s: name the contract whose published login Bloud may borrow, or none can be offered", name)
+	}
+}
+
 // stateFor builds the AppState the harness passes to PreStart. With SSO off
 // the configurator sees no provider, which is the shape it handles when
 // Authentik is not installed.

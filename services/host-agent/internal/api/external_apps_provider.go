@@ -45,6 +45,11 @@ type externalProviderOption struct {
 	Description string                     `json:"description"`
 	Installed   bool                       `json:"installed"`
 	Contracts   []externalProviderContract `json:"contracts"`
+	// Exchange is set when this app's credential is traded for a sign-in rather
+	// than pasted. Its contract's secret fields are then absent from Contracts,
+	// because asking for both would let a pasted key be overwritten by the login
+	// sitting next to it.
+	Exchange *externalProviderExchange `json:"exchange,omitempty"`
 }
 
 // ProvidersHandler returns the selectable external providers.
@@ -77,6 +82,7 @@ func (m *externalAppsModule) ProvidersHandler() http.HandlerFunc {
 				Description: app.Description,
 				Installed:   installed[app.CatalogID],
 				Contracts:   providerContractFields(app),
+				Exchange:    m.providerExchange(app),
 			})
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].DisplayName < out[j].DisplayName })
@@ -143,6 +149,13 @@ func providerContractFields(app *catalog.App) []externalProviderContract {
 			})
 		}
 		for _, secret := range spec.Secrets {
+			// An app that can trade a sign-in for this contract's credential does
+			// not ask for it. The exchange block replaces these fields, and the
+			// operator never sees a box for a key they were about to be asked to
+			// go and find.
+			if exchangedContract(app, name) {
+				break
+			}
 			fields = append(fields, externalProviderField{
 				Key:      secret,
 				Label:    humanizeFieldKey(secret),
@@ -204,6 +217,12 @@ func (m *externalAppsModule) decodeProvider(name, rawURL, icon string, req setEx
 	}
 	endpoint, err := validateEndpointURL(rawURL)
 	if err != nil {
+		return orchestrator.ExternalAppSpec{}, err
+	}
+	// A provider whose credential is exchanged rather than pasted gets it here,
+	// before validation, so what the remote app handed back is held to exactly the
+	// same rules as what the form posted.
+	if err := m.applyProviderExchange(provider, endpoint, id == "", &req); err != nil {
 		return orchestrator.ExternalAppSpec{}, err
 	}
 	values, err := validateProviderValues(provider, req.Values)

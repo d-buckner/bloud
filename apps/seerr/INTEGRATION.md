@@ -289,6 +289,46 @@ Details that matter:
   all: ids and `tags` are Seerr's, and an admin's edits to the rest are not
   drift Bloud should undo.
 
+## A Seerr Bloud does not run: trading a sign-in for the key
+
+An external app registered from the dashboard's "Add remote app" flow has no
+configurator and no filesystem, so the API key the `requestManager` contract
+publishes cannot be read out of `settings.json`. It is read over the network
+instead, from the one account that can see it, and the operator supplies that
+account rather than the key. The mechanism is generic and documented in
+[`docs/plans/remote-app-signin-exchange.md`](../../docs/plans/remote-app-signin-exchange.md);
+`apps/seerr/exchange.go` is this app's half of it.
+
+The trade, against the pinned `v3.4.1` source:
+
+| Step | Call | Why |
+| --- | --- | --- |
+| 1 | `GET /api/v1/settings/public` | `initialized: false` means the instance is still in its own wizard, so it has no Jellyfin to authenticate against. Refused with a message that says so, before any credential is sent. |
+| 2 | `POST /api/v1/auth/jellyfin` `{username, password}` | On a configured instance this logs the credentials into the Jellyfin *Seerr* has configured and sets `req.session.userId`. `seerr-api.yml` requires only these two fields, and `hostname` must be **omitted**: the route answers 500 "Jellyfin hostname already configured" to any caller that sends one. |
+| 3 | `POST /api/v1/auth/local` `{email, password}` | Tried only when step 2 refused, so one username/password box covers an instance whose admin is a local Seerr account (`settings.main.localLogin`, on by default). |
+| 4 | `GET /api/v1/settings/main` | Answers an admin with `main` including `apiKey`, and a non-admin with the same object minus `apiKey` (`filteredMainSettings`). An empty `apiKey` is therefore proof the account is not an admin, which is what the operator is told. |
+| 5 | publish | `requestManager.apiKey` from step 4, and `requestManager.defaultUser` set to the account that signed in. `arr-mcp` writes that as `default_user`, the identity requests are attributed to; for a remote install the account just signed in as is the only one there is evidence about. |
+
+Three rules this flow keeps:
+
+- **It writes no settings.** A sign-in is not literally side-effect free:
+  `POST /auth/jellyfin` creates a Seerr account for a Jellyfin user that has none,
+  which is what signing in means. What the exchange must never do is rotate.
+  `POST /api/v1/settings/main/regenerate` would replace a credential the
+  operator's other integrations may already use, and the fake in
+  `exchange_test.go` 404s anything that is not one of the four calls above, so a
+  future edit cannot drift into a write.
+- **The password goes to the Seerr origin, not to a Jellyfin the operator
+  names.** Seerr dials the media server it already has configured. That is a new
+  place a stored admin password is transmitted, so under a plain-http origin it
+  crosses the LAN in clear, which is what the form's help text says.
+- **CSRF is echoed when the instance asks for it.** `network.csrfProtection`
+  defaults to `false` (`server/lib/settings/index.ts`), which is why every other
+  call in `api.go` posts with no token. When an operator has turned it on, Seerr
+  issues the token as the `XSRF-TOKEN` cookie, so the session client reads it
+  back out of its own jar and sends it as `X-CSRF-TOKEN`. Without that the
+  exchange fails 403 and the operator is told their password is wrong.
+
 ## Never pre-seed settings.json (verified failure)
 
 **Rule: Bloud never writes `settings.json`.** PreStart only creates the mounted
@@ -364,8 +404,9 @@ relevant for correct client IPs behind a proxy).
 | File | Purpose |
 |------|---------|
 | `apps/seerr/metadata.yaml` | Container, port 5055, volume, healthcheck, `sso.strategy: none`, the optional `mediaServer` and `pvr` integrations |
-| `apps/seerr/api.go` | Typed client for the onboarding and DVR endpoints (paths/payloads, with v3.4.1 source citations) |
+| `apps/seerr/api.go` | Typed client for the onboarding, DVR and remote sign-in endpoints (paths/payloads, with v3.4.1 source citations) |
 | `apps/seerr/configurator.go` | PreStart (config dir only) and PostStart (onboarding + PVR wiring from the resolved `mediaServer`/`pvr` bindings) |
+| `apps/seerr/exchange.go` | The remote-install half: trades a sign-in for the published `requestManager` key, and names `mediaServer` as the role whose login Bloud may borrow |
 | `apps/seerr/jellyfin.go` | The Jellyfin coupling: verify the stored key by use, mint a new one with the binding's bootstrap password, push it into Seerr |
 | `apps/seerr/configurator_test.go` | Fake Seerr, fake Jellyfin and fake PVRs; flow, guard, PVR payload/idempotency/drift/prune tests |
 | `apps/seerr/registration.go` | Registers the `apps-seerr` node |
@@ -396,6 +437,14 @@ the stale entry pruned when its binding is not installed while an admin's own
 entry is left alone, the entry kept when the PVR is installed but not answering,
 the `HD-1080p` → first-profile fallback, a 5xx profile list skipped without
 failing, and a 4xx profile list failing with the sibling named.
+
+The remote sign-in exchange is asserted against its own fake instance: the key
+published after a Jellyfin sign-in, the local-account fallback, no `hostname` in
+the sign-in body, the setup-wizard refusal before any credential is sent, the
+"not a Seerr" refusal when `initialized` is absent, the not-an-admin refusal when
+`apiKey` is omitted, both routes named when both refuse, the typed account winning
+over the login Bloud holds, half a sign-in refused, and the whole flow working with
+`csrfProtection` on.
 
 ## Troubleshooting
 

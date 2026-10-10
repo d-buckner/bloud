@@ -21,6 +21,10 @@ export interface ExternalAppForm {
 	icon: string;
 	values: Record<string, Record<string, string>>;
 	secrets: Record<string, string>;
+	/** A sign-in typed into the form, for an app that trades one for its key. */
+	exchange?: Record<string, string>;
+	/** Ask Bloud to sign in with the login it already holds. */
+	exchangeLogin?: boolean;
 }
 
 export interface ExternalAppPatch {
@@ -29,6 +33,8 @@ export interface ExternalAppPatch {
 	icon?: string;
 	values?: Record<string, Record<string, string>>;
 	secrets?: Record<string, string>;
+	exchange?: Record<string, string>;
+	exchangeLogin?: boolean;
 }
 
 /**
@@ -50,6 +56,10 @@ export function launcherPatch(form: ExternalAppForm): ExternalAppPatch {
  * A form where every secret is blank carries no `secrets` key at all. That is
  * the difference between "leave the stored credential alone" and "here is a
  * blank credential", and only the second one the server will refuse.
+ *
+ * A sign-in follows the same rule for the same reason: an exchange the operator
+ * did not fill in is not a request to sign in again, so it is left out and the
+ * key on file survives a rename untouched.
  */
 export function providerPatch(form: ExternalAppForm): ExternalAppPatch {
 	const supplied = Object.fromEntries(
@@ -62,6 +72,12 @@ export function providerPatch(form: ExternalAppForm): ExternalAppPatch {
 	};
 	if (Object.keys(supplied).length > 0) {
 		patch.secrets = supplied;
+	}
+	if (form.exchange && Object.keys(form.exchange).length > 0) {
+		patch.exchange = form.exchange;
+	}
+	if (form.exchangeLogin) {
+		patch.exchangeLogin = true;
 	}
 	return patch;
 }

@@ -29,7 +29,11 @@
  * key. The contract grouping the registry implies is not something a person
  * needs in order to fill the form, so it does not appear either.
  */
-import type { ExternalProviderContract, ExternalProviderField } from '$lib/clients/settingsClient';
+import type {
+	ExternalProviderContract,
+	ExternalProviderExchange,
+	ExternalProviderField
+} from '$lib/clients/settingsClient';
 
 /**
  * One field the operator fills, and the set of contracts that field answers.
@@ -163,4 +167,92 @@ export function missingProviderInputs(
 function isFilled(input: ProviderInput, fieldValues: ProviderFieldValues, storedSecrets: string[]): boolean {
 	if ((fieldValues[input.id] ?? '').trim() !== '') return true;
 	return input.kind === 'secret' && input.contracts.some((contract) => storedSecrets.includes(contract));
+}
+
+/**
+ * The sign-in half of the form, for an app whose credential is traded for a
+ * login rather than pasted.
+ *
+ * A contract registry can say what a provider must publish; it cannot say how a
+ * human supplies that for an install Bloud does not boot. Where the credential is
+ * visible in the remote app's own settings page, one field per secret is right.
+ * Where it is not, the server sends an exchange block instead: the operator gives
+ * an account, Bloud signs in, and the remote app hands over the key. The form
+ * renders whatever arrives, so it still learns nothing about any particular app.
+ */
+export interface ExchangeInput {
+	id: string;
+	key: string;
+	label: string;
+	secret: boolean;
+	required: boolean;
+	help: string;
+}
+
+/** The `exchange` / `exchangeLogin` half of a request body. */
+export interface ExchangePayload {
+	exchange?: Record<string, string>;
+	exchangeLogin?: boolean;
+}
+
+/**
+ * The sign-in fields to render. Empty when the app has no exchange, or when
+ * Bloud holds a login and the form is showing the checkbox instead: then there
+ * is nothing to type, and a disabled box next to a checked box is noise.
+ */
+export function deriveExchangeInputs(
+	exchange: ExternalProviderExchange | undefined,
+	useStoredLogin: boolean
+): ExchangeInput[] {
+	if (!exchange || useStoredLogin) return [];
+	return (exchange.inputs ?? []).map((field: ExternalProviderField) => ({
+		id: `exchange:${field.key}`,
+		key: field.key,
+		label: field.label,
+		secret: field.kind === 'secret',
+		required: field.required,
+		help: field.help ?? ''
+	}));
+}
+
+/** Whether the checkbox should start checked: only when there is one to offer. */
+export function defaultUseStoredLogin(exchange: ExternalProviderExchange | undefined): boolean {
+	return (exchange?.storedLogin ?? '') !== '';
+}
+
+/**
+ * The labels still missing. A stored login satisfies the whole exchange, which
+ * is the point of offering it.
+ */
+export function missingExchangeInputs(
+	inputs: ExchangeInput[],
+	fieldValues: ProviderFieldValues,
+	useStoredLogin: boolean
+): string[] {
+	if (useStoredLogin) return [];
+	return inputs.filter((input) => (fieldValues[input.id] ?? '').trim() === '').map((input) => input.label);
+}
+
+/**
+ * Build the sign-in part of the body.
+ *
+ * Nothing is sent when the operator typed nothing and did not ask for the stored
+ * login, which is how a rename leaves the credential on file alone: the server
+ * reads an absent exchange the way it reads an absent secret, as "do not touch
+ * it". A half-typed sign-in sends nothing either, because half a credential is
+ * not a new one.
+ */
+export function buildExchangePayload(
+	inputs: ExchangeInput[],
+	fieldValues: ProviderFieldValues,
+	useStoredLogin: boolean
+): ExchangePayload {
+	if (useStoredLogin) return { exchangeLogin: true };
+	const exchange: Record<string, string> = {};
+	for (const input of inputs) {
+		const value = fieldValues[input.id] ?? '';
+		if (value.trim() === '') return {};
+		exchange[input.key] = value;
+	}
+	return Object.keys(exchange).length > 0 ? { exchange } : {};
 }

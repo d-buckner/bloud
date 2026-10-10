@@ -108,12 +108,35 @@ export interface ExternalProviderContract {
 	fields: ExternalProviderField[];
 }
 
+/**
+ * The sign-in block of a provider whose credential is traded for a login rather
+ * than pasted.
+ *
+ * When this is present, the contract's own secret fields are absent from
+ * `contracts`: the operator supplies an account, Bloud signs in to that instance,
+ * and whatever the remote app hands back is what gets stored. So a remote Seerr
+ * asks for a username and password, the credential a person actually has, instead
+ * of an API key they would have to go and find.
+ */
+export interface ExternalProviderExchange {
+	/** The contract whose secret fields these replace. */
+	contract: string;
+	inputs: ExternalProviderField[];
+	/**
+	 * A login Bloud already holds, described in words. Present means the form can
+	 * offer to sign in with that instead of asking, so a password nobody chose
+	 * never has to be typed or shown.
+	 */
+	storedLogin?: string;
+}
+
 export interface ExternalProviderOption {
 	app: string;
 	displayName: string;
 	description: string;
 	installed: boolean;
 	contracts: ExternalProviderContract[];
+	exchange?: ExternalProviderExchange;
 }
 
 export function fetchExternalApps(): Promise<ExternalApp[]> {
@@ -139,6 +162,8 @@ export function addExternalProvider(input: {
 	icon?: string;
 	values: Record<string, Record<string, string>>;
 	secrets: Record<string, string>;
+	exchange?: Record<string, string>;
+	exchangeLogin?: boolean;
 }): Promise<IntentResponse> {
 	return post<IntentResponse>('/api/external-apps', {
 		kind: 'provider',
@@ -148,6 +173,8 @@ export function addExternalProvider(input: {
 		icon: input.icon ?? '',
 		values: input.values,
 		secrets: input.secrets,
+		...(input.exchange ? { exchange: input.exchange } : {}),
+		...(input.exchangeLogin ? { exchangeLogin: true } : {})
 	});
 }
 
@@ -171,6 +198,13 @@ export interface ExternalAppUpdate {
 	icon?: string;
 	values?: Record<string, Record<string, string>>;
 	secrets?: Record<string, string>;
+	/**
+	 * A fresh sign-in, with the same rule as `secrets`: omitted means "leave the
+	 * credential on file", so renaming a remote app never has to sign in again.
+	 */
+	exchange?: Record<string, string>;
+	/** Sign in with the login Bloud holds, rather than with typed inputs. */
+	exchangeLogin?: boolean;
 }
 
 export function updateExternalApp(id: string, patch: ExternalAppUpdate): Promise<IntentResponse> {

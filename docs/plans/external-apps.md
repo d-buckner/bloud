@@ -298,6 +298,14 @@ for the endpoint plus only the fields the operator actually owns:
   value the provider declares statically under `provides: <contract>:
   values:` is a fact about the app rather than about this install, so the
   form never shows it and the server merges it back in on save.
+
+That derivation assumes the credential a contract declares is something the
+operator can read out of the remote app's own settings page. Where it is not,
+the app registers a **credential exchange** instead and the form asks for a
+sign-in: Bloud logs in to that instance and stores whatever it hands back. See
+[remote-app-signin-exchange.md](remote-app-signin-exchange.md), which is the
+Seerr case (its admin is a Jellyfin login and its key is a string nobody has ever
+looked at) and the only app that needs it today.
 - one input per value the offer claims under `provides: <contract>:
   operatorValues:`. That list is the app saying "this static default describes
   the install Bloud booted, not the app". Jellyfin's `adminUsername` is the

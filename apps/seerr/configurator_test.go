@@ -1132,8 +1132,8 @@ func TestPostStart_ErrorsWhenInitializeDoesNotFlipInitialized(t *testing.T) {
 	if err == nil {
 		t.Fatal("PostStart() error = nil, want an error when initialized stays false")
 	}
-	if got := err.Error(); !regexp.MustCompile(`initialized=false`).MatchString(got) {
-		t.Errorf("PostStart() error = %q, want it to name the observed initialized value", got)
+	if got := err.Error(); !regexp.MustCompile(`reports itself uninitialized`).MatchString(got) {
+		t.Errorf("PostStart() error = %q, want it to name what it observed after settings/initialize", got)
 	}
 }
 
