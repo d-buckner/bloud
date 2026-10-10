@@ -381,8 +381,8 @@ func (o *Orchestrator) warnUnboundPayload(contract string, src providerSource) {
 	}
 }
 
-// requestManagerBinding builds one request-manager binding: the provider's key
-// and the account requests are attributed to when the agent names none.
+// requestManagerBinding builds one request-manager binding: the credentials the
+// provider's login is built on, from which the consumer derives the API key.
 func (o *Orchestrator) requestManagerBinding(
 	ref configurator.ProviderRef,
 	contract string,
@@ -392,8 +392,8 @@ func (o *Orchestrator) requestManagerBinding(
 ) configurator.RequestManagerBinding {
 	return configurator.RequestManagerBinding{
 		ProviderRef: ref,
-		APIKey:      o.publishedSecret(src, contract, offer, requires),
-		DefaultUser: o.contractValue(src, contract, offer, "defaultUser"),
+		Username:    o.contractValue(src, contract, offer, "username"),
+		Password:    o.publishedSecret(src, contract, offer, requires),
 	}
 }
 

@@ -34,6 +34,9 @@ func quietLogger() *slog.Logger {
 // so this only has to satisfy the dependency the configurator is built with.
 type fakeSecrets struct {
 	password string
+	// secrets records SetAppSecret calls keyed by name, so a test can assert
+	// the credentials the configurator publishes.
+	secrets map[string]string
 	// contractValues records SetAppContractValue calls keyed by contract/key,
 	// so a test can assert the runtime values the configurator publishes.
 	contractValues map[string]string
@@ -46,9 +49,19 @@ func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return 
 // tests carry it the way the resolver would.
 const jellyfinAdminUser = "bloud-bootstrap-admin"
 
-func (f *fakeSecrets) GetAppSecret(string, string) string { return "" }
-
-func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
+func (f *fakeSecrets) GetAppSecret(_, key string) string {
+	if f.secrets == nil {
+		return ""
+	}
+	return f.secrets[key]
+}
+func (f *fakeSecrets) SetAppSecret(_, key, value string) error {
+	if f.secrets == nil {
+		f.secrets = map[string]string{}
+	}
+	f.secrets[key] = value
+	return nil
+}
 func (f *fakeSecrets) SetAppContractValue(_, contract, key, value string) error {
 	if f.contractValues == nil {
 		f.contractValues = map[string]string{}
@@ -897,11 +910,14 @@ func TestPostStart_OnboardsThroughJellyfinAndInitializes(t *testing.T) {
 	assertAdminCallsCarryKey(t, fake, appAPIKey)
 	assertInitializeOrder(t, fake)
 
-	// requestManager.defaultUser is the Seerr account arr-mcp acts as: the
-	// Jellyfin bootstrap admin Seerr's onboarding created its admin from, whose
-	// display name Seerr reports as that Jellyfin username.
-	if got := secrets.contractValues["requestManager/defaultUser"]; got != jellyfinAdminUser {
-		t.Errorf("requestManager/defaultUser = %q, want %q", got, jellyfinAdminUser)
+	// requestManager publishes the Jellyfin login Seerr's admin was created
+	// from: the username as the account requests are attributed to, and the
+	// password as the secret a consumer logs in with to derive Seerr's key.
+	if got := secrets.contractValues["requestManager/username"]; got != jellyfinAdminUser {
+		t.Errorf("requestManager/username = %q, want %q", got, jellyfinAdminUser)
+	}
+	if got := secrets.secrets["password"]; got != jellyfinPassword {
+		t.Errorf("requestManager/password = %q, want %q", got, jellyfinPassword)
 	}
 
 	// A second reconciliation is a no-op.

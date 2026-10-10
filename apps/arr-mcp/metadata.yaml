@@ -21,12 +21,14 @@ integrations:
         default: true
   # Seerr is the request manager this app exists to serve. Optional, like the
   # Servarrs and the media server: install it to answer requests, or leave it
-  # out and wire only what is installed.
+  # out and wire only what is installed. Seerr publishes the Jellyfin login its
+  # admin was created from; this app logs into Seerr with it and derives
+  # Seerr's own API key.
   requestManager:
     required: false
     multi: false
     requires:
-      - apiKey
+      - password
     compatible:
       - app: seerr
         default: true

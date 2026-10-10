@@ -341,19 +341,22 @@ type PVRBinding struct {
 }
 
 // RequestManagerBinding is the app an agent asks to take requests on the
-// user's behalf: the consumer needs the key its API authenticates with and the
-// account requests are attributed to.
+// user's behalf. The consumer needs the credentials the provider's own login
+// is built on (for Seerr, the Jellyfin account its admin was created from) so
+// it can derive the key the API authenticates with.
 type RequestManagerBinding struct {
 	ProviderRef
-	// APIKey is the key the provider's API authenticates with, published under
-	// its `requestManager` contract. Empty while the provider has not published
-	// it yet (treat that as "not ready", never as an empty credential).
-	APIKey string
-	// DefaultUser is the account requests are attributed to when the agent does
-	// not name one. A Bloud-booted provider publishes the managed account it
-	// made during onboarding; an off-host provider has no account Bloud knows,
-	// so the value is empty there and the agent must name a user explicitly.
-	DefaultUser string
+	// Username is the login paired with Password: for Seerr, the Jellyfin
+	// account, which is also the display name the manager reports and the
+	// account requests are attributed to. A Bloud-booted provider publishes the
+	// account it onboarded with; an off-host provider publishes the one its
+	// operator typed in.
+	Username string
+	// Password is the credential paired with Username, published under the
+	// provider's `requestManager` contract. Empty while the provider has not
+	// published it yet (treat that as "not ready", never as an empty
+	// credential).
+	Password string
 }
 
 // MediaServerBinding is an app that serves media and owns the accounts a

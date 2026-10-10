@@ -28,6 +28,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"codeberg.org/d-buckner/bloud/apps/jellyfin"
+	"codeberg.org/d-buckner/bloud/apps/seerr"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
@@ -199,7 +200,11 @@ func (c *Configurator) buildConfig(ctx context.Context, state *configurator.AppS
 		cfg.Auth.PasswordHash = hash
 	}
 	if rm, ok := requestManagerBinding(state); ok {
-		cfg.Services.Seerr = &serviceConfig{URL: rm.BaseURL, APIKey: rm.APIKey, DefaultUser: rm.DefaultUser}
+		key, err := c.ensureSeerrAPIKey(ctx, rm)
+		if err != nil {
+			return configFile{}, fmt.Errorf("provisioning the %s Seerr API key: %w", appName, err)
+		}
+		cfg.Services.Seerr = &serviceConfig{URL: rm.BaseURL, APIKey: key, DefaultUser: rm.Username}
 	}
 	for _, pvr := range pvrBindings(state) {
 		svc := &serviceConfig{URL: pvr.BaseURL, APIKey: pvr.APIKey}
@@ -270,6 +275,33 @@ func (c *Configurator) ensureJellyfinAPIKey(ctx context.Context, server configur
 	return key, nil
 }
 
+// ensureSeerrAPIKey returns the API key this app calls Seerr with, deriving it
+// through apps/seerr's shared client on the first pass and reusing the stored
+// key afterwards. The credential Seerr publishes is the Jellyfin login its
+// admin was created from; Seerr has no token-minting endpoint, so the only way
+// to get its key is to log in with that pair and read main.apiKey out of its
+// settings.
+func (c *Configurator) ensureSeerrAPIKey(ctx context.Context, rm configurator.RequestManagerBinding) (string, error) {
+	if c.secrets == nil {
+		return "", nil
+	}
+	if rm.Username == "" {
+		return "", fmt.Errorf("the %s request manager published no username, so %s cannot log in to derive its API key", rm.App, appName)
+	}
+	if stored := c.secrets.GetAppSecret(appName, seerrAPIKeyKey); stored != "" {
+		return stored, nil
+	}
+	key, err := seerr.DeriveAPIKey(ctx, c.clients, func() string { return rm.LocalURL }, rm.Username, rm.Password)
+	if err != nil {
+		return "", err
+	}
+	if err := c.secrets.SetAppSecret(appName, seerrAPIKeyKey, key); err != nil {
+		return "", fmt.Errorf("persisting the %s Seerr API key: %w", appName, err)
+	}
+	c.logger.Info("derived the arr-mcp Seerr API key", "requestManager", rm.App)
+	return key, nil
+}
+
 // currentBearer reads the MCP bearer this app publishes without generating
 // one. PreStart owns generation; PostStart only has to present whatever is
 // current, so a rotation landing between the two phases is still picked up.
@@ -281,13 +313,13 @@ func (c *Configurator) currentBearer() string {
 }
 
 // requestManagerBinding returns the installed Seerr provider, or false when
-// none is installed or it has not published its key yet.
+// none is installed or it has not published its login yet.
 func requestManagerBinding(state *configurator.AppState) (configurator.RequestManagerBinding, bool) {
 	if state == nil {
 		return configurator.RequestManagerBinding{}, false
 	}
 	for _, b := range state.Integrations.RequestManagers {
-		if b.App == seerrAppName && b.Installed && b.APIKey != "" {
+		if b.App == seerrAppName && b.Installed && b.Password != "" {
 			return b, true
 		}
 	}

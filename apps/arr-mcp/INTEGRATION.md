@@ -16,11 +16,13 @@ so the published credential is checked by the thing it was given.
 
 **Outbound** is one credential per contract:
 
-- `requestManager` (Seerr): the key Seerr generated for itself, published by
-  `apps/seerr` under the same contract, plus the `default_user` account requests
-  are attributed to. That account is the Jellyfin bootstrap admin Seerr onboarded
-  from, published as a runtime value because its username is per-install (see
-  `apps/seerr/INTEGRATION.md`).
+- `requestManager` (Seerr): the Jellyfin login Seerr's admin was created from,
+  published by `apps/seerr` under the same contract. This app logs into Seerr
+  with that pair (`apps/seerr`'s `DeriveAPIKey`) and derives Seerr's own
+  `main.apiKey`, which is what it then writes into `config.yaml` as
+  `api_key`; the username becomes `default_user`. Seerr has no token-minting
+  endpoint, so deriving its key is the only way to hand it over without asking
+  the operator to copy it out of the UI.
 - `pvr` (Radarr/Sonarr): the key each Servarr publishes under its own `pvr`
   offer.
 - `mediaServer` (Jellyfin): a named API key this app mints through the bootstrap

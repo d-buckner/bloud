@@ -78,7 +78,7 @@ rejects both a missing and an incorrect bearer.
 
 | Contract | Carries | arr-mcp needs | Gap |
 |---|---|---|---|
-| `requestManager` | nothing yet | Seerr API key | gap 1 |
+| `requestManager` | `password`, `username` | Seerr API key (derived) | gap 1 |
 | `pvr` | `apiKey` | API key | none |
 | `mediaServer` | `adminPassword`, `adminUsername` | API key | gap 2 |
 
@@ -105,7 +105,7 @@ Invariant 15 spells out what a new capability costs, and it is four pieces, not
 one:
 
 1. A registry entry in `internal/catalog/contracts.go`:
-   `{Name: "requestManager", Secrets: []string{"apiKey"}, Values: []ValueSpec{{Key: "defaultUser"}}}`.
+   `{Name: "requestManager", Secrets: []string{"password"}, Values: []ValueSpec{{Key: "username"}}}`.
 2. A payload type in `pkg/configurator`, embedding `ProviderRef`, next to
    `PVRBinding` and `MediaServerBinding`.
 3. One arm in `bindContract` (`internal/engine/orchestrator/integrations.go`).
@@ -120,17 +120,16 @@ creates its admin account (`adminEmail = "bloud-admin@localhost"`,
 there is no `provides:` block in `apps/seerr/metadata.yaml` and no
 `SetAppContractValue` call. Both are additions to code paths that exist.
 
-`defaultUser` is a provider **value**, not a secret. It is runtime-published
-rather than static metadata, and the value is the Jellyfin bootstrap admin
-**username** the `mediaServer` binding carries, not the admin **email**. Seerr
-reports its onboarded admin's display name as that Jellyfin username, which is
-what arr-mcp matches `default_user` against, so the published string is the one
-the consumer's lookup finds. Publishing at runtime rather than declaring
-statically is also what keeps an off-host Jellyfin correct: the account Bloud
-did not boot has whatever username its operator chose, and the remote-app form
-asks for it under the same `runtimeValues` channel every other runtime-minted
-value uses. It is needed at all because arr-mcp refuses every Seerr per-user
-tool until one is named.
+The contract carries **credentials**, not a key. Seerr's admin is a Jellyfin
+login and Seerr has no token-minting endpoint, so the provider publishes the
+Jellyfin `username` + `password` its admin was created from, and the consumer
+logs into Seerr with that pair and derives Seerr's own `main.apiKey` out of its
+settings (`apps/seerr`'s `DeriveAPIKey`: `POST /auth/jellyfin` for a session
+cookie, then `GET /settings/main`). The username is runtime-published because
+it arrives on the `mediaServer` binding and differs per install; the password is
+the contract's secret. It is needed at all because arr-mcp's Seerr adapter only
+accepts `api_key`, and this login-and-read is the only way to hand it over
+without an operator copying the key out of the UI.
 
 ## The config UI credential is a client credential, not a new mechanism
 

@@ -275,7 +275,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		// reconcileJellyfinCoupling).
 		if jellyfin, ok := mediaServerBinding(state); ok {
 			c.reconcileJellyfinCoupling(ctx, settingsPath, c.providerClient(jellyfin.ProviderRef), jellyfin)
-			if err := c.publishDefaultUser(jellyfin.AdminUsername); err != nil {
+			if err := c.publishRequestManagerCredentials(jellyfin.AdminUsername, jellyfin.AdminPassword); err != nil {
 				return err
 			}
 		}
@@ -355,10 +355,7 @@ func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.App
 	if err != nil {
 		return err
 	}
-	if err := c.publishAPIKey(apiKey); err != nil {
-		return err
-	}
-	if err := c.publishDefaultUser(jellyfin.AdminUsername); err != nil {
+	if err := c.publishRequestManagerCredentials(jellyfin.AdminUsername, jellyfin.AdminPassword); err != nil {
 		return err
 	}
 
@@ -452,43 +449,31 @@ func (c *Configurator) reconcilePVRsWithStoredKey(ctx context.Context, state *co
 		c.logger.Warn("cannot read Seerr's API key; skipping PVR wiring", "error", err)
 		return nil
 	}
-	if err := c.publishAPIKey(apiKey); err != nil {
-		return err
-	}
 	return c.reconcilePVRs(ctx, state, apiKey)
 }
 
-// publishAPIKey hands Seerr's self-generated key to the requestManager contract,
-// so a consumer can ask Seerr to take requests on the user's behalf. It is the
-// same key the PVR wiring above uses, read from settings.json rather than
-// minted, because Seerr generates it for itself on first boot.
-func (c *Configurator) publishAPIKey(apiKey string) error {
-	if err := c.secrets.SetAppSecret(appName, "apiKey", apiKey); err != nil {
-		return fmt.Errorf("publishing Seerr's API key: %w", err)
-	}
-	return nil
-}
-
-// publishDefaultUser hands the Seerr account arr-mcp should act as to the
-// requestManager contract. It is the Jellyfin bootstrap admin username the
-// mediaServer binding carries: Seerr's onboarding created its admin from that
-// account, and Seerr reports that admin's display name as the Jellyfin
-// username, so publishing the same string here is what makes a consumer's
-// default_user match a real Seerr user.
+// publishRequestManagerCredentials hands the Jellyfin login Seerr's admin was
+// created from to the requestManager contract, so a consumer can log into
+// Seerr with it and derive Seerr's own API key. Both halves arrive on the
+// mediaServer binding: the username is also the display name Seerr reports for
+// its admin, so it is published as the contract's username value, and the
+// password is published as the contract's secret.
 //
-// A media server that has not published its username yet is the deferred
-// state the next reconciliation resolves, not a node failure, so an empty
-// username is logged and skipped. The call is idempotent: publishing the value
-// already stored is a no-op, which keeps a steady-state resync a read-only
-// diff.
-func (c *Configurator) publishDefaultUser(username string) error {
-	if username == "" {
-		c.logger.Warn("the media server has not published its bootstrap admin username yet; requestManager.defaultUser is deferred",
+// A media server that has not published its login yet is the deferred state
+// the next reconciliation resolves, not a node failure, so a missing half is
+// logged and skipped. Both writes are idempotent, which keeps a steady-state
+// resync a read-only diff.
+func (c *Configurator) publishRequestManagerCredentials(username, password string) error {
+	if username == "" || password == "" {
+		c.logger.Warn("the media server has not published its bootstrap admin login yet; requestManager credentials are deferred",
 			"mediaServer", jellyfinAppName)
 		return nil
 	}
-	if err := c.secrets.SetAppContractValue(appName, "requestManager", "defaultUser", username); err != nil {
-		return fmt.Errorf("publishing Seerr's requestManager default user: %w", err)
+	if err := c.secrets.SetAppSecret(appName, "password", password); err != nil {
+		return fmt.Errorf("publishing Seerr's requestManager password: %w", err)
+	}
+	if err := c.secrets.SetAppContractValue(appName, "requestManager", "username", username); err != nil {
+		return fmt.Errorf("publishing Seerr's requestManager username: %w", err)
 	}
 	return nil
 }

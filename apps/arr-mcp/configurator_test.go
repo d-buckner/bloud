@@ -75,9 +75,13 @@ func TestPreStartUnboundIsOfflineAndIdempotent(t *testing.T) {
 }
 
 // TestPreStartRendersSeerr pins the one binding this app is built around: the
-// request manager's address, key and default user land in the config verbatim.
+// request manager's address, the derived API key and the default user land in
+// the config. The key is pre-seeded so the derive is skipped and PreStart
+// stays offline.
 func TestPreStartRendersSeerr(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Secrets: newFakeSecrets()})
+	secrets := newFakeSecrets()
+	secrets.values[seerrAPIKeyKey] = "derived-key"
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets})
 	state := &configurator.AppState{
 		DataPath: t.TempDir(),
 		Integrations: configurator.Integrations{
@@ -87,8 +91,8 @@ func TestPreStartRendersSeerr(t *testing.T) {
 					BaseURL: "http://apps-seerr:5055", LocalURL: "http://localhost:5055",
 					Installed: true,
 				},
-				APIKey:      "seerr-key",
-				DefaultUser: "bloud-bootstrap-admin",
+				Username: "bloud-bootstrap-admin",
+				Password: "jellyfin-pw",
 			}},
 		},
 	}
@@ -96,7 +100,7 @@ func TestPreStartRendersSeerr(t *testing.T) {
 	s := writeConfig(t, c, state)
 	require.Contains(t, s, "seerr:")
 	require.Contains(t, s, "url: http://apps-seerr:5055")
-	require.Contains(t, s, "api_key: seerr-key")
+	require.Contains(t, s, "api_key: derived-key")
 	require.Contains(t, s, "default_user: bloud-bootstrap-admin")
 }
 
@@ -183,6 +187,7 @@ func sseMessage(w http.ResponseWriter, payload string) {
 // fake refuses to issue one and PostStart must still converge.
 func TestPostStartToleratesStatelessServer(t *testing.T) {
 	secrets := newFakeSecrets()
+	secrets.values[seerrAPIKeyKey] = "derived-key"
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: configurator.ClientFactory{}})
 	state := &configurator.AppState{
 		DataPath: t.TempDir(),
@@ -193,8 +198,8 @@ func TestPostStartToleratesStatelessServer(t *testing.T) {
 					BaseURL: "http://apps-seerr:5055", LocalURL: "http://localhost:5055",
 					Installed: true,
 				},
-				APIKey:      "seerr-key",
-				DefaultUser: "bloud-bootstrap-admin",
+				Username: "bloud-bootstrap-admin",
+				Password: "jellyfin-pw",
 			}},
 		},
 	}
