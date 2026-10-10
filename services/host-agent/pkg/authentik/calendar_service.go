@@ -5,7 +5,6 @@ package authentik
 import (
 	"context"
 	"fmt"
-	"net/http"
 )
 
 // CalendarServiceUsername is the login name of the account that owns the
@@ -48,26 +47,21 @@ func (c *Client) EnsureCalendarServiceAccount(ctx context.Context, password stri
 // password every time is what keeps the directory in step with the secret store
 // across passes; the app_password token alone is not sufficient, because
 // Authentik's LDAP outpost in direct-bind mode needs the user's real password.
+//
+// The password write is the one part of this pass that cannot be made a read.
+// Authentik has no endpoint that answers "does this account already hold that
+// password", so the diff has to be a write. It costs a server-side hash per
+// account per pass, which is what the resync cost signal exists to keep visible.
 func (c *Client) ensureServiceAccount(ctx context.Context, username, displayName, password string) error {
 	userID, err := c.findUserID(ctx, username)
 	if err != nil {
 		return err
 	}
 	if userID == 0 {
-		payload := map[string]any{
-			"username":  username,
-			"name":      displayName,
-			"path":      "users",
-			"type":      "service_account",
-			"is_active": true,
+		userID, err = c.createUserRecord(ctx, username, displayName, "", "service_account")
+		if err != nil {
+			return err
 		}
-		var result struct {
-			PK int `json:"pk"`
-		}
-		if err := c.cl.POST("/api/v3/core/users/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
-			return fmt.Errorf("creating service account %s: %w", username, err)
-		}
-		userID = result.PK
 	}
 
 	if err := c.setUserPassword(ctx, userID, password); err != nil {

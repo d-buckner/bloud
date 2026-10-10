@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
@@ -76,6 +77,31 @@ func (o *Orchestrator) runResync(ctx context.Context, id string) bool {
 	if cfg == nil {
 		return false
 	}
+
+	// The whole resync is what the cost budget measures. The bargain in
+	// readyForConfigResync is about the config phases together, so a slow PreStart
+	// is the same problem as a slow PostStart, and timing only one of them would
+	// let a node be expensive in the phase nobody watched. Observing is all this
+	// does: the resync runs regardless, because the diff is the point.
+	started := time.Now()
+	defer func() {
+		elapsed := time.Since(started)
+		raised, signal := o.noteResyncCost(id, elapsed)
+		if !raised {
+			return
+		}
+		o.logger.Warn("config resync has been over budget repeatedly",
+			"app", id,
+			"duration", elapsed.Round(time.Millisecond),
+			"budget", time.Duration(signal.BudgetMS)*time.Millisecond,
+			"overruns", signal.Overruns,
+			"note", "a no-op pass this slow is not a failure; it is the reconciler's "+
+				"idle cost, and it sits in front of every install queued behind it")
+		o.recordActivity("resync_cost_watch",
+			id+": "+strconv.Itoa(signal.Overruns)+" consecutive resyncs over "+
+				time.Duration(signal.BudgetMS).String())
+	}()
+
 	appID := o.ownerApp(id)
 	state := o.buildAppState(id)
 
@@ -425,8 +451,9 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	// A full drive is an intentional event: an install, a reboot, a crash
 	// recovery, or an explicit reset. Whatever the resync watchdog was
 	// watching, this pass is not the loop it is watching for, so the node gets
-	// a fresh count.
+	// a fresh count. Same for the cost watch: a drive is allowed to be slow.
 	o.clearResyncWatch(id)
+	o.clearResyncCostWatch(id)
 
 	state := o.buildAppState(id)
 

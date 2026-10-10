@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 )
@@ -24,8 +23,17 @@ const (
 // EnsureLDAPInfrastructure creates the LDAP provider, application, outpost, and service account
 // if they don't already exist. This is idempotent - safe to call multiple times.
 func (c *Client) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword string) error {
+	// The Admins group is wanted twice below: as the provider's search_group, and
+	// as the membership that lets the bind account read the directory. One read
+	// answers both, and it carries the group's current members, so a service
+	// account that is already in place costs no write.
+	admins, err := c.lookupAdminsGroup(ctx)
+	if err != nil {
+		return fmt.Errorf("finding search group: %w", err)
+	}
+
 	// 1. Create LDAP provider (if not exists)
-	providerID, err := c.ensureLDAPProvider(ctx)
+	providerID, err := c.ensureLDAPProvider(ctx, admins.PK)
 	if err != nil {
 		return fmt.Errorf("ensuring LDAP provider: %w", err)
 	}
@@ -42,8 +50,10 @@ func (c *Client) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword 
 	}
 
 	// 4. Add service account to authentik Admins group (for LDAP search permissions)
-	if err := c.addUserToGroup(ctx, serviceAccountID, "authentik Admins"); err != nil {
-		return fmt.Errorf("adding service account to group: %w", err)
+	if !admins.HasUser(serviceAccountID) {
+		if err := c.addUserToGroupID(ctx, serviceAccountID, admins.PK); err != nil {
+			return fmt.Errorf("adding service account to group: %w", err)
+		}
 	}
 
 	// 5. Create service account token (if not exists)
@@ -66,8 +76,10 @@ func (c *Client) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword 
 	return nil
 }
 
-// ensureLDAPProvider creates the LDAP provider if it doesn't exist
-func (c *Client) ensureLDAPProvider(ctx context.Context) (int, error) {
+// ensureLDAPProvider creates the LDAP provider if it doesn't exist. searchGroupID
+// is the already-resolved pk of the group the directory search is scoped to; the
+// caller has it because it needs the same group for the bind account.
+func (c *Client) ensureLDAPProvider(ctx context.Context, searchGroupID string) (int, error) {
 	// Check if provider exists
 	providerID, err := c.findProviderID(ctx, "ldap", ldapProviderName)
 	if err != nil {
@@ -85,12 +97,6 @@ func (c *Client) ensureLDAPProvider(ctx context.Context) (int, error) {
 	invalidFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
 	if err != nil {
 		return 0, fmt.Errorf("finding invalidation flow: %w", err)
-	}
-
-	// Find search group (authentik Admins)
-	searchGroupID, err := c.findGroupID(ctx, "authentik Admins")
-	if err != nil {
-		return 0, fmt.Errorf("finding search group: %w", err)
 	}
 
 	// Create the provider
@@ -150,21 +156,7 @@ func (c *Client) ensureLDAPServiceAccount(ctx context.Context) (int, error) {
 	}
 
 	// Create the service account
-	payload := map[string]any{
-		"username":  ldapServiceUsername,
-		"name":      "LDAP Service Account",
-		"path":      "users",
-		"type":      "service_account",
-		"is_active": true,
-	}
-	var result struct {
-		PK int `json:"pk"`
-	}
-	if err := c.cl.POST("/api/v3/core/users/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
-		return 0, fmt.Errorf("creating service account: %w", err)
-	}
-
-	return result.PK, nil
+	return c.createUserRecord(ctx, ldapServiceUsername, "LDAP Service Account", "", "service_account")
 }
 
 // ensureLDAPServiceToken creates the service account token if it doesn't exist
@@ -223,15 +215,7 @@ func (c *Client) ensureLDAPOutpost(ctx context.Context, providerID int) error {
 
 // GetLDAPServiceTokenKey returns the LDAP service account token key for bind operations
 func (c *Client) GetLDAPServiceTokenKey(ctx context.Context) (string, error) {
-	var result struct {
-		Key string `json:"key"`
-	}
-	if err := c.cl.GET("/api/v3/core/tokens/"+url.PathEscape(ldapServiceTokenID)+"/view_key/").
-		OK(http.StatusOK).
-		DoInto(ctx, &result); err != nil {
-		return "", fmt.Errorf("getting LDAP service token key: %w", err)
-	}
-	return result.Key, nil
+	return c.tokenKey(ctx, ldapServiceTokenID)
 }
 
 // GetLDAPOutpostToken returns the auto-generated token for the LDAP outpost
@@ -249,15 +233,7 @@ func (c *Client) GetLDAPOutpostToken(ctx context.Context) (string, error) {
 	tokenIdentifier := fmt.Sprintf("ak-outpost-%s-api", outpost.PK)
 
 	// Query for the token key using the view_key endpoint
-	var result struct {
-		Key string `json:"key"`
-	}
-	if err := c.cl.GET("/api/v3/core/tokens/"+url.PathEscape(tokenIdentifier)+"/view_key/").
-		OK(http.StatusOK).
-		DoInto(ctx, &result); err != nil {
-		return "", fmt.Errorf("getting token key: %w", err)
-	}
-	return result.Key, nil
+	return c.tokenKey(ctx, tokenIdentifier)
 }
 
 // Helper methods for LDAP infrastructure

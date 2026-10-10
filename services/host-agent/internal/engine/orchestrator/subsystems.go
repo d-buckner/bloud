@@ -28,6 +28,14 @@ type TuningConfig struct {
 	// DefaultResyncRestartWarnAt. It changes nothing about whether a restart
 	// happens: the watchdog observes and reports, it never withholds.
 	ResyncRestartWarnAt int
+	// ResyncCostBudget is the wall clock one node's config resync is expected to
+	// fit inside. Zero means DefaultResyncCostBudget. Exceeding it changes nothing
+	// about whether the resync runs; it is what makes the node loud.
+	ResyncCostBudget time.Duration
+	// ResyncCostWarnAt is how many consecutive over-budget resyncs one node
+	// accumulates before the watch raises a signal. Zero means
+	// DefaultResyncCostWarnAt.
+	ResyncCostWarnAt int
 	// SelfHealInterval is how long the instance may sit without a convergence
 	// pass before the self-healing timer submits one. Zero means no periodic
 	// pass (a hand-built orchestrator stays quiet); wire.Build always supplies

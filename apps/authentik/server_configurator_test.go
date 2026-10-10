@@ -4,13 +4,19 @@ package authentik
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	authentikClient "codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -68,6 +74,75 @@ func TestServerConfigurator_RunDjangoShell_UsesDepsExec(t *testing.T) {
 	assert.Equal(t, "apps-authentik-server", gotName)
 	assert.Equal(t, "pw", gotEnv["BLOUD_ADMIN_PASSWORD"])
 	assert.Equal(t, []string{"ak", "shell", "-c", setAdminPasswordScript}, gotCmd)
+}
+
+// The Django shells are the bootstrap, not the steady state. A server that
+// accepts Bloud's token must be diffed over the API: the spawn costs seconds and
+// the reconciler would pay it on every pass forever (issue #306).
+func TestServerConfigurator_EnsureAPIToken_NoShellWhenTheTokenWorks(t *testing.T) {
+	execs := 0
+	srv := stubTokenServer(t, `[{"identifier":"bloud-api-token","user_obj":{"pk":2,"is_superuser":true}}]`, "the-key")
+	c := NewServerConfigurator(configurator.Deps{
+		Exec: func(context.Context, string, map[string]string, []string) ([]byte, error) {
+			execs++
+			return []byte("OK"), nil
+		},
+	}, Params{Port: serverPort(t, srv), TokenKey: "the-key"})
+
+	require.NoError(t, c.ensureAPIToken(context.Background(),
+		authentikClient.NewClient(srv.URL, "the-key")))
+	assert.Zero(t, execs, "a token that works needs no Django shell")
+}
+
+// The other half: the shell is the only way in when the credential the API
+// authenticates with does not exist yet, or was rotated or deleted by hand.
+func TestServerConfigurator_EnsureAPIToken_FallsBackToTheShell(t *testing.T) {
+	var scripts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewServerConfigurator(configurator.Deps{
+		Exec: func(_ context.Context, _ string, _ map[string]string, cmd []string) ([]byte, error) {
+			scripts = append(scripts, cmd[len(cmd)-1])
+			return []byte("OK"), nil
+		},
+	}, Params{Port: serverPort(t, srv), TokenKey: "the-key"})
+
+	require.NoError(t, c.ensureAPIToken(context.Background(), authentikClient.NewClient(srv.URL, "the-key")))
+	assert.Equal(t, []string{setAdminPasswordScript, ensureAPITokenScript}, scripts,
+		"both halves of the bootstrap run, in the order that leaves the API usable")
+}
+
+// serverPort extracts the port an httptest server is listening on.
+func serverPort(t *testing.T, srv *httptest.Server) int {
+	t.Helper()
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	require.NoError(t, err)
+	n, err := strconv.Atoi(port)
+	require.NoError(t, err)
+	return n
+}
+
+// stubTokenServer answers the two token calls EnsureAPIToken makes.
+func stubTokenServer(t *testing.T, tokens, key string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/view_key/"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"key":"` + key + `"}`))
+		case r.URL.Path == "/api/v3/core/tokens/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"results":` + tokens + `}`))
+		default:
+			t.Errorf("unexpected call: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 func TestServerConfigurator_RunDjangoShell_NoRuntimeErrors(t *testing.T) {

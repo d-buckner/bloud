@@ -155,6 +155,15 @@ func (o *Orchestrator) blockingDependency(id string, changedIDs map[string]bool)
 // affordable on a 60s floor. What it is not affordable as is a configurator
 // that reports a change every time: that one restarts its container once a
 // minute, which is why the resync breaker caps it.
+//
+// Idempotent in effect is not the same as idempotent in cost, and the bargain
+// above is about cost. A config phase that spends 15 seconds re-asserting facts
+// that are already true is not failing, so nothing about it reaches a status; it
+// just eats a fifth of every pass, forever, in front of every install queued
+// behind it. That is what the resync cost watch exists to make loud: it measures
+// each resync's wall clock and raises a signal when one node keeps exceeding the
+// budget. See resync_cost.go, and apps/authentik/integration.md for the case
+// that measured 15.6s and how it was made a read instead.
 func (o *Orchestrator) readyForConfigResync(id string) (bool, error) {
 	deps, err := o.graph.GetDependencies(id)
 	if err != nil {

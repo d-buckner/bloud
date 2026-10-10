@@ -15,7 +15,12 @@ func (c *Client) addUserToGroup(ctx context.Context, userID int, groupName strin
 	if err != nil {
 		return err
 	}
+	return c.addUserToGroupID(ctx, userID, groupID)
+}
 
+// addUserToGroupID adds a user to a group already resolved to its ID, so a caller
+// that needed the group anyway does not look it up twice.
+func (c *Client) addUserToGroupID(ctx context.Context, userID int, groupID string) error {
 	// Add user to group using the group's add_user endpoint.
 	// 204 = success, 200 = already in group (idempotent)
 	if err := c.cl.POST("/api/v3/core/groups/"+groupID+"/add_user/").
@@ -175,23 +180,14 @@ func (c *Client) ListUsers(ctx context.Context) ([]ManagedUserInfo, error) {
 	return users, nil
 }
 
-// getAdminGroupMembers returns a set of user IDs that are in the "authentik Admins" group
+// getAdminGroupMembers returns the set of user IDs in the "authentik Admins" group.
 func (c *Client) getAdminGroupMembers(ctx context.Context) (map[int]bool, error) {
-	groupID, err := c.findGroupID(ctx, "authentik Admins")
+	group, err := c.lookupAdminsGroup(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	var group struct {
-		Users []int `json:"users"`
-	}
-	if err := c.cl.GET("/api/v3/core/groups/"+groupID+"/").
-		OK(http.StatusOK).
-		DoInto(ctx, &group); err != nil {
-		return nil, fmt.Errorf("fetching group: %w", err)
-	}
-
-	members := make(map[int]bool)
+	members := make(map[int]bool, len(group.Users))
 	for _, uid := range group.Users {
 		members[uid] = true
 	}

@@ -4,6 +4,7 @@ package authentik
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -110,32 +111,37 @@ func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.App
 }
 
 // PostStart configures Authentik after it is healthy:
-//  1. Sets the admin user password and email via Django shell
-//  2. Ensures the API token for host-agent exists
+//  1. Ensures Bloud's API token exists, through the API when it answers and
+//     through the container's Django shell when it does not
+//  2. Ensures the admin account exists and is an Authentik admin
 //  3. Pushes branding CSS to the Authentik brand API
 //  4. Applies the login page configuration (flow title, username-only identification)
 //  5. Creates LDAP provider, application, outpost, and service account
 //  6. Sets the embedded outpost's authentik_host to the external base URL
 //  7. Retrieves the LDAP outpost token and writes it to the shared templateVars map
 //
-// All steps are idempotent. Per the framework's PostStart contract, a returned
-// error is terminal for the node; the calls here are single-shot by design (the
-// container health check gates this phase), and a transient failure is retried
-// by the next reconciliation pass.
+// All steps are idempotent, and the ones that can be are now idempotent in cost
+// as well as effect: each reads first and writes only on a mismatch. That matters
+// because PostStart re-runs on every convergence pass, so a step that costs a
+// Django shell spawn or a 3 second sleep costs it once a minute forever.
+//
+// Per the framework's PostStart contract, a returned error is terminal for the
+// node; the calls here are single-shot by design (the container health check
+// gates this phase), and a transient failure is retried by the next
+// reconciliation pass.
 func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	// Step 1: Set admin password via Django shell.
-	if err := c.runDjangoShell(ctx, map[string]string{
-		"BLOUD_ADMIN_PASSWORD": c.params.BootstrapPassword,
-		"BLOUD_ADMIN_EMAIL":    c.params.BootstrapEmail,
-	}, setAdminPasswordScript); err != nil {
-		return fmt.Errorf("set admin password: %w", err)
+	client := authentikClient.NewClient(fmt.Sprintf("http://localhost:%d", c.params.Port), c.params.TokenKey).
+		WithClientFactory(c.deps.HTTP)
+
+	// Step 1: the credential every call below authenticates with.
+	if err := c.ensureAPIToken(ctx, client); err != nil {
+		return err
 	}
 
-	// Step 2: Ensure API token via Django shell.
-	if err := c.runDjangoShell(ctx, map[string]string{
-		"BLOUD_TOKEN_KEY": c.params.TokenKey,
-	}, ensureAPITokenScript); err != nil {
-		return fmt.Errorf("ensure API token: %w", err)
+	// Step 2: the admin account. Always through the API, including right after
+	// the shells ran: they create it, so this is one read that confirms it.
+	if err := client.EnsureAdminUser(ctx, c.params.BootstrapPassword, c.params.BootstrapEmail); err != nil {
+		return fmt.Errorf("ensure admin user: %w", err)
 	}
 
 	// Write token to file for host-agent to read.
@@ -153,9 +159,6 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 			return fmt.Errorf("publish API token: %w", err)
 		}
 	}
-
-	client := authentikClient.NewClient(fmt.Sprintf("http://localhost:%d", c.params.Port), c.params.TokenKey).
-		WithClientFactory(c.deps.HTTP)
 
 	// Step 3: Push branding CSS.
 	if c.params.BrandingCSS != "" {
@@ -198,6 +201,45 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 		c.params.TemplateVars.SetLDAPOutpostToken(ldapToken)
 	}
 
+	return nil
+}
+
+// ensureAPIToken makes the token the API client authenticates with usable.
+//
+// The API is the steady-state path: one read when nothing moved. The Django shell
+// is the bootstrap and the repair, and the only way in when the credential the
+// API is authenticated with does not exist yet, because nothing about the API
+// can be called before it does. That is once per install, plus once more if the
+// token is deleted or rotated by hand in the Authentik admin, which the shell
+// heals by re-imposing Bloud's own value.
+//
+// Two shells run when one would do, and that is the deliberate remainder: the
+// success contract here is "the output contains OK", and merging the scripts into
+// one spawn would let the first script's OK vouch for the second's work.
+// Off the hot path, 3 seconds of cold start is not worth weakening that.
+func (c *ServerConfigurator) ensureAPIToken(ctx context.Context, client *authentikClient.Client) error {
+	err := client.EnsureAPIToken(ctx, c.params.TokenKey)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, authentikClient.ErrUnauthenticated):
+		c.logger.Info("authentik does not accept the Bloud API token; provisioning it through the container shell",
+			"error", err)
+	default:
+		return fmt.Errorf("ensure API token: %w", err)
+	}
+
+	if err := c.runDjangoShell(ctx, map[string]string{
+		"BLOUD_ADMIN_PASSWORD": c.params.BootstrapPassword,
+		"BLOUD_ADMIN_EMAIL":    c.params.BootstrapEmail,
+	}, setAdminPasswordScript); err != nil {
+		return fmt.Errorf("set admin password: %w", err)
+	}
+	if err := c.runDjangoShell(ctx, map[string]string{
+		"BLOUD_TOKEN_KEY": c.params.TokenKey,
+	}, ensureAPITokenScript); err != nil {
+		return fmt.Errorf("ensure API token: %w", err)
+	}
 	return nil
 }
 

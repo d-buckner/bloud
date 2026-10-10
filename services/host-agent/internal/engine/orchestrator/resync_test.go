@@ -41,6 +41,7 @@ type switchableConfigurator struct {
 	prestart      configurator.PreStartResult
 	prestartErr   error
 	postStartErr  error
+	delay         time.Duration
 	preStartCalls int
 	postStartCall int
 }
@@ -49,8 +50,13 @@ func (c *switchableConfigurator) Name() string { return c.node }
 
 func (c *switchableConfigurator) PreStart(_ context.Context, _ *configurator.AppState) (configurator.PreStartResult, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	delay := c.delay
 	c.preStartCalls++
+	c.mu.Unlock()
+	// Long enough to be measured, so the cost watch has something to read.
+	time.Sleep(delay)
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.prestart, c.prestartErr
 }
 
@@ -66,6 +72,14 @@ func (c *switchableConfigurator) setPrestart(res configurator.PreStartResult, er
 	defer c.mu.Unlock()
 	c.prestart = res
 	c.prestartErr = err
+}
+
+// setDelay makes every PreStart take that long, which is how a test gives the
+// resync cost watch a pass that is over budget.
+func (c *switchableConfigurator) setDelay(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.delay = d
 }
 
 func (c *switchableConfigurator) counts() (preStarts, postStarts int) {
@@ -86,6 +100,13 @@ type resyncHarness struct {
 // newResyncHarness builds the harness. warnAt of 0 leaves the default warning
 // threshold.
 func newResyncHarness(t *testing.T, warnAt int) *resyncHarness {
+	t.Helper()
+	return newResyncHarnessWithCost(t, warnAt, 0, 0)
+}
+
+// newResyncHarnessWithCost is the same fixture with the resync cost knobs set.
+// A budget of 0 leaves DefaultResyncCostBudget in place.
+func newResyncHarnessWithCost(t *testing.T, warnAt int, budget time.Duration, costWarnAt int) *resyncHarness {
 	t.Helper()
 
 	g := graph.New(graph.NewMapRepository())
@@ -111,7 +132,8 @@ func newResyncHarness(t *testing.T, warnAt int) *resyncHarness {
 	registry.On("Get", mock.Anything).Return(cfg).Maybe()
 
 	orch := NewOrchestrator(g, registry, cat, t.TempDir(), newTestLogger(), OrchestratorConfig{
-		Tuning:  TuningConfig{HealthCheckTimeout: 100 * time.Millisecond, ResyncRestartWarnAt: warnAt},
+		Tuning: TuningConfig{HealthCheckTimeout: 100 * time.Millisecond, ResyncRestartWarnAt: warnAt,
+			ResyncCostBudget: budget, ResyncCostWarnAt: costWarnAt},
 		Runtime: RuntimeConfig{Containers: rt},
 		Stores:  StoresConfig{AppStore: apps},
 	})
