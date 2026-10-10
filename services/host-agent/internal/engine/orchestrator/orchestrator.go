@@ -155,6 +155,11 @@ type Orchestrator struct {
 	activityBuf [maxOrchestratorEvents]ActivityEvent
 	activityPos int
 	converging  atomic.Bool
+	// activeNodes are the nodes a goroutine is working on right now, which is
+	// what lets the developer graph point at the node rather than only at the
+	// pass. See markNodeActive.
+	activeMu    sync.Mutex
+	activeNodes map[string]bool
 	// lastConverged holds the completion time of the most recent
 	// convergence pass (nil until the first). Together with Stopped it
 	// lets the health and developer surfaces tell a dead loop from a
@@ -376,7 +381,7 @@ func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
 
 	o.converging.Store(true)
 	defer o.converging.Store(false)
-	o.recordActivity("converge_start", fmt.Sprintf("%d intents", len(intents)))
+	o.recordActivity("converge_start", intentCount(len(intents)))
 
 	start := time.Now()
 	pendingClearData := make(map[string]bool)
@@ -389,7 +394,17 @@ func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
 	o.convergeFromStores(ctx, pendingClearData)
 	now := time.Now()
 	o.lastConverged.Store(&now)
-	o.recordActivity("converge_complete", fmt.Sprintf("%d intents, %s", len(intents), time.Since(start).Round(time.Millisecond)))
+	o.recordActivity("converge_complete", fmt.Sprintf("%s, %s", intentCount(len(intents)), time.Since(start).Round(time.Millisecond)))
+}
+
+// intentCount words a batch size for the activity feed. The feed is the one
+// place the number is read as prose rather than scanned as a column, and "1
+// intents" is the kind of detail that makes a reader distrust the rest.
+func intentCount(n int) string {
+	if n == 1 {
+		return "1 intent"
+	}
+	return fmt.Sprintf("%d intents", n)
 }
 
 // Reconcile runs one full reconciliation pass over all graph nodes.

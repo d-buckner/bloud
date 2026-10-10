@@ -31,6 +31,8 @@ func (o *Orchestrator) runConfigurator(ctx context.Context, id string) bool {
 	if err != nil || node == nil {
 		return false
 	}
+	// The window this brackets is what the developer graph lights up.
+	defer o.markNodeActive(id)()
 
 	// Already at target: re-run the config phases, so the configurator gets
 	// its diff against the outside world. The container is left alone unless

@@ -11,29 +11,33 @@
  * below the group. Every container an app declares is laid out inside its
  * app's box (its own dagre pass, so within-app `dependsOn` edges read
  * top-down); apps without containers stay flat leaf nodes. When there are no
- * apps the connection row sits at the origin. Node/edge animation reflects
- * whether endpoints are 'running'/'active'.
+ * apps the connection row sits at the origin. Node/edge state is carried by the
+ * node cards themselves: a phase word, a colour, a ring while the engine holds
+ * one. The only engine-level sentence lives on the group frame, which is what
+ * `frameStatus` decides.
  */
 
 import dagre from '@dagrejs/dagre';
 import type { Edge, Node } from '@xyflow/svelte';
 import type { DeveloperGraph, GraphEdge, GraphNode } from '$lib/clients/developerClient';
+import { frameStatus } from '$lib/graph/reconcilerView';
 import { buildEdges, nodeRow, NODE_HEIGHT, NODE_WIDTH, rowStartX } from './graphRows';
 
 // The row sizes live next to the row helpers that consume them; they are
 // re-exported here because the graph's geometry is one public surface.
 export { NODE_HEIGHT, NODE_WIDTH } from './graphRows';
 /** Container node size. */
-export const CONTAINER_WIDTH = 150;
+export const CONTAINER_WIDTH = 172;
 export const CONTAINER_HEIGHT = 38;
 /** Inset of a box's contents from its border, and its title row height. */
 export const BOX_PADDING = 10;
 export const BOX_HEADER = 26;
-const GROUP_PADDING = 40;
-const CONNECTION_GAP = 100;
-/** Gaps between the container nodes of one box (dagre nodesep / ranksep). */
-const CONTAINER_NODESEP = 24;
-const CONTAINER_RANKSEP = 16;
+const GROUP_PADDING = 30;
+const CONNECTION_GAP = 72;
+/** The word the frame around the installed apps carries. */
+const GROUP_LABEL = 'Installed apps';
+/** Extra header room a box grows to hold one line of failure reason. */
+const REASON_LINE = 16;
 
 const APPS_GROUP_ID = '__apps_group';
 
@@ -44,10 +48,17 @@ interface BoxLayout {
 	positions: Map<string, { x: number; y: number }>;
 }
 
-/** Dagre layout of one app's containers: box size + box-relative positions. */
+/**
+ * Dagre layout of one app's containers: box size + box-relative positions.
+ *
+ * Top to bottom, so a box reads its own `dependsOn` downward the way the graph
+ * around it reads them. A left-to-right pass was tried to make the boxes wide and
+ * short: Authentik's worker-to-postgres edge then spanned two ranks and crossed
+ * the server column, and the box turned into a hairball.
+ */
 function layoutBox(containers: GraphNode[], edges: GraphEdge[]): BoxLayout {
 	const g = new dagre.graphlib.Graph();
-	g.setGraph({ rankdir: 'TB', nodesep: CONTAINER_NODESEP, ranksep: CONTAINER_RANKSEP });
+	g.setGraph({ rankdir: 'TB', nodesep: 24, ranksep: 18 });
 	g.setDefaultEdgeLabel(() => ({}));
 	for (const c of containers) g.setNode(c.id, { width: CONTAINER_WIDTH, height: CONTAINER_HEIGHT });
 	for (const e of edges) {
@@ -117,13 +128,26 @@ function measureTopLevel(
 		}
 		const box = layoutBox(containers, edges);
 		boxes.set(n.id, box);
-		sizes.set(n.id, { width: box.width, height: box.height });
+		// A box whose app rolled up a failure makes room for the sentence: with no
+		// status panel on the page, the node is the only place it can be read.
+		sizes.set(n.id, {
+			width: box.width,
+			height: box.height + (n.reason ? REASON_LINE : 0)
+		});
 	}
 	for (const n of loose) sizes.set(n.id, { width: CONTAINER_WIDTH, height: CONTAINER_HEIGHT });
 	return { boxes, sizes };
 }
 
-/** Dagre over the top-level nodes → their centers, plus the axis-aligned bounds. */
+/**
+ * Dagre over the top-level nodes → their centers, plus the axis-aligned bounds.
+ *
+ * Ranks flow top to bottom: the front door at the top and the apps it fronts
+ * below is the reading order, and a left-to-right pass was tried: it scattered
+ * the proxy edges into long arcs across the whole group and pushed a label
+ * behind a box. The width the canvas wants comes from the boxes instead, by
+ * laying each box's containers side by side.
+ */
 function layoutTopLevel(
 	ids: string[],
 	sizes: Map<string, { width: number; height: number }>,
@@ -131,7 +155,7 @@ function layoutTopLevel(
 ) {
 	const idSet = new Set(ids);
 	const g = new dagre.graphlib.Graph();
-	g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
+	g.setGraph({ rankdir: 'TB', nodesep: 72, ranksep: 76 });
 	g.setDefaultEdgeLabel(() => ({}));
 	for (const id of ids) g.setNode(id, sizes.get(id)!);
 	for (const e of edges) {
@@ -212,13 +236,22 @@ function looseContainerPositions(
 function makeDataFor(graph: DeveloperGraph): DataFor {
 	const sources = new Set(graph.edges.map((e) => e.source));
 	const targets = new Set(graph.edges.map((e) => e.target));
+	// A resync warning names one node, so it belongs on that node's card rather
+	// than on a panel the reader has to cross-reference.
+	const resync = new Map(
+		(graph.orchestrator?.resyncRestartSignals ?? []).map((s) => [s.node, s.restarts])
+	);
 	return (n) => ({
 		displayName: n.displayName,
 		status: n.status,
 		isSystem: n.isSystem,
 		nodeType: n.nodeType,
 		hasOutgoing: sources.has(n.id),
-		hasIncoming: targets.has(n.id)
+		hasIncoming: targets.has(n.id),
+		phase: n.phase ?? '',
+		reason: n.reason ?? '',
+		inFlight: n.inFlight === true,
+		resyncRestarts: resync.get(n.id) ?? 0
 	});
 }
 
@@ -301,10 +334,10 @@ export function layoutGraph(graph: DeveloperGraph): { nodes: Node[]; edges: Edge
 	const nodes: Node[] = [
 		{
 			id: APPS_GROUP_ID,
-			type: 'group',
+			type: 'appGroup',
 			position: group,
 			style: `width: ${groupWidth}px; height: ${groupHeight}px;`,
-			data: {}
+			data: { label: GROUP_LABEL, ...frameStatus(graph.orchestrator, Date.now()) }
 		},
 		...appTiles(appNodes, g, sizes, boxes, group, dataFor),
 		...containerNodes(appNodes, loose, {

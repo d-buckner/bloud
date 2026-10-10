@@ -4,6 +4,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
@@ -208,6 +209,39 @@ func (o *Orchestrator) Status() OrchestratorStatus {
 // multi-container apps, the catalog ID for single-container apps. Read-only
 // snapshot for the developer dashboard; nil when the graph is unavailable.
 func (o *Orchestrator) NodePhases() map[string]string {
+	states := o.NodeStates()
+	if states == nil {
+		return nil
+	}
+	phases := make(map[string]string, len(states))
+	for id, state := range states {
+		phases[id] = state.Phase
+	}
+	return phases
+}
+
+// NodeState is the live lifecycle view of one graph node, as the developer
+// dashboard draws it.
+//
+// Phase is where the node is; Target is where the engine is driving it, and the
+// pair is what makes "current" readable without the reader knowing the phase
+// vocabulary: starting with target running is mid-pass, running with target
+// running is finished. Reason carries the failure text the engine recorded on
+// the node, which is the only answer to "why is this one stuck" that does not
+// require reading the log. InFlight says the engine has this node in hand this
+// very moment, which the status pair alone cannot say: a resync of a RUNNING
+// node leaves both at running while PreStart is in the middle of it.
+type NodeState struct {
+	Phase    string `json:"phase"`
+	Target   string `json:"target,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	InFlight bool   `json:"inFlight"`
+}
+
+// NodeStates returns the live state of every lifecycle graph node, keyed by
+// node ID. Read-only snapshot for the developer dashboard; nil when the graph
+// is unavailable.
+func (o *Orchestrator) NodeStates() map[string]NodeState {
 	if o.graph == nil {
 		return nil
 	}
@@ -216,9 +250,58 @@ func (o *Orchestrator) NodePhases() map[string]string {
 		o.logger.Warn("failed to read graph nodes", "error", err)
 		return nil
 	}
-	phases := make(map[string]string, len(nodes))
+	active := o.ActiveNodes()
+	states := make(map[string]NodeState, len(nodes))
 	for _, node := range nodes {
-		phases[node.ID] = phaseForStatus(node.ActualStatus)
+		states[node.ID] = NodeState{
+			Phase:  phaseForStatus(node.ActualStatus),
+			Target: phaseForStatus(node.TargetStatus),
+			Reason: node.Error,
+			// ERROR is terminal until something resets it, so an errored node
+			// is stalled, not in flight: nothing is working on it.
+			InFlight: active[node.ID] ||
+				(node.ActualStatus != node.TargetStatus && node.ActualStatus != graph.StatusError),
+		}
 	}
-	return phases
+	return states
+}
+
+// markNodeActive records that the engine has begun working on a node, and the
+// returned func clears it. Bracketed by the caller rather than set from the
+// phase transitions, because the phases a node moves through are the engine's
+// progress and this is a different question: is a goroutine sitting on this
+// node right now.
+func (o *Orchestrator) markNodeActive(id string) func() {
+	o.activeMu.Lock()
+	if o.activeNodes == nil {
+		o.activeNodes = make(map[string]bool)
+	}
+	o.activeNodes[id] = true
+	o.activeMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			o.activeMu.Lock()
+			delete(o.activeNodes, id)
+			o.activeMu.Unlock()
+		})
+	}
+}
+
+// ActiveNodes reports the node IDs the engine is working on right now. Empty
+// when nothing is in flight, which is the steady state.
+func (o *Orchestrator) ActiveNodes() map[string]bool {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	if len(o.activeNodes) == 0 {
+		return nil
+	}
+	active := make(map[string]bool, len(o.activeNodes))
+	for id, on := range o.activeNodes {
+		if on {
+			active[id] = true
+		}
+	}
+	return active
 }

@@ -35,11 +35,11 @@ import (
 type fakeSystemOrchestrator struct {
 	mu     sync.Mutex
 	status orchestrator.OrchestratorStatus
-	phases map[string]string
+	states map[string]orchestrator.NodeState
 }
 
 func newFakeSystemOrchestrator() *fakeSystemOrchestrator {
-	return &fakeSystemOrchestrator{phases: make(map[string]string)}
+	return &fakeSystemOrchestrator{states: make(map[string]orchestrator.NodeState)}
 }
 
 func (f *fakeSystemOrchestrator) Enqueue(intent orchestrator.Intent) {
@@ -54,10 +54,10 @@ func (f *fakeSystemOrchestrator) Status() orchestrator.OrchestratorStatus {
 	return f.status
 }
 
-func (f *fakeSystemOrchestrator) NodePhases() map[string]string {
+func (f *fakeSystemOrchestrator) NodeStates() map[string]orchestrator.NodeState {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.phases
+	return f.states
 }
 
 // ---- New system module helper ----
@@ -422,9 +422,10 @@ func installInferenceConsumer(mod *systemModule) {
 	mod.catalog.(*FakeCatalogCache).AddApp(inferenceConsumerDef("hermes"))
 }
 
-// An external provider renders as its own node, named for the record rather
-// than for the contract it fills, and it carries no container box: nothing
-// installs it and no container backs it.
+// An external provider renders as its own node, with no container box: nothing
+// installs it and no container backs it. The inference contract is the one
+// exception on the name: the record is named for a Settings text field, so the
+// node is named for what it provides instead.
 func TestSystemHTTP_DeveloperGraph_AINodeShownWhenConfigured(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{
 		externalApps: aiRegistryWith("https://api.example.com/v1"),
@@ -435,11 +436,54 @@ func TestSystemHTTP_DeveloperGraph_AINodeShownWhenConfigured(t *testing.T) {
 
 	node, ok := graphNodeByID(resp.Nodes, externalNodeID("u1"))
 	require.True(t, ok, "an enabled upstream should put its provider node in the graph")
-	assert.Equal(t, "Main", node.DisplayName)
+	assert.Equal(t, inferenceLabel, node.DisplayName,
+		"the instance's own AI upstream is named for the contract it fills, not the Settings field")
 	assert.Equal(t, "service", node.NodeType)
 	assert.Equal(t, "external", node.Status)
 	assert.False(t, node.IsSystem)
 	assert.True(t, graphEdgePresent(resp.Edges, "hermes", externalNodeID("u1")))
+}
+
+// Two upstreams fill the same contract, and two boxes both reading "AI Model"
+// would leave an edge pointing at an unnamed one. The typed name comes back as
+// the qualifier.
+func TestSystemHTTP_DeveloperGraph_AINodesQualifiedWhenSeveral(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{externalApps: &fakeExternalRegistry{
+		records: []*store.ExternalApp{
+			inference.ExternalForUpstream(inference.Upstream{ID: "u1", Name: "Main", BaseURL: "https://a.example.com/v1", Enabled: true}),
+			inference.ExternalForUpstream(inference.Upstream{ID: "u2", Name: "Backup", BaseURL: "https://b.example.com/v1", Enabled: true}),
+		},
+	}})
+	installInferenceConsumer(mod)
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	first, ok := graphNodeByID(resp.Nodes, externalNodeID("u1"))
+	require.True(t, ok)
+	second, ok := graphNodeByID(resp.Nodes, externalNodeID("u2"))
+	require.True(t, ok)
+	assert.Equal(t, "AI Model (Main)", first.DisplayName)
+	assert.Equal(t, "AI Model (Backup)", second.DisplayName)
+}
+
+// A provider registered against some other contract keeps the name the operator
+// gave it: only the instance's own AI endpoint is renamed, because only that one
+// is named after a form field rather than after the thing itself.
+func TestSystemHTTP_DeveloperGraph_OtherProviderKeepsItsName(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{externalApps: &fakeExternalRegistry{
+		records: []*store.ExternalApp{{
+			ID:     "s1",
+			Kind:   string(store.ExternalAppKindProvider),
+			Source: "app:seerr",
+			Name:   "Seerr",
+		}}},
+	})
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	node, ok := graphNodeByID(resp.Nodes, externalNodeID("s1"))
+	require.True(t, ok)
+	assert.Equal(t, "Seerr", node.DisplayName)
 }
 
 // With nothing configured the node is absent, and so is the edge that was
@@ -817,9 +861,9 @@ func TestSystemHTTP_DeveloperGraph_ContainerNodes(t *testing.T) {
 			{Name: "apps-immich-server", DependsOn: []string{"apps-immich-postgres"}},
 		},
 	})
-	mod.orch.(*fakeSystemOrchestrator).phases = map[string]string{
-		"apps-immich-postgres": "running",
-		"apps-immich-server":   "starting",
+	mod.orch.(*fakeSystemOrchestrator).states = map[string]orchestrator.NodeState{
+		"apps-immich-postgres": {Phase: "running"},
+		"apps-immich-server":   {Phase: "starting", Target: "running", InFlight: true},
 	}
 
 	r := chi.NewRouter()
