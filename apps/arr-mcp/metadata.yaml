@@ -44,7 +44,7 @@ integrations:
   # The media server a request is ultimately watched on. Optional: the agent
   # can answer requests without knowing the library. The key this app calls
   # Jellyfin with is minted on its behalf through the bootstrap admin login the
-  # `mediaServer` contract publishes, the same way apps/jellyfin-mcp does it.
+  # `mediaServer` contract publishes.
   mediaServer:
     required: false
     multi: false
@@ -80,11 +80,10 @@ provides:
 
 containers:
   - name: apps-arr-mcp
-    # arr-mcp 1.41.1. Pinned by digest as well as by tag, the same shape as
-    # apps/jellyfin-mcp: the tag carries the intent and the digest carries the
-    # evidence. Multi-arch (amd64 and arm64). Upstream ships several releases a
-    # day, so a bump is a review of the tool surface rather than a dependency
-    # refresh.
+    # arr-mcp 1.41.1. Pinned by digest as well as by tag: the tag carries the
+    # intent and the digest carries the evidence. Multi-arch (amd64 and arm64).
+    # Upstream ships several releases a day, so a bump is a review of the tool
+    # surface rather than a dependency refresh.
     image: ghcr.io/bardesss/arr-mcp:1.41.1@sha256:efa7b7addcbce5b761fd9e7aef00d33aedc89be0a095d51300af9514d9acd209
     network: apps-net
     restartPolicy: always

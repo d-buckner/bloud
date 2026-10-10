@@ -23,6 +23,7 @@ front-proxy
 internal/mdns
 compose.yml
 air\.toml
+jellyfin-mcp
 
 # Removed in the single-orchestrator-builder refactor. `bloud-agent configure`
 # was a one-shot prestart/poststart/reconcile entry point with no caller

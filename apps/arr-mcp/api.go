@@ -82,9 +82,9 @@ func (a *mcpAPI) openSession(ctx context.Context, bearer string) (string, error)
 	}
 
 	// A server may run stateless: arr-mcp answers `initialize` without a
-	// Mcp-Session-Id header, while jellyfin-mcp issues one. Absence is a valid
-	// mode, not a fault, so the notification and any follow-up call attach the
-	// header only when one was issued.
+	// Mcp-Session-Id header, while a sessionful server issues one. Absence is a
+	// valid mode, not a fault, so the notification and any follow-up call
+	// attach the header only when one was issued.
 	note := a.cl.POST(mcpEndpoint).
 		Body([]byte(initializedNotification), "application/json").
 		Header("Accept", acceptStreams)

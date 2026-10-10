@@ -32,8 +32,8 @@ const (
 )
 
 // ensureInboundToken returns the bearer a harness presents, generating and
-// publishing one on the first pass and reusing it afterwards. The same shape as
-// apps/jellyfin-mcp: an opaque string the listener checks by exact match.
+// publishing one on the first pass and reusing it afterwards: an opaque string
+// the listener checks by exact match.
 func (c *Configurator) ensureInboundToken() (string, error) {
 	if c.secrets == nil {
 		return "", nil

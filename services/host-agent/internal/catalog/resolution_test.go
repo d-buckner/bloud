@@ -101,5 +101,5 @@ func TestDeclaredProviders_RealCatalogDeclaresEveryMcpProvider(t *testing.T) {
 		require.False(t, p.IsSetting(), "hermes' mcp contract declares no instance provider")
 		names = append(names, p.App)
 	}
-	assert.Equal(t, []string{"affine-mcp", "arr-mcp", "dav-mcp", "jellyfin-mcp"}, names)
+	assert.Equal(t, []string{"affine-mcp", "arr-mcp", "dav-mcp"}, names)
 }

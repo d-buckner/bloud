@@ -725,8 +725,8 @@ The middle two rows are the distinction that matters, and it is newer than the
 rest of this section. "Needed by 2+ apps" does **not** by itself send a helper
 to `pkg/`: a client that talks to one app's API is that app's concern and stays
 with it, exported for whoever needs it. `apps/jellyfin/api.go` owns the Jellyfin
-client and exports `EnsureAPIKey`; `apps/jellyfin-mcp` and `apps/arr-mcp` import
-it instead of each carrying a copy of the login-and-mint flow. `pkg/` is for
+client and exports `EnsureAPIKey`; `apps/arr-mcp` imports it instead of carrying
+a copy of the login-and-mint flow. `pkg/` is for
 helpers that are not about any one app's API. `pkg/servarr` and `pkg/authentik`
 predate this rule and are not being reshaped in one go, the same migration
 posture as `lib/` below.

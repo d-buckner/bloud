@@ -178,9 +178,8 @@ func sseMessage(w http.ResponseWriter, payload string) {
 }
 
 // TestPostStartToleratesStatelessServer pins the behaviour the first live
-// install caught: arr-mcp answers `initialize` with no Mcp-Session-Id header,
-// unlike jellyfin-mcp. A probe that required a session id (the first cut of
-// this app copied it from jellyfin-mcp) fails against the real server, so this
+// install caught: arr-mcp answers `initialize` with no Mcp-Session-Id header.
+// A probe that required a session id fails against the real server, so this
 // fake refuses to issue one and PostStart must still converge.
 func TestPostStartToleratesStatelessServer(t *testing.T) {
 	secrets := newFakeSecrets()

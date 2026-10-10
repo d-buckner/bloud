@@ -66,12 +66,6 @@ integrations:
       # than hardwired: install the MCP app and the agent gains the namespace,
       # uninstall it and the entry is removed on the next pass.
       - app: dav-mcp
-      # The media library. Jellyfin holds the collection and `apps/jellyfin-mcp`
-      # exposes it as a tool namespace, so "what can I watch tonight?" and
-      # "add this to the watchlist" reach the library the household already
-      # uses instead of being a question the agent cannot answer. Same shape as
-      # the two above: Hermes changes nothing when another MCP app appears.
-      - app: jellyfin-mcp
 
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider

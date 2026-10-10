@@ -124,7 +124,7 @@ matters: an arr-mcp listener returned `401` with no bearer and `401` with a wron
 one, and that behaviour is what made it usable at all.
 
 Nothing new is needed here. `SetAppSecret("bloud-mcp", "httpToken", ...)` is the
-same call `jellyfin-mcp` and `dav-mcp` make.
+same call `dav-mcp` makes.
 
 ### Tools are derived from the graph, and that has a caching consequence
 
@@ -167,7 +167,7 @@ AFFiNE client already, the cookie plus CSRF session and the GraphQL envelope in
 workspace. Reimplementing a document tool surface in Go would be a large,
 permanent, low-differentiation investment against a specialist that is better.
 
-The same reasoning keeps `apps/jellyfin-mcp` and `apps/dav-mcp`.
+The same reasoning keeps `apps/dav-mcp`.
 
 The two shapes are complementary rather than competing. The native endpoint takes
 the class of tool no wrapper can write; wrappers keep contributing their own

@@ -63,7 +63,7 @@ change plus a configurator branch, not a redesign.
 
 ## The credential model
 
-Two directions, and both already have a working precedent in `apps/jellyfin-mcp`.
+Two directions, both the standard wrapper shapes.
 
 ### Inbound: the `mcp` bearer the provider validates
 
@@ -91,13 +91,13 @@ already exists in `apps/jellyfin/api.go`, the Jellyfin app's own client:
   bootstrap admin login, adopts the named key if it exists, and creates it only
   when it does not. Lookup before create, so a resync does not accumulate keys
   in Jellyfin's Security screen.
-- Each consumer holds its own named key (`jellyfin-mcp`, `arr-mcp`) and persists
-  it with `secrets.SetAppSecret(appName, "jellyfinApiKey", key)`, so revocation
-  stays per-consumer and a steady-state resync is a read-only diff.
+- arr-mcp holds its own named key and persists it with
+  `secrets.SetAppSecret(appName, "jellyfinApiKey", key)`, so revocation stays
+  per-consumer and a steady-state resync is a read-only diff.
 
-The two wrappers share that one client rather than each carrying a copy, and one
-app publishing another app's outbound credential is not a shape the contract
-system has or should grow.
+arr-mcp uses that one client rather than carrying a copy, and one app publishing
+another app's outbound credential is not a shape the contract system has or
+should grow.
 
 ### Gap 1: the `requestManager` contract
 
@@ -178,12 +178,10 @@ owes all of them.
 | Nil deps safe | `configtest.AssertNilDepsSafe` | `PreStart` survives a deps-less construction |
 | Wait budget | `apps/configtest/waitbudget_test.go` | Any declared `appclient` `Wait.Within` must fit inside `AppPhaseBudget` |
 
-The offline gate has a specific consequence here. `apps/jellyfin-mcp`'s row is
-exercised in its **unbound** state, and its comment records the split: the bound
-path that mints the Jellyfin key is covered by the app's own tests against a fake
-server. arr-mcp has three optional bindings instead of one, so the same split
-applies with more cases: the unbound config must be valid and written with no
-network, and each bound path needs a fake-server test in
+The offline gate has a specific consequence here. The unbound config, the shape
+the conformance harness supplies, must be valid and written with no network; the
+bound paths, where PreStart mints a Jellyfin key or renders a service block, are
+covered by this app's own tests against a fake server in
 `apps/arr-mcp/configurator_test.go`.
 
 It also has to be added to `validation.yaml` in the `apps:` block, with its auth
@@ -203,16 +201,16 @@ expressiveness gap is real and small; it is recorded rather than closed.
 tiers and rejects an unknown value outright (the spike established the accepted
 set is `read`, `write`, `destructive`). Because this app can hold credentials for
 several services at once, Bloud sets the tiers explicitly on every pass rather
-than inheriting upstream defaults, and defaults them to read. `apps/jellyfin-mcp`
-does the equivalent with one blunt `--disable-destructive` flag; the per-instance
-form is finer and should be used rather than matched. A test pins that a
-steady-state pass writes the tiers it declares and nothing else.
+than inheriting upstream defaults, and defaults them to read. The per-instance
+form is finer than a single blunt global flag and should be used rather than
+matched. A test pins that a steady-state pass writes the tiers it declares and
+nothing else.
 
 ## Config file ownership
 
 Bloud owns `config.yaml` outright and rewrites it on every reconciliation with
-`managedfile.Write`, the same shape `apps/jellyfin-mcp` uses for its env file:
-not a marker merge. The image's config UI also saves over the same file, so a
+`managedfile.Write`, not a marker merge. The image's config UI also saves over
+the same file, so a
 service or token the operator adds there is overwritten on the next pass. That
 is a stated limit of the first cut, not a design goal: Bloud already manages the
 services (the contract bindings), the token and the UI password, so the UI is
@@ -224,17 +222,16 @@ written only when its bytes change, so a steady-state resync reports no change.
 
 Health checking has a related trap the spike found: when its config fails
 validation arr-mcp serves `503` on `/mcp` but `200` on `/healthz` with
-`"status": "degraded"`. The conforming answer is the one `apps/jellyfin-mcp`
-already uses: `/healthz` is a liveness probe and says only that the process is
-up, and the functional gate moves to `PostStart`, where a failure can be reported
-without flapping the container.
+`"status": "degraded"`. The conforming answer is `/healthz` is a liveness probe
+and says only that the process is up, and the functional gate moves to
+`PostStart`, where a failure can be reported without flapping the container.
 
 ## Image pin
 
 `ghcr.io/bardesss/arr-mcp:1.41.1@sha256:efa7b7addcbce5b761fd9e7aef00d33aedc89be0a095d51300af9514d9acd209`.
 Multi-arch (amd64 and arm64), semver tags, so the tag carries intent and the
-digest carries evidence, matching what `apps/jellyfin-mcp` does. Upstream ships
-several releases a day, so the posture is: pin, bump deliberately, and treat a
+digest carries evidence. Upstream ships several releases a day, so the posture
+is: pin, bump deliberately, and treat a
 bump as a review of the tool surface rather than a dependency refresh.
 
 ## Open questions

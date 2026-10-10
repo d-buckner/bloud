@@ -98,7 +98,7 @@ type apiKeyList struct {
 
 // EnsureAPIKey returns the value of the Jellyfin API key named keyName, creating
 // it when the server has no key under that name. It is the consumer-side mint
-// the MCP wrappers over Jellyfin need: log in with the bootstrap admin
+// a wrapper over Jellyfin needs: log in with the bootstrap admin
 // credential, adopt the named key if it exists, and create it only when it does
 // not. Lookup before create, because create is not idempotent: Jellyfin appends
 // a new key every time, so a configurator that minted without looking would

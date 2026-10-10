@@ -1,7 +1,7 @@
 # Bloud MCP
 
 **Status:** Shipped. Three providers today: `apps/affine-mcp`, `apps/dav-mcp`,
-and `apps/jellyfin-mcp`, all consumed by Hermes. AFFiNE's own MCP server is
+and `apps/arr-mcp`, all consumed by Hermes. AFFiNE's own MCP server is
 deliberately not exposed.
 **Last updated:** 2026-10-14
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md),
@@ -21,7 +21,7 @@ each provider as a tool namespace.
 ```
 affine-mcp  (provides mcp)  <──┐
 dav-mcp  (provides mcp)    <──┼──  hermes (integrates mcp, optional + multi)
-jellyfin-mcp  (provides mcp) <──┘
+arr-mcp  (provides mcp)    <──┘
 ```
 
 Dependencies are a set, not a menu: the resolver binds every compatible
@@ -63,25 +63,24 @@ history, including the point where the built-in provider was removed.
 
 ### What the third provider changed about the shape
 
-`apps/jellyfin-mcp` is the third provider and the first whose target is not a
-document store. It is still the same wrapper shape, with one difference worth
-naming: the credential it needs is one **it mints inside the target**, not one
-the target hands over.
+`apps/arr-mcp` is the third provider and the first that fills several contracts
+at once: `requestManager` (Seerr), `pvr` (the Servarrs) and `mediaServer`
+(Jellyfin), all optional except the first. The wrapper shape is unchanged from
+the other two; it is declared once per target instead of once per app.
 
-The `appApi` contract gives a wrapper an existing account's username and
-password. Jellyfin has a better primitive than that, an API key that appears in
-its own Security screen under the agent's name and can be revoked without
-touching any password. So `jellyfin-mcp` consumes `mediaServer` (address plus
-the bootstrap admin credential) and spends that credential on exactly one call:
-the login that creates its own key. The key is then cached and used, and the
-admin password stays out of the wrapper's environment.
+One of those targets uses a trick the wrapper shape grew: the `appApi` contract
+hands a wrapper an existing account's password, but Jellyfin has a better
+primitive, an API key that appears in its own Security screen and can be
+revoked without touching any password. So arr-mcp consumes `mediaServer`
+(address plus the bootstrap admin credential) and spends that credential on
+exactly one call, the login that creates its own key, through the shared
+`apps/jellyfin.EnsureAPIKey` helper. The key is then cached and used, and the
+admin password stays out of the wrapper's config.
 
-Its inbound bearer is also a different kind of thing. The other two wrappers
-were handed an opaque string to compare against. This one is configured with an
-HMAC key Bloud generated and verifies a signed token against it, with a
-required issuer and audience. Same contract field, `httpToken`, stronger
-enforcement, and nothing across the boundary changed: the consumer still gets
-one opaque string it cannot inspect.
+Its inbound bearer is the ordinary kind, an opaque string Bloud generates and
+the listener checks by hash. The config sink is the image's own `config.yaml`,
+written by the configurator, rather than an env file, because that is the shape
+arr-mcp reads.
 
 ### What removing the built-in server also removed
 

@@ -7,7 +7,7 @@ and a config UI from one port, and reads everything from a mounted
 
 ## Credential model
 
-Two directions, both the same shapes `apps/jellyfin-mcp` already uses.
+Two directions, both the standard wrapper shapes.
 
 **Inbound** is the `mcp` contract's `httpToken`. Bloud mints a bearer, writes its
 `sha256:<hex>` hash into `auth.tokens`, and publishes the plaintext under
@@ -26,9 +26,9 @@ so the published credential is checked by the thing it was given.
 
 ## The Jellyfin mint
 
-Lookup before create, shared with `apps/jellyfin-mcp` through the single client
-in `apps/jellyfin/api.go` (`EnsureAPIKey`), rather than each wrapper carrying its
-own copy. The key shows up in Jellyfin's Dashboard -> Security -> API Keys under
+Lookup before create, through the single client in `apps/jellyfin/api.go`
+(`EnsureAPIKey`). The key shows up in Jellyfin's Dashboard -> Security -> API
+Keys under
 the name `arr-mcp`, so the operator can revoke the agent without rotating the
 admin password. The admin *account* is not a constant: it arrives on the
 binding, because a Jellyfin Bloud booted and one the operator registered from
@@ -51,8 +51,8 @@ of a fresh salt every pass.
 ## Config file ownership
 
 Bloud owns `config.yaml` outright and rewrites it on every reconciliation with
-`managedfile.Write`, the same shape as `apps/jellyfin-mcp`'s env file. The
-image's config UI also saves over the same file, so a service or token the
+`managedfile.Write`. The image's config UI also saves over the same file, so a
+service or token the
 operator adds there is overwritten on the next pass. That is a first-cut limit,
 not a goal: Bloud manages the services, the token and the UI password, so the UI
 is only needed for things outside Bloud's catalog.
