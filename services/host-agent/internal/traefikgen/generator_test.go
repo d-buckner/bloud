@@ -558,19 +558,28 @@ func TestGenerator_Generate_EveryAppGetsTheLoadingMiddleware(t *testing.T) {
 	}
 }
 
-// A 500 is the app answering and disliking the request, not an app that is
-// coming back. Covering it would hide the app's own error behind a page that
-// promises a reload that will land on the same error.
-func TestGenerator_LoadingMiddlewareCoversOnlyBadGatewayRange(t *testing.T) {
+// The waiting page is for one case and one case only: Traefik could not reach
+// the app. So the line is drawn by who produced the status, not by how bad it
+// looks. 502 and 504 are statuses only a proxy can produce, which is the whole
+// reason they can stand in for "the app is not there".
+//
+// Everything the app produced itself has to reach the visitor. A 500 is the app
+// disliking the request. A 503 is the app reporting its own dependency down,
+// and Hermes answers one by design when its identity provider cannot vouch for
+// the session, keeping the cookie on purpose so an IdP blip does not log every
+// signed-in user out. Covering 503 put an endless "re-loading" page over an
+// install whose gateway was running, and threw away the one line that named the
+// fault.
+func TestGenerator_LoadingMiddlewareCoversOnlyTheStatusesAProxyOwns(t *testing.T) {
 	g := NewGenerator("/tmp/test.yml")
 	out := g.Preview([]*catalog.App{{CatalogID: "miniflux", Port: 8085}})
 
-	if !strings.Contains(out, `"502-504"`) {
-		t.Error("the loading middleware does not cover the 502-504 range")
+	if !strings.Contains(out, "          - \"502\"\n          - \"504\"\n") {
+		t.Error("the waiting page must cover exactly 502 then 504, and nothing between them")
 	}
-	for _, wrong := range []string{`"500"`, `"500-`, `"404"`, `"5xx"`} {
+	for _, wrong := range []string{`"503"`, `"502-504"`, `"500"`, `"500-`, `"404"`, `"5xx"`} {
 		if strings.Contains(out, wrong) {
-			t.Errorf("the loading middleware covers %s, which is not an upstream-did-not-answer status", wrong)
+			t.Errorf("the waiting page covers %s, which is not a status only a proxy can produce", wrong)
 		}
 	}
 }

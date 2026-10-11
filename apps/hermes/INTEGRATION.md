@@ -355,6 +355,37 @@ rewrites `config.yaml`. The one thing that does not retroactively fix is a
 session already signed with the old short token; that client re-authenticates
 once and gets the new lifetime.
 
+### When the issuer cannot vouch for the session: 503, and why it must not be masked
+
+Hermes verifies its dashboard session against the issuer's JWKS on every
+request. When that verification *cannot be completed*, as opposed to completing
+with a bad answer, the dashboard answers `503 {"detail":"Auth provider
+'self-hosted' unreachable"}` and deliberately keeps the session cookie, so a
+brief identity-provider outage does not log every signed-in user out.
+
+The case that reaches a real installation is a signing key the provider has
+rotated away. The token in the cookie was signed with a `kid` the JWKS no longer
+publishes, so the lookup fails with `Unable to find a signing key that matches`
+forever, which is indistinguishable from an outage as far as Hermes can tell.
+The cookie surviving is what makes it permanent: every request from that
+browser 503s the same way until the session itself changes. The recovery is a
+`POST /auth/logout`, which clears the session cookies unconditionally (no
+session required, and it is POST-only, so a plain navigation to it does nothing)
+and redirects to `/login`. Clearing the cookies by hand works too.
+
+Bloud must let that 503 through. The waiting-page middleware used to cover
+`502-504`, and covering 503 meant Traefik replaced Hermes' own answer with
+"Hermes is re-loading", which reloads onto the same 503 forever: the tab sat
+there over an install whose gateway was demonstrably running, and the one line
+that named the fault, `Auth provider 'self-hosted' unreachable`, was thrown away
+before anyone could read it. The middleware now covers 502 and 504 only, the
+two statuses a proxy produces when the upstream is not there. See
+`docs/architecture/overview.md` and the e2e rung in `e2e/tests/hermes.spec.ts`,
+which reproduces it with an RS256 JWT signed locally with a throwaway key,
+naming a `kid` the issuer has never heard of. The signature lookup happens
+before any claim is read, so the token's issuer and audience do not matter to
+the outcome.
+
 ## The inference provider contract (`providers.bloud` + `model.provider: custom:bloud`)
 
 Bloud registers its inference endpoint as a named entry in Hermes' v12

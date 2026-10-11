@@ -174,13 +174,19 @@ func (g *Generator) writeServices(b *strings.Builder, routableApps []*catalog.Ap
 // writeLoadingMiddleware emits the error middleware that replaces Traefik's
 // raw Bad Gateway with Bloud's per-app waiting page.
 //
-// The range is 502-504 and nothing wider. Those three are "the upstream did
-// not answer", which is what a reconciling, restarting, or crashed container
-// produces. A 500 is the app answering and disliking the request: covering it
-// would hide the app's own error behind a page that promises it is coming
-// back, when it is not.
+// The range is 502 and 504, and the line it draws is not "which 5xx looks bad"
+// but "who produced the status". Those two are statuses only a proxy can
+// produce: 502 is Traefik failing to reach the container at all, which is what
+// a reconciling, restarting, or crashed container looks like from outside, and
+// 504 is a container that accepted the connection and then never answered.
+// Anything the app itself produced has to reach the visitor. A 500 is the app
+// disliking the request. A 503 is the app reporting its own dependency down,
+// and Hermes answers one by design whenever its issuer cannot vouch for the
+// session, keeping the cookie while it does: covering 503 put an endless
+// "re-loading" page over an install whose gateway was running and discarded the
+// only line that named the fault. See apps/hermes/INTEGRATION.md.
 //
-// The status a client finally sees is the upstream's own 502/503/504, kept by
+// The status a client finally sees is the upstream's own 502 or 504, kept by
 // the error middleware; only the body and the headers are replaced. That is
 // the right split. The status stays an honest "the upstream did not answer",
 // and a cache or a client is never handed a 200 that is really a waiting
@@ -194,7 +200,8 @@ func (g *Generator) writeLoadingMiddleware(b *strings.Builder, app *catalog.App)
 	fmt.Fprintf(b, "    %s-loading:\n", app.CatalogID)
 	b.WriteString("      errors:\n")
 	b.WriteString("        status:\n")
-	b.WriteString("          - \"502-504\"\n")
+	b.WriteString("          - \"502\"\n")
+	b.WriteString("          - \"504\"\n")
 	b.WriteString("        service: host-agent\n")
 	fmt.Fprintf(b, "        query: /bloud-loading/%s\n", app.CatalogID)
 }

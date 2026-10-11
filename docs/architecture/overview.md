@@ -194,21 +194,28 @@ Bloud's own catch-all. It does not cover an app domain: `<app>.<domain>` has a
 router of its own, and while the app's container is down during a reconcile, a
 restart, or a crash, that router points at nothing and Traefik answers with a
 raw Bad Gateway. Every routable app therefore gets an `errors` middleware
-(`internal/traefikgen/generator.go`) over the 502-504 range that hands the
-request to host-agent's `GET /bloud-loading/{name}`
+(`internal/traefikgen/generator.go`) over 502 and 504 that hands the request to
+host-agent's `GET /bloud-loading/{name}`
 (`internal/api/app_loading.go`), which renders the app's icon, names the app,
 and polls its own URL until the app answers for itself.
 
-Two choices in that chain are load-bearing. The middleware covers 502-504 and
-not 500: those three are "the upstream did not answer", which is what a
-reconciling container produces, while a 500 is the app answering and disliking
-the request, and hiding it behind a page that promises a reload would be a
-lie. And the icon is inlined as a data URI rather than linked, because the
-icon's usual route lives under Bloud's API host and on the app's own domain
-the app's router outranks it, so an `<img>` would point at the very container
-that is not answering. The status the visitor sees stays the upstream's own
-5xx; only the body and headers are replaced, so nothing caches a 200 that is
-really a wait.
+Two choices in that chain are load-bearing. The middleware covers 502 and 504
+and nothing else, and the line it draws is not "which 5xx looks bad" but "who
+produced the status": 502 and 504 are statuses only a proxy can produce, so
+they can only mean "the upstream is not there", which is what a reconciling
+container looks like from outside. Anything the app itself produced has to
+reach the visitor. A 500 is the app disliking the request. A 503 is the app
+reporting its own dependency down, and Hermes is the app that proved the
+difference: its dashboard answers 503 whenever the identity provider cannot
+vouch for the session and keeps the cookie on purpose, so covering 503 put an
+endless "re-loading" page over an install whose gateway was running and threw
+away the one line that named the fault. Both exclusions are pinned, in
+`traefikgen`'s generator test and in the Hermes e2e rung. And the icon is
+inlined as a data URI rather than linked, because the icon's usual route lives
+under Bloud's API host and on the app's own domain the app's router outranks
+it, so an `<img>` would point at the very container that is not answering. The
+status the visitor sees stays the upstream's own 5xx; only the body and headers
+are replaced, so nothing caches a 200 that is really a wait.
 
 The poll asks for the redirect instead of following it (`redirect: "manual"`).
 An app that has come back answers by redirecting, and an SSO-backed app leaves

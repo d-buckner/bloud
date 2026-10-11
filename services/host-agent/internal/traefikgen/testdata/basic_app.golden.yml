@@ -15,7 +15,8 @@ http:
     miniflux-loading:
       errors:
         status:
-          - "502-504"
+          - "502"
+          - "504"
         service: host-agent
         query: /bloud-loading/miniflux
 

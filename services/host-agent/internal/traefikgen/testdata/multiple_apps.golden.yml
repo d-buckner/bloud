@@ -27,19 +27,22 @@ http:
     actual-budget-loading:
       errors:
         status:
-          - "502-504"
+          - "502"
+          - "504"
         service: host-agent
         query: /bloud-loading/actual-budget
     adguard-home-loading:
       errors:
         status:
-          - "502-504"
+          - "502"
+          - "504"
         service: host-agent
         query: /bloud-loading/adguard-home
     miniflux-loading:
       errors:
         status:
-          - "502-504"
+          - "502"
+          - "504"
         service: host-agent
         query: /bloud-loading/miniflux
 

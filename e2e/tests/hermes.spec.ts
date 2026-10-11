@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
+import { createSign, generateKeyPairSync } from 'node:crypto';
 import { describeApp } from '../lib/app-suite';
 import {
   expectInstalledInCatalog,
@@ -114,7 +115,93 @@ describeApp('hermes', (app) => {
       await ctx.close();
     }
   });
+
+  test('an app-level 503 reaches the browser, not the waiting page', async () => {
+    // The app is up here: the gateway is running, the dashboard process is
+    // healthy, and Traefik can reach it. This is not a container coming back.
+    //
+    // What Bloud must not do is answer for the app. The waiting-page middleware
+    // exists for the case where Traefik could not reach the container at all,
+    // and it replaces whatever came back with a page that reloads on its own.
+    // When the app itself produced the status, that page is a lie: the reload
+    // lands on the same answer every time, so the tab sits on "Hermes is
+    // re-loading" over an install that has been healthy for hours while the
+    // actual fault (the identity provider cannot vouch for this session) is
+    // never shown to anyone.
+    test.setTimeout(120_000);
+    const ctx = await newIsolatedContext(app);
+    const hermes = await ctx.newPage();
+    try {
+      // Prove the app is reachable first, so the rung cannot pass by accident
+      // on an app that is genuinely down. /api/health is Hermes' public
+      // liveness route, exempt from its auth gate by design.
+      const health = await hermes.request.get(`${HERMES_ORIGIN}/api/health`);
+      expect(health.status()).toBe(200);
+
+      await ctx.addCookies([
+        { name: 'hermes_session_at', value: unverifiableSessionToken(), url: HERMES_ORIGIN },
+      ]);
+
+      const doc = await hermes.goto(`${HERMES_ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+      expect(doc).not.toBeNull();
+
+      // Bloud did not answer for the app: no waiting-page marker, and none of
+      // its prose in the body.
+      expect(doc!.headers()).not.toHaveProperty('x-bloud-loading');
+      expect(await doc!.text()).not.toContain('is re-loading');
+
+      // And the app's own answer arrived. 503 is Hermes' documented response
+      // for "my identity provider is unreachable", and its body names the
+      // provider, which is the diagnosis the waiting page was hiding.
+      expect(doc!.status()).toBe(503);
+      expect(await doc!.text()).toContain('unreachable');
+    } finally {
+      await ctx.close();
+    }
+  });
 });
+
+/**
+ * A Hermes session token that Hermes' identity provider cannot vouch for.
+ *
+ * Hermes verifies its dashboard session against the issuer's JWKS. When the
+ * provider no longer publishes the key a token was signed with, that lookup
+ * fails with "Unable to find a signing key that matches", Hermes classifies it
+ * as a *provider outage* rather than a bad session, and answers 503 while
+ * deliberately keeping the cookie, because a real IdP blip must not log every
+ * signed-in user out. The cookie surviving is what makes it permanent: every
+ * later request 503s the same way until the session itself changes.
+ *
+ * An RS256 JWT signed here with a throwaway key, naming a `kid` the issuer has
+ * never heard of, reproduces that on any deployment without touching Authentik.
+ * The signature lookup happens before any claim is read, so the issuer and
+ * audience in the payload do not change the outcome.
+ */
+function unverifiableSessionToken(): string {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const b64 = (input: Buffer) => input.toString('base64url');
+  const header = b64(
+    Buffer.from(
+      JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'bloud-e2e-key-the-issuer-never-had' }),
+    ),
+  );
+  const now = Math.floor(Date.now() / 1000);
+  const payload = b64(
+    Buffer.from(
+      JSON.stringify({
+        iss: 'https://issuer.invalid/application/o/hermes/',
+        sub: 'e2e@bloud.invalid',
+        aud: 'hermes-client',
+        email: 'e2e@bloud.invalid',
+        iat: now,
+        exp: now + 3600,
+      }),
+    ),
+  );
+  const signer = createSign('RSA-SHA256');
+  signer.update(`${header}.${payload}`);
+  return `${header}.${payload}.${b64(signer.sign(privateKey))}`;
+}
 
 // newIsolatedContext opens a browser context with no inherited cookies, so the
 // gate and sign-in rungs observe a genuinely session-less visitor.
