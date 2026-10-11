@@ -65,4 +65,13 @@
 		color: var(--color-text-muted);
 		font-style: italic;
 	}
+
+	/* Same trim as the catalog: 32px of gutter a side is a sixth of a 390px
+	   screen, and the settings sections are a single 560px measure that wants the
+	   whole width once there is not enough for the gutter. */
+	@media (max-width: 480px) {
+		.page {
+			padding: var(--space-lg) var(--space-md);
+		}
+	}
 </style>

@@ -11,14 +11,12 @@
 	} from '@xyflow/svelte';
 	import { layoutGraph } from '$lib/timeline/graphLayout';
 	import { syncGraph } from '$lib/timeline/graphSync';
-	import {
-		fetchDeveloperGraph,
-		type DeveloperGraph
-	} from '$lib/clients/developerClient';
+	import { fetchDeveloperGraph, type DeveloperGraph, type GraphNode } from '$lib/clients/developerClient';
 	import AppNode from '$lib/graph/AppNode.svelte';
 	import AppBox from '$lib/graph/AppBox.svelte';
 	import AppGroup from '$lib/graph/AppGroup.svelte';
 	import ContainerNode from '$lib/graph/ContainerNode.svelte';
+	import { phaseWord, showsPhase } from '$lib/graph/phase';
 
 	import '@xyflow/svelte/dist/style.css';
 
@@ -80,6 +78,37 @@
 
 	let interval: ReturnType<typeof setInterval> | undefined;
 
+	/**
+	 * The same reading the canvas draws, as a table.
+	 *
+	 * A canvas drawn by a layout library is not operable by a keyboard: the nodes
+	 * are positioned divs, they are not focusable, and the only thing a Tab key
+	 * reaches is the four zoom buttons. Rather than rebuild the diagram as a focus
+	 * ring walking a graph, the page offers the same facts in the form the platform
+	 * already knows how to traverse. Screen readers get headings and rows; the
+	 * keyboard gets a disclosure and a scroll region.
+	 */
+	let nodeRows = $derived.by(() => {
+		if (!payload) return [];
+		return payload.nodes.map((n) => {
+			const phase = phaseWord(n.phase, n.status);
+			return {
+				id: n.id,
+				name: n.displayName,
+				kind: kindWord(n),
+				state: showsPhase(phase) ? phase : n.status,
+				reason: n.reason ?? ''
+			};
+		});
+	});
+
+	function kindWord(n: GraphNode): string {
+		if (n.nodeType === 'connection') return 'public address';
+		if (n.nodeType === 'container') return 'container';
+		if (n.nodeType === 'service') return 'instance service';
+		return n.isSystem ? 'system app' : 'app';
+	}
+
 	onMount(() => {
 		void load();
 		interval = setInterval(() => {
@@ -97,6 +126,12 @@
 </svelte:head>
 
 <div class="graph-container">
+	<!-- The diagram is the whole page, so there is no title of its own to sit next
+	     to. A page still has to have one: it is how a screen reader names where you
+	     are when the route changes, and it is the first thing anyone navigating by
+	     heading lands on. -->
+	<h1 class="visually-hidden">System architecture</h1>
+
 	<SvelteFlow
 		{nodes}
 		{edges}
@@ -118,6 +153,47 @@
 		<Background />
 		<Controls position="bottom-right" showLock={false} fitViewOptions={FIT_OPTIONS} />
 	</SvelteFlow>
+
+	<!-- Legend and text outline share one pinned column, so they stack instead of
+	     landing on top of each other. -->
+	<div class="overlay">
+		<!-- The state is a colour and a 7px dot, which is the least durable way to
+		     say anything about a system that is supposed to be self-healing. The
+		     legend is what makes the colour mean something to a first reader. -->
+		<div class="legend" role="group" aria-label="What the diagram colours mean">
+			<span class="legend-item"><span class="dot running"></span> running</span>
+			<span class="legend-item"><span class="dot failed"></span> stopped or failed</span>
+			<span class="legend-item"><span class="dot working"></span> a pass is moving through</span>
+			<span class="legend-item"><span class="dot unprobed"></span> not reconciled (address, catalog)</span>
+			<span class="legend-item"><span class="frame system"></span> system app</span>
+		</div>
+
+		<details class="outline">
+			<summary>Text outline of the graph</summary>
+			<div class="outline-body">
+				<table>
+					<thead>
+						<tr>
+							<th scope="col">Node</th>
+							<th scope="col">Kind</th>
+							<th scope="col">State</th>
+							<th scope="col">Why it stopped</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each nodeRows as row (row.id)}
+							<tr>
+								<th scope="row">{row.name}</th>
+								<td>{row.kind}</td>
+								<td>{row.state}</td>
+								<td>{row.reason}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		</details>
+	</div>
 
 	{#if !loaded && !error}
 		<div class="canvas-note">Loading graph...</div>
@@ -195,5 +271,123 @@
 		border: 1px solid rgba(220, 38, 38, 0.18);
 		border-radius: var(--radius-md, 8px);
 		pointer-events: none;
+	}
+
+	.overlay {
+		position: absolute;
+		top: var(--space-md);
+		left: var(--space-md);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		max-width: min(300px, calc(100% - 32px));
+		max-height: calc(100vh - 32px);
+	}
+
+	/* Legend and text outline share one furniture: a small panel pinned top-left,
+	   the same no-border, no-shadow treatment the zoom controls were given, so
+	   neither reads as a card floating on the diagram. */
+	.legend,
+	.outline {
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		background: color-mix(in srgb, var(--color-bg-elevated, #fff) 90%, transparent);
+		border-radius: 6px;
+	}
+
+	.legend {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: var(--space-sm) var(--space-md);
+	}
+
+	.legend-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		color: var(--color-text-secondary);
+	}
+
+	.dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.dot.running {
+		background: var(--color-success);
+	}
+
+	.dot.failed {
+		background: var(--color-error);
+	}
+
+	.dot.working {
+		background: var(--color-info);
+	}
+
+	/* Hollow, the way the node card draws it: filled means the engine has a state
+	   for this node, hollow means the card is only repeating the catalog. */
+	.dot.unprobed {
+		box-sizing: border-box;
+		border: 1.5px solid var(--color-text-secondary);
+	}
+
+	.frame {
+		width: 10px;
+		height: 10px;
+		border: 1px solid var(--color-text-secondary);
+		border-radius: 3px;
+		flex-shrink: 0;
+	}
+
+	.frame.system {
+		border-style: dashed;
+	}
+
+	.outline summary {
+		padding: var(--space-sm) var(--space-md);
+		cursor: pointer;
+		color: var(--color-text-secondary);
+	}
+
+	.outline summary:hover {
+		color: var(--color-text);
+	}
+
+	/* Open, the panel scrolls inside itself. The canvas is 100vh with overflow
+	   hidden, so an outline that grew the page would be the clipped content this
+	   is meant to replace. */
+	.outline[open] {
+		overflow: auto;
+	}
+
+	.outline-body {
+		padding: 0 var(--space-md) var(--space-md);
+	}
+
+	.outline table {
+		border-collapse: collapse;
+		width: 100%;
+	}
+
+	.outline th,
+	.outline td {
+		text-align: left;
+		padding: 3px 6px 3px 0;
+		vertical-align: top;
+		border-bottom: 1px solid var(--color-border-subtle);
+	}
+
+	.outline th {
+		font-weight: 600;
+		color: var(--color-text);
+	}
+
+	.outline td {
+		color: var(--color-text-secondary);
+		font-weight: 400;
 	}
 </style>

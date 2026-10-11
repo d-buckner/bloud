@@ -185,6 +185,10 @@
 		color: var(--color-text-secondary);
 		transition: all 0.15s ease;
 		font-size: 0.9375rem;
+		/* A nav link is an <a>, so the global button rule does not reach it, and
+		   the audit measured these at 43px: one pixel short of the minimum, which
+		   is the kind of miss that only a rule catches. */
+		min-height: var(--tap-target-min);
 	}
 
 	.nav-links a:hover {
@@ -279,7 +283,10 @@
 
 	.version {
 		font-size: 0.75rem;
-		color: var(--color-text-muted);
+		/* --color-text-faint, not --color-text-muted: this is build metadata, the
+		   one thing in the sidebar nobody reads for information, so it is allowed
+		   to sit below the text bar that every other label has to clear. */
+		color: var(--color-text-faint);
 		font-family: var(--font-mono);
 	}
 

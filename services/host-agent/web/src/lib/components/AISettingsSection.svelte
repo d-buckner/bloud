@@ -133,9 +133,11 @@
 					id="ai-base-url"
 					type="text"
 					placeholder="https://api.example.com/v1"
+					inputmode="url"
+					autocomplete="off"
+					autocapitalize="none"
 					bind:value={baseUrl}
 					disabled={saving}
-					autocomplete="off"
 					spellcheck="false"
 				/>
 			</div>
@@ -145,13 +147,15 @@
 					API key
 					{#if hasApiKey}<span class="pill pill-success">stored</span>{/if}
 				</label>
+				<!-- new-password, not off: blank means "keep the stored key", so the
+				     last thing wanted is a manager autofilling the old one. -->
 				<input
 					id="ai-key"
 					type="password"
 					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
 					bind:value={apiKey}
 					disabled={saving}
-					autocomplete="off"
+					autocomplete="new-password"
 				/>
 				<span class="hint">
 					{hasApiKey
@@ -206,7 +210,9 @@
 			</div>
 
 			{#if testResult}
-				<p class="test-result" class:ok={testOk === true} class:fail={testOk === false}>
+				<!-- role=status: the test takes a second and the result lands wherever
+				     the pointer is, so it has to be announced rather than waited for. -->
+				<p class="test-result" class:ok={testOk === true} class:fail={testOk === false} role="status">
 					{testResult}
 				</p>
 			{/if}
@@ -214,7 +220,7 @@
 	{/if}
 
 	{#if error}
-		<div class="error-message">{error}</div>
+		<div class="error-message" role="alert">{error}</div>
 	{/if}
 
 	{#if servedTo.length > 0}
@@ -330,7 +336,16 @@
 
 	.form-row .form-field {
 		flex: 1;
-		min-width: 140px;
+		/* min-width: 0, not 140px. A flex item will not shrink below its content,
+		   and the Default model field carries a long placeholder, so the pair set
+		   the page's minimum width and Settings scrolled sideways at 390px. */
+		min-width: 0;
+	}
+
+	.form-field input,
+	.form-field select {
+		width: 100%;
+		max-width: 100%;
 	}
 
 	.hint {
