@@ -255,8 +255,7 @@
 	}
 
 	input:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 	}
 
 	input:disabled {

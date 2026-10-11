@@ -86,9 +86,14 @@
 	<SetupWizard />
 {:else}
 	<div class="app">
+		<!-- First in the tab order, ahead of the sidebar, because every route
+		     otherwise opens with the same four nav links in front of you. The
+		     target takes tabindex="-1" so focus actually lands on <main>: a
+		     fragment jump scrolls, and on some browsers that is all it does. -->
+		<a class="skip-link" href="#main">Skip to main content</a>
 		<Sidebar bind:collapsed={sidebarCollapsed} {user} />
 
-		<main class:collapsed={sidebarCollapsed}>
+		<main id="main" tabindex="-1" class:collapsed={sidebarCollapsed}>
 			<div class="route-content">
 				{@render children()}
 			</div>
@@ -134,6 +139,14 @@
 		transition: margin-left 0.2s ease;
 		display: flex;
 		flex-direction: column;
+	}
+
+	/* The skip target is focused, so it would otherwise arrive wearing the global
+	   focus ring around an entire page. Landing there is the point; drawing a
+	   2px frame around the viewport is not the signal anyone asked for. */
+	main:focus,
+	main:focus-visible {
+		outline: none;
 	}
 
 	main.collapsed {

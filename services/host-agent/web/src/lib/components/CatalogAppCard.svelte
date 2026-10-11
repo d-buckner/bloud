@@ -143,7 +143,7 @@
 	}
 
 	.app-card:has(.card-action:focus-visible) {
-		outline: 2px solid var(--color-accent);
+		outline: 2px solid var(--color-focus);
 		outline-offset: 2px;
 	}
 

@@ -306,8 +306,7 @@
 
 	.form-field input:focus,
 	.form-field select:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 		box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
 	}
 

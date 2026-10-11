@@ -190,8 +190,7 @@
 
 	.provider-form input:focus,
 	.provider-form select:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 	}
 
 	.field-help {

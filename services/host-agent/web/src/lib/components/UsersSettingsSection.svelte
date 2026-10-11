@@ -318,8 +318,11 @@
 	}
 
 	.btn-sm:disabled {
-		opacity: 0.5;
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		border-color: var(--color-border);
 		cursor: not-allowed;
+		opacity: 1;
 	}
 
 	.btn-sm-danger {
@@ -381,8 +384,7 @@
 
 	.form-field input:focus,
 	.form-field select:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 		box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
 	}
 
@@ -407,8 +409,11 @@
 	}
 
 	.btn:disabled {
-		opacity: 0.6;
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		border-color: var(--color-border);
 		cursor: not-allowed;
+		opacity: 1;
 	}
 
 	.btn-primary {

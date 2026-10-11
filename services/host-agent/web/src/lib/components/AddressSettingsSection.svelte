@@ -167,8 +167,7 @@
 	}
 
 	.address-input:focus {
-		outline: none;
-		border-color: var(--color-accent);
+				border-color: var(--color-accent);
 	}
 
 	.address-input::placeholder {
@@ -191,9 +190,15 @@
 		align-self: flex-start;
 	}
 
+	/* Matches Button.svelte's disabled treatment: the absence of a fill, not the
+	   accent at 60% opacity (which composites to a mid-grey and reads as an
+	   enabled grey button). */
 	.btn:disabled {
-		opacity: 0.6;
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		border-color: var(--color-border);
 		cursor: not-allowed;
+		opacity: 1;
 	}
 
 	.btn-primary {
