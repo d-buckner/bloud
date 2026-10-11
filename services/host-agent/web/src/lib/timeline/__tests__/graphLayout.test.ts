@@ -43,10 +43,24 @@ describe('layoutGraph: apps present', () => {
 	const { nodes, edges } = layoutGraph(graph);
 
 	it('creates the apps group and parents every app under it', () => {
-		expect(byId(nodes, '__apps_group')?.type).toBe('group');
+		expect(byId(nodes, '__apps_group')?.type).toBe('appGroup');
 		for (const id of ['a', 'b', 'c']) {
 			expect(byId(nodes, id)).toMatchObject({ type: 'app', parentId: '__apps_group' });
 		}
+	});
+
+	// The frame is drawn by a node type of its own because xyflow's built-in group
+	// node renders nothing at all, and an unlabeled rectangle behind most of the
+	// canvas is a claim without a subject.
+	it('names the group it draws', () => {
+		expect(byId(nodes, '__apps_group')!.data).toMatchObject({
+			label: 'Installed apps',
+			// No orchestrator in this fixture: the frame says there is no engine
+			// rather than going quiet, because a quiet frame is what a healthy one
+			// looks like too.
+			note: 'reconciler unavailable',
+			tone: 'error'
+		});
 	});
 
 	it('places the connection in the row above the group', () => {
@@ -70,11 +84,36 @@ describe('layoutGraph: apps present', () => {
 		expect(byId(nodes, 'c')!.data).toMatchObject({ hasOutgoing: false, hasIncoming: true });
 	});
 
-	it('animates an edge only when both endpoints are active', () => {
+	// The live phase, the reason a node stopped, and whether the engine has it in
+	// hand are what the cards draw. They reach the card through this payload and
+	// nowhere else, so a layout that dropped them would leave the page silently
+	// unable to say which node is current.
+	it('carries the live lifecycle state through to the node data', () => {
+		const graph: DeveloperGraph = {
+			nodes: [
+				node('immich', { phase: 'starting', inFlight: true }),
+				node('broken', { phase: 'failed', reason: 'no space left' })
+			],
+			edges: []
+		};
+		const { nodes } = layoutGraph(graph);
+		expect(byId(nodes, 'immich')!.data).toMatchObject({
+			phase: 'starting',
+			inFlight: true,
+			reason: ''
+		});
+		expect(byId(nodes, 'broken')!.data).toMatchObject({
+			phase: 'failed',
+			reason: 'no space left',
+			inFlight: false
+		});
+	});
+
+	it('draws every edge the same way, live or not', () => {
 		const ab = edges.find((e) => e.source === 'a' && e.target === 'b');
 		const bc = edges.find((e) => e.source === 'b' && e.target === 'c');
-		expect(ab?.animated).toBe(true); // running -> running
-		expect(bc?.animated).toBe(false); // running -> stopped
+		expect(ab?.style).toBe(bc?.style);
+		expect(ab?.animated).toBeFalsy();
 	});
 
 	it('draws no edge into the ingress that the backend did not declare', () => {
@@ -90,7 +129,8 @@ describe('layoutGraph: service node edges', () => {
 	// The AI Model node is the instance's own provider: never probed, so it
 	// carries `external` rather than a lifecycle status, and the backend drops
 	// it the moment Settings -> AI has no enabled upstream. Its presence in the
-	// payload is the liveness claim, so an edge into it animates.
+	// payload is the liveness claim, so the edge into it is drawn from the payload
+	// like any other and must not be treated as provisional here.
 	const graph: DeveloperGraph = {
 		nodes: [
 			node('hermes'),
@@ -98,18 +138,18 @@ describe('layoutGraph: service node edges', () => {
 			node('ai:instance', { status: 'external', nodeType: 'service' }),
 			conn('conn:local')
 		],
-		edges: [edge('hermes', 'ai:instance'), edge('affine', 'ai:instance')],
+		edges: [edge('hermes', 'ai:instance'), edge('affine', 'ai:instance'), edge('hermes', 'affine')]
 	};
 	const { edges } = layoutGraph(graph);
 
-	it('animates a running consumer\'s edge into the service node', () => {
-		const e = edges.find((x) => x.source === 'hermes' && x.target === 'ai:instance');
-		expect(e?.animated).toBe(true);
+	it('draws the declared edge into the service node', () => {
+		expect(edges.some((x) => x.source === 'hermes' && x.target === 'ai:instance')).toBe(true);
 	});
 
-	it('still requires the consumer side to be live', () => {
-		const e = edges.find((x) => x.source === 'affine' && x.target === 'ai:instance');
-		expect(e?.animated).toBe(false);
+	it('draws it exactly like every other edge', () => {
+		const into = edges.find((x) => x.target === 'ai:instance')!;
+		const other = edges.find((x) => x.target !== 'ai:instance')!;
+		expect(into.style).toBe(other.style);
 	});
 });
 

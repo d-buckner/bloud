@@ -1,38 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Row primitives for the developer graph: the horizontal bands that sit above
- * the app group (connections) and below it (services), and the edge mapping
- * that animates an edge when both of its endpoints are live.
+ * the app group (connections) and below it (services), and the edge mapping.
  *
  * Split out of graphLayout.ts so that module keeps the box and group math.
  */
 
 import type { Edge, Node } from '@xyflow/svelte';
 import type { DeveloperGraph, GraphNode } from '$lib/clients/developerClient';
+import { EDGE_STYLE, edgeKind, showsLabel } from '$lib/graph/edgeKinds';
 
 export const NODE_WIDTH = 170;
 export const NODE_HEIGHT = 60;
 /** Horizontal gap between nodes within a row (connections, services). */
 const CONN_HGAP = 60;
-
-/** A status that counts as "live" for edge animation. */
-function isActiveStatus(status: string): boolean {
-	return status === 'running' || status === 'active';
-}
-
-/**
- * Whether one node counts as live for edge animation.
- *
- * An app or container is live when it is running. A `service` node is live
- * because the backend put it in the payload at all: the AI Model node carries
- * `external` rather than a lifecycle status precisely because nothing probes
- * it, and it disappears the moment Settings -> AI has no enabled upstream.
- * Its presence is the liveness claim. Reading that node as inert would draw the
- * one edge that is definitely wired as a dead line.
- */
-function isLiveNode(n: GraphNode): boolean {
-	return isActiveStatus(n.status) || n.nodeType === 'service';
-}
 
 /** The left x of a row of `count` nodes, centered over the app group. */
 export function rowStartX(groupX: number, groupWidth: number, count: number): number {
@@ -55,16 +36,30 @@ export function nodeRow(
 	}));
 }
 
-/** Every edge of the graph, animated when both of its endpoints are live. */
+/**
+ * Every edge of the graph.
+ *
+ * One style for all of them, and no animation: an edge that marches is a
+ * constant motion in the middle of a picture whose whole job is to be still
+ * while the state readout beside it changes.
+ */
 export function buildEdges(graph: DeveloperGraph): Edge[] {
-	const live = new Map(graph.nodes.map((n) => [n.id, isLiveNode(n)]));
-	const isLive = (id: string) => live.get(id) === true;
-
-	return graph.edges.map((e, i) => ({
-		id: `e-${i}`,
-		source: e.source,
-		target: e.target,
-		label: e.label,
-		animated: isLive(e.source) && isLive(e.target)
-	}));
+	return graph.edges.map((e, i) => {
+		const kind = edgeKind(e.label);
+		return {
+			id: `e-${i}`,
+			source: e.source,
+			target: e.target,
+			label: showsLabel(kind) ? e.label : undefined,
+			// xyflow/svelte takes these as style strings, not objects: the renderer
+			// writes them straight into a `style` attribute.
+			style: `stroke: ${EDGE_STYLE.stroke}; stroke-width: ${EDGE_STYLE.width}px;`,
+			// The label is an HTML div portalled over the canvas (not SVG text), so
+			// it can carry a real background. It sits on top of lines constantly, and
+			// the canvas color behind the words is what punches the stroke out instead
+			// of leaving a word sitting on a line it then cannot be read through.
+			labelStyle:
+				'font-size: 10px; color: #44403C; padding: 2px 6px; background: #FAF9F6; border-radius: 3px;',
+		};
+	});
 }
