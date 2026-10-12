@@ -27,6 +27,13 @@ Not landed, and named so the next reader does not assume otherwise:
 - **Generated API types** (phase 1's `check:api-types`). `wire.ts` and `types.ts`
   are still hand-typed against the Go structs. This is the largest remaining
   piece of phase 1.
+- **The action layer is pre-RTK, not slice-generated.** The store is
+  slice-shaped in the way vanilla Redux has always prescribed, eight reducers
+  under `combineReducers`. What is hand-written is the action side: type
+  constants in `actionTypes.ts` and creators in `actions.ts`, where
+  `createSlice` would generate both together. That is what makes
+  `KNOWN_ACTION_TYPES` necessary at all: it is a guard for a hole the hand-written
+  layer opens, not something a generated action layer would need.
 - **Phases 3 to 5.** The developer page still owns its graph poll, the widgets
   still own their timers, and settings still own their convergence loops. Each is
   a row in the `EXCEPTIONS` table of `scripts/no-component-timers.mjs`.
@@ -391,8 +398,12 @@ in the document, because the idea is attractive and will come back.
 What the log was reaching for is still in the plan, just not as architecture:
 actions are the unit of testing (fixture sequences, below), the optimistic layer
 is a separate slice that selectors apply over confirmed state rather than a write
-into it, and a dev-only `resync` action re-applies the last snapshot so an edited
-reducer can be seen against live state without a page reload.
+into it, and a dev-only `resync()` re-dispatches the last snapshot so an edited
+reducer can be seen against live state without a page reload. It is a function
+that dispatches `home/snapshot`, not an action type of its own: re-applying the
+snapshot already re-derives every server slice, so a `dev/resync` action would
+appear in the devtools log and change nothing. `__tests__/actions.test.ts` fails
+an action type no reducer implements, which is what caught that.
 
 ```
 src/lib/store/
@@ -575,8 +586,8 @@ smaller claim than replaying history, and the transport already provides it.
   the honest scope of the claim: a reducer edit no longer costs the grid, the open
   install progress, or the stream.
 - For the case where the *new* logic should be seen applied to state the *old*
-  logic built, `hmr.ts` dispatches a dev-only `resync` after the swap: the stream
-  reconnects, the snapshot fence refills the server-derived slices, and the new
+  logic built, `resync()` re-dispatches the last snapshot after the swap: the
+  snapshot fence refills the server-derived slices, and the new
   reducers compute them from scratch. One request, no page reload, and it uses the
   fence the design already has instead of a replay mechanism invented for it.
 - `hmr.ts` disposes effects on `import.meta.hot.dispose`: close the

@@ -19,7 +19,7 @@
 import { applyMiddleware, createStore } from 'redux';
 import type { Middleware, MiddlewareAPI, Store, StoreEnhancer } from 'redux';
 import type { HomeData } from '$lib/types';
-import { HOME_SNAPSHOT, devResync, homeSnapshot } from './actions';
+import { HOME_SNAPSHOT, homeSnapshot } from './actions';
 import type { Action } from './actions';
 import { rootReducer } from './reducers';
 import type { RootState } from './reducers';
@@ -74,7 +74,7 @@ function resolveStore(): Store<RootState> {
 	if (import.meta.hot && carried) {
 		// Same store, new reducers: swap them and re-derive what it holds.
 		carried.replaceReducer(rootReducer);
-		if (lastSnapshot) carried.dispatch(devResync(lastSnapshot));
+		if (lastSnapshot) carried.dispatch(homeSnapshot(lastSnapshot));
 		return carried;
 	}
 	const fresh = createRootStore();
