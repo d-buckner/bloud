@@ -8,6 +8,7 @@ import { combineReducers } from 'redux';
 import { apps } from './apps';
 import { commands } from './commands';
 import { connection } from './connection';
+import { graph } from './graph';
 import { launchers } from './launchers';
 import { layout } from './layout';
 import { progress } from './progress';
@@ -20,6 +21,7 @@ export const rootReducer = combineReducers({
 	apps,
 	layout,
 	launchers,
+	graph,
 	progress,
 	toasts,
 	commands

@@ -19,6 +19,8 @@ import { isGridApp } from './reducers/apps';
 import type { AppProgress } from './reducers/progress';
 import { commandKey, isPending } from './reducers/commands';
 import { memo, memoBy } from './memo';
+import { isStale } from './reducers/graph';
+import type { GraphState } from './reducers/graph';
 
 /** The apps that get a tile, in snapshot order. */
 export const gridApps = memo<App[], RootState>(
@@ -111,6 +113,30 @@ export const homeSummary = memo<HomeSummary, RootState>(
 export function homeLoading(state: RootState): boolean {
 	return state.apps.loading || state.connection.phase === 'bootstrapping';
 }
+
+/**
+ * Everything the developer page renders, in one read: the payload the canvas and
+ * the table are built from, whether anything has landed yet, and whether the last
+ * read failed. `stale` is the case the old page could not express, because a
+ * failed poll over a good payload set `error` and kept drawing, and nothing told
+ * the reader the picture had stopped moving.
+ */
+export interface GraphView {
+	graph: GraphState;
+	loaded: boolean;
+	stale: boolean;
+	error: string;
+}
+
+export const graphView = memo<GraphView, RootState>(
+	(s) => [s.graph],
+	(state) => ({
+		graph: state.graph,
+		loaded: state.graph.loaded,
+		stale: isStale(state.graph),
+		error: state.graph.error
+	})
+);
 
 /** The admin gate, as state rather than as an `onMount` redirect. */
 export function isAdmin(state: RootState): boolean {

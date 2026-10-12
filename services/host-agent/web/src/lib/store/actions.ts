@@ -13,6 +13,7 @@ import type { ActivityEvent, NodeEvent, PullEvent } from './wire';
 import type { ConnectionEvent } from './machine';
 import type { ToastTone } from './reducers/toasts';
 import type { CommandKey, SettleKind } from './reducers/commands';
+import type { DeveloperGraph } from '$lib/clients/developerClient';
 
 // The type strings live in `actionTypes.ts` so the known-type set below can be
 // derived from them instead of transcribed. Re-exported here because every
@@ -101,3 +102,9 @@ export const commandFailed = (payload: { key: CommandKey; error: string; at: num
 	action(actionTypes.COMMAND_FAILED, payload);
 
 export const launchersReplaced = (payload: Launcher[]) => action(actionTypes.LAUNCHERS_REPLACED, payload);
+
+/** A developer-graph read landed. Carries the clock so the reducer stays pure. */
+export const graphLoaded = (payload: DeveloperGraph, at: number) =>
+	action(actionTypes.GRAPH_LOADED, { payload, at });
+export const graphFailed = (error: string) => action(actionTypes.GRAPH_FAILED, { error });
+export const graphReset = () => action(actionTypes.GRAPH_RESET, null);

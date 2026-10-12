@@ -30,17 +30,14 @@ const FRONTEND = 'services/host-agent/web/src';
 // the component stops needing one: the check fails a stale entry on purpose.
 const EXCEPTIONS = [
   {
-    file: `${FRONTEND}/routes/developer/+page.svelte`,
-    reason:
-      'the graph poll. Plan phase 3 moves it to store/effects/graphPoll.ts, gated on the route being mounted and the tab visible.',
-  },
-  {
     file: `${FRONTEND}/lib/widgets/SystemStats.svelte`,
-    reason: 'widget refresh cadence. Plan phase 3 moves widget polls into the store.',
+    reason:
+      'widget refresh cadence. Plan phase 3 (widgets) moves it to store/effects/widgetPoll.ts, the same shape graphPoll.ts uses.',
   },
   {
     file: `${FRONTEND}/lib/widgets/Storage.svelte`,
-    reason: 'widget refresh cadence. Plan phase 3 moves widget polls into the store.',
+    reason:
+      'widget refresh cadence. Plan phase 3 (widgets) moves it to store/effects/widgetPoll.ts, the same shape graphPoll.ts uses.',
   },
   {
     file: `${FRONTEND}/lib/widgets/QuickNotes.svelte`,

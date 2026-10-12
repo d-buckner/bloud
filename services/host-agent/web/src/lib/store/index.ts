@@ -13,6 +13,7 @@ export {
 	appView,
 	enabledWidgetIds,
 	gridApps,
+	graphView,
 	homeLoading,
 	homeSummary,
 	isAdmin,
@@ -22,7 +23,8 @@ export { bootstrapSession, signOut, startDashboard } from './commands/session';
 export { installApp, renameApp, uninstallApp } from './commands/apps';
 export { removeWidget, saveLayout, toggleWidget } from './commands/layout';
 export { stopTransport } from './effects/connection';
+export { startGraphPoll, stopGraphPoll } from './effects/graphPoll';
 export { PHASE_ORDER } from './wire';
 export type { AppProgress, ComponentProgress, PhaseHistoryEntry } from './reducers/progress';
-export type { AppView, HomeSummary } from './selectors';
+export type { AppView, GraphView, HomeSummary } from './selectors';
 export type { RootState } from './reducers';

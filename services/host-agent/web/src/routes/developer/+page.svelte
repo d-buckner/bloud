@@ -11,7 +11,8 @@
 	} from '@xyflow/svelte';
 	import { layoutGraph } from '$lib/timeline/graphLayout';
 	import { syncGraph } from '$lib/timeline/graphSync';
-	import { fetchDeveloperGraph, type DeveloperGraph, type GraphNode } from '$lib/clients/developerClient';
+	import type { DeveloperGraph, GraphNode } from '$lib/clients/developerClient';
+	import { graphView, select, startGraphPoll, stopGraphPoll } from '$lib/store';
 	import AppNode from '$lib/graph/AppNode.svelte';
 	import AppBox from '$lib/graph/AppBox.svelte';
 	import AppGroup from '$lib/graph/AppGroup.svelte';
@@ -30,53 +31,38 @@
 		container: ContainerNode as any
 	};
 
-	/** The canvas is mounted before the first payload and filled in after. */
-	let loaded = $state(false);
-	let error = $state('');
+	// The read is the store's: when it happens, whether one is in flight, what
+	// failed. This page only projects what landed onto a canvas, which is the part
+	// that genuinely belongs here: `layoutGraph` runs dagre, and dagre is in this
+	// route's chunk precisely so that nobody on the home page downloads it.
+	const view = select(graphView);
+
+	let loaded = $derived(view.current.loaded);
+	let error = $derived(view.current.error);
+	const payload = $derived(view.current.graph.payload);
+
 	let nodes = $state<Node[]>([]);
 	let edges = $state<Edge[]>([]);
-	/**
-	 * The payload the canvas was built from, kept alongside the xyflow nodes
-	 * because the group frame reads the engine's state, which does not survive
-	 * the trip through the layout as a thing of its own.
-	 */
-	let payload = $state<DeveloperGraph | null>(null);
 
-	function extractErrorMessage(err: unknown): string {
-		if (err && typeof err === 'object' && 'message' in err) {
-			return (err as { message: string }).message;
+	/** The payload this canvas was last built from, compared by identity: the
+	 *  poll hands over a fresh object every 500ms, and re-running dagre on
+	 *  identical bytes is the most expensive way to change nothing. */
+	let laidOut: DeveloperGraph | null = null;
+
+	$effect(() => {
+		const graph = payload;
+		if (!graph || graph === laidOut) return;
+		laidOut = graph;
+		// Keep the node objects the canvas already has wherever nothing changed.
+		// xyflow drops a node's measured size and handle bounds when it is handed
+		// a new object, so replacing all of them on every poll re-measures the
+		// whole canvas.
+		const sync = syncGraph({ nodes, edges }, layoutGraph(graph));
+		if (sync.changed) {
+			nodes = sync.nodes;
+			edges = sync.edges;
 		}
-		return 'Failed to load developer graph';
-	}
-
-	let inflight = false;
-
-	async function load() {
-		if (inflight) return;
-		inflight = true;
-		try {
-			const graph = await fetchDeveloperGraph();
-			const next = layoutGraph(graph);
-			payload = graph;
-			// Keep the node objects the canvas already has wherever nothing changed.
-			// xyflow drops a node's measured size and handle bounds when it is handed
-			// a new object, so replacing all of them on every poll re-measures the
-			// whole canvas.
-			const sync = syncGraph({ nodes, edges }, next);
-			if (sync.changed) {
-				nodes = sync.nodes;
-				edges = sync.edges;
-			}
-			error = '';
-			loaded = true;
-		} catch (err) {
-			error = extractErrorMessage(err);
-		} finally {
-			inflight = false;
-		}
-	}
-
-	let interval: ReturnType<typeof setInterval> | undefined;
+	});
 
 	/**
 	 * The same reading the canvas draws, as a table.
@@ -89,8 +75,9 @@
 	 * keyboard gets a disclosure and a scroll region.
 	 */
 	let nodeRows = $derived.by(() => {
-		if (!payload) return [];
-		return payload.nodes.map((n) => {
+		const graph = payload;
+		if (!graph) return [];
+		return graph.nodes.map((n) => {
 			const phase = phaseWord(n.phase, n.status);
 			return {
 				id: n.id,
@@ -110,15 +97,10 @@
 	}
 
 	onMount(() => {
-		void load();
-		interval = setInterval(() => {
-			if (document.hidden) return;
-			void load();
-		}, 500);
-		return () => {
-			if (interval) clearInterval(interval);
-		};
+		startGraphPoll();
+		return stopGraphPoll;
 	});
+
 </script>
 
 <svelte:head>
@@ -204,7 +186,9 @@
 	{#if error}
 		<!-- A poll that fails while a good graph is on screen is a note at the top,
 		     not a teardown: the last layout stays put and the next poll replaces it. -->
-		<div class="canvas-error">{error}</div>
+		<div class="canvas-error" role="status">
+			{error}{#if view.current.stale} (showing the last good read){/if}
+		</div>
 	{/if}
 </div>
 

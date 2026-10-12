@@ -6,8 +6,8 @@ Closes [#309](https://github.com/d-buckner/bloud/issues/309).
 
 ## What has landed
 
-Phases 0 to 2 are in `src/lib/store/`, and the old modules they replace are
-deleted, not deprecated:
+Phases 0 to 2, plus the developer graph out of phase 3, are in `src/lib/store/`,
+and the old modules they replace are deleted, not deprecated:
 
 - **Phase 0.** `kernel.ts` (the `globalThis` singleton, `replaceReducer`, the dev
   `resync`, devtools), `actions.ts` (the action union), `bindings.svelte.ts` (the
@@ -34,15 +34,27 @@ Not landed, and named so the next reader does not assume otherwise:
   `createSlice` would generate both together. That is what makes
   `KNOWN_ACTION_TYPES` necessary at all: it is a guard for a hole the hand-written
   layer opens, not something a generated action layer would need.
-- **Phases 3 to 5.** The developer page still owns its graph poll, the widgets
-  still own their timers, and settings still own their convergence loops. Each is
-  a row in the `EXCEPTIONS` table of `scripts/no-component-timers.mjs`.
+- **The developer graph is store state.** `reducers/graph.ts` holds the payload,
+  whether a read has landed, and what failed; `effects/graphPoll.ts` owns the
+  500ms cadence, gated on the route being mounted and the tab visible, with
+  `setTimeout` rather than `setInterval` so a slow response spaces the next read
+  instead of stacking it. The page keeps only the xyflow projection, and keeps it
+  on purpose: `layoutGraph` imports dagre, and a reducer that called it would
+  move a layout library out of the developer route's chunk and into the store's,
+  so every visitor on the home page would download a graph layouter they will
+  never see. The slice adds the thing the component could not express: a failed
+  poll keeps the last good payload and sets `stale`, so the page can say the
+  picture has stopped moving instead of silently freezing it.
+- **Phases 3 to 5.** The widgets still own their timers, and settings still own
+  their convergence loops. Each is a row in the `EXCEPTIONS` table of
+  `scripts/no-component-timers.mjs`.
 - **`check:no-legacy-store`** is in, with an empty exception table: nothing in the
   tree imports `svelte/store`, and the check is what keeps it that way.
 - **`check:no-component-fetch` and `check:bundle-budget`.** The fetch check needs
-  a five-entry exception table before it can start (the developer page, the
-  settings sections, and two widgets still call `fetch` directly), so it lands
-  with phase 3 or 4, when those entries have a destination.
+  a five-entry exception table before it can start (`SetupWizard`,
+  `AppDetailModal`, `ClientAccessPanel`, and the `Storage` and `SystemStats`
+  widgets still call `fetch` directly), so it lands with phase 4, when those
+  entries have a destination.
 
 ## Goal
 
