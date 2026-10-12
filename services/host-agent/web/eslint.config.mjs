@@ -122,6 +122,23 @@ export default tseslint.config(
     rules: gates({ lines: 700 }),
   },
 
+  // Runes-in-TypeScript modules (`store/*.svelte.ts`). eslint-plugin-svelte
+  // already claims this extension for `$state` and `$derived`, but it hands the
+  // inside of the file to whatever `parserOptions.parser` says, and the block
+  // above only sets that for `*.svelte`. Without it a type annotation in a runes
+  // module is a parse error, so the store's binding module would be unlintable.
+  {
+    files: ['**/*.svelte.ts'],
+    languageOptions: {
+      parserOptions: {
+        parser: '@typescript-eslint/parser',
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+      },
+    },
+    rules: gates({ lines: 320 }),
+  },
+
   // Test bodies state a case in full: fixtures, arrange/act/assert, and the
   // expectation table all land in one function. Looser per-function cap,
   // same everything else.

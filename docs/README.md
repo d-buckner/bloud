@@ -28,6 +28,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | How catalog changes apply to running installs | [plans/catalog-update-reconciliation.md](plans/catalog-update-reconciliation.md) |
 | How Bloud ships and updates via apt | [plans/apt-repository.md](plans/apt-repository.md) |
 | Making installs show what they will do | [plans/install-experience.md](plans/install-experience.md) |
+| One frontend store, its state machines, and hot reload | [plans/frontend-fsm.md](plans/frontend-fsm.md) |
 | Handing app credentials to third-party clients (reveal vs provision) | [plans/client-credentials.md](plans/client-credentials.md) |
 | Pilot: hermes-webui, OIDC for browsers plus a minted password for Hermex | [plans/client-credentials-hermes-webui-pilot.md](plans/client-credentials-hermes-webui-pilot.md) |
 | How client credentials work (declare, reveal, rotate, revoke) | [features/client-credentials.md](features/client-credentials.md) |

@@ -1,7 +1,7 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import AppIcon from './AppIcon.svelte';
-	import { visibleApps, loading } from '$lib/stores/apps';
+	import { appView, homeLoading, select } from '$lib/store';
 	import { type App } from '$lib/types';
 
 	interface Props {
@@ -12,10 +12,13 @@
 
 	let { itemId, onAppClick, onAppContextMenu }: Props = $props();
 
-	let app = $derived($visibleApps.find((a) => a.catalog_id === itemId));
+	const view = select((s) => appView(s, itemId));
+	const loading = select(homeLoading);
+
+	let app = $derived(view.current.app);
 	let displayName = $derived(app?.display_name ?? itemId);
 	let status = $derived(app?.status ?? null);
-	let isInstalling = $derived(app ? status === 'installing' || status === 'starting' : !$loading);
+	let isInstalling = $derived(app ? view.current.installing : !loading.current);
 	let isFailed = $derived(status === 'failed');
 	let isDegraded = $derived(status === 'error');
 	// While installing, the tile shows only the app name; the icon itself

@@ -74,6 +74,18 @@ tiers:
       - id: file-length
         cwd: .
         run: npm run check:file-length
+      # A component that starts a timer is a component deciding when data
+      # changes, which is store work (see docs/plans/frontend-fsm.md). The check
+      # also validates its own exception table, so it runs whole-tree.
+      - id: no-component-timers
+        cwd: .
+        run: npm run check:no-component-timers
+      # The runes binding is the store's only component binding. One
+      # `svelte/store` import would make the architecture optional, so the
+      # exception table is empty and this check is absolute.
+      - id: no-legacy-store
+        cwd: .
+        run: npm run check:no-legacy-store
       # Prose lint: Markdown docs plus the comments in source files (Vale; rules
       # and vocabulary in .vale.ini + .vale/styles).
       - id: prose-lint
@@ -149,7 +161,7 @@ inference:
       # These ride the catch-all: any change can invalidate a doc, a link, an
       # image pin, or a file-length ceiling, and the matcher has no recursive
       # `**/*.md` form (see pathMatches in cli).
-      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, file-length, depgraph-check, catalogdoc-check]
+      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, file-length, no-component-timers, no-legacy-store, depgraph-check, catalogdoc-check]
 
 apps:
   affine:

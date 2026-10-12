@@ -4,7 +4,7 @@
 	import AppIcon from './AppIcon.svelte';
 	import CloseButton from './CloseButton.svelte';
 	import Icon from './Icon.svelte';
-	import { appProgress, recentActivity } from '$lib/stores/appProgress';
+	import { select } from '$lib/store';
 	import { deriveTimeline } from '$lib/timeline/installTimeline';
 	import type { App } from '$lib/types';
 
@@ -16,8 +16,10 @@
 
 	let { app, onclose, onretry }: Props = $props();
 
-	let progress = $derived(app ? $appProgress[app.catalog_id] ?? null : null);
-	let steps = $derived(app ? deriveTimeline(app.status, progress) : []);
+	const progress = select((s) => (app ? (s.progress.byId[app.catalog_id] ?? null) : null));
+	const activity = select((s) => s.progress.activity);
+
+	let steps = $derived(app ? deriveTimeline(app.status, progress.current) : []);
 	let isFailed = $derived(app?.status === 'failed' || app?.status === 'error');
 	let retrying = $state(false);
 
@@ -59,10 +61,10 @@
 		</header>
 
 		<div class="modal-body">
-			{#if isFailed && (app.last_error || progress?.error)}
+			{#if isFailed && (app.last_error || progress.current?.error)}
 				<div class="error-box">
 					<Icon name="error-circle" size={18} />
-					<p class="error-text">{app.last_error || progress?.error}</p>
+					<p class="error-text">{app.last_error || progress.current?.error}</p>
 				</div>
 			{/if}
 
@@ -95,10 +97,10 @@
 				{/each}
 			</ol>
 
-			{#if $recentActivity.length > 0}
+			{#if activity.current.length > 0}
 				<h3 class="section-heading">Recent activity</h3>
 				<ul class="activity-list">
-					{#each $recentActivity.slice(-6).reverse() as entry (entry.time + entry.event)}
+					{#each activity.current.slice(-6).reverse() as entry (entry.time + entry.event)}
 						<li>
 							<span class="activity-time">{formatTime(new Date(entry.time).getTime())}</span>
 							<span class="activity-event">{entry.event}</span>

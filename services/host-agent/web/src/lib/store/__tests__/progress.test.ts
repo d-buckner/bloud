@@ -4,9 +4,9 @@ import {
 	emptyProgress,
 	mergeNodeEvent,
 	mergePullEvent,
-	mergeSnapshot,
+	pruneToSnapshot,
 	type NodeEvent
-} from '../appProgress';
+} from '../reducers/progress';
 import type { AppStatus, HomeData } from '$lib/types';
 
 const NOW = 1_700_000_000_000;
@@ -125,25 +125,25 @@ describe('mergePullEvent', () => {
 	});
 });
 
-describe('mergeSnapshot', () => {
+describe('pruneToSnapshot', () => {
 	it('drops entries for uninstalled apps and keeps the rest', () => {
 		let m = mergeNodeEvent({}, node('jellyfin', 'apps-jellyfin', 'pulling'), NOW);
 		m = mergeNodeEvent(m, node('navidrome', 'apps-navidrome', 'configuring'), NOW);
 		// Snapshot no longer contains jellyfin (uninstalled).
-		m = mergeSnapshot(m, home({ navidrome: 'running' }));
+		m = pruneToSnapshot(m, home({ navidrome: 'running' }));
 		expect(Object.keys(m)).toEqual(['navidrome']);
 		expect(m.navidrome.phase).toBe('configuring');
 	});
 
 	it('keeps failed app progress (the modal needs the error)', () => {
 		let m = mergeNodeEvent({}, node('jellyfin', 'apps-jellyfin', 'failed', 'boom'), NOW);
-		m = mergeSnapshot(m, home({ jellyfin: 'failed' }));
+		m = pruneToSnapshot(m, home({ jellyfin: 'failed' }));
 		expect(m.jellyfin.phase).toBe('failed');
 	});
 
 	it('settled running apps drop their progress entry', () => {
 		let m = mergeNodeEvent({}, node('jellyfin', 'apps-jellyfin', 'running'), NOW);
-		m = mergeSnapshot(m, home({ jellyfin: 'running' }));
+		m = pruneToSnapshot(m, home({ jellyfin: 'running' }));
 		expect(m.jellyfin).toBeUndefined();
 	});
 });

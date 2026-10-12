@@ -6,8 +6,9 @@
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
-	import { apps as installedApps } from '$lib/stores/apps';
-	import { installApp } from '$lib/clients/appFacade';
+	import { allApps, installApp, select } from '$lib/store';
+
+	const installedApps = select(allApps);
 	import { fetchCatalog } from '$lib/clients/catalog';
 
 	let catalogApps = $state<CatalogApp[]>([]);
@@ -17,7 +18,7 @@
 	let selectedApp = $state<CatalogApp | null>(null);
 
 	function getAppStatus(name: string): AppStatus | undefined {
-		return $installedApps.find((a) => a.catalog_id === name)?.status;
+		return installedApps.current.find((a) => a.catalog_id === name)?.status;
 	}
 
 	// Search and filtering
@@ -71,11 +72,10 @@
 	});
 
 	async function handleInstall(appName: string) {
-		try {
-			await installApp(appName);
-		} catch (err) {
-			console.error('Install failed:', err);
-		}
+		// The command never throws: the outcome is the return value, and the
+		// store holds the record either way.
+		const result = await installApp(appName);
+		if (!result.ok) console.error('Install failed:', result.error);
 	}
 
 	function clearFilters() {

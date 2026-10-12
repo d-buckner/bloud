@@ -8,7 +8,9 @@
 	// second app adopting the pattern needs no frontend change. If the app
 	// declares nothing, the panel renders nothing.
 	import Button from './Button.svelte';
-	import { isAdmin } from '$lib/stores/user';
+	import { isAdmin, select } from '$lib/store';
+
+	const admin = select(isAdmin);
 
 	interface Descriptor {
 		secret: string;
@@ -47,7 +49,7 @@
 	// The panel only ever shows for an admin, and only after the app is
 	// installed, so a non-admin never triggers a request that would 403.
 	$effect(() => {
-		if (!appName || !$isAdmin) return;
+		if (!appName || !admin.current) return;
 		load();
 	});
 
@@ -168,9 +170,9 @@
 	}
 </script>
 
-{#if $isAdmin && loading}
+{#if admin.current && loading}
 	<p class="loading-state">Loading client access...</p>
-{:else if $isAdmin && descriptors.length > 0}
+{:else if admin.current && descriptors.length > 0}
 	{#if error}
 		<div class="error-message">{error}</div>
 	{/if}

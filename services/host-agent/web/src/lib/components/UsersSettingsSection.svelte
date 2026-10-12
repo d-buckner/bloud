@@ -3,7 +3,10 @@
 	import { onMount } from 'svelte';
 	import DeleteUserModal from './DeleteUserModal.svelte';
 	import Icon from './Icon.svelte';
-	import { currentUser } from '$lib/stores/user';
+	import { select } from '$lib/store';
+	import type { Role } from '$lib/types';
+
+	const currentUser = select((s) => s.session.user);
 	import {
 		fetchUsers,
 		createUser,
@@ -11,8 +14,7 @@
 		setUserRole,
 		type ManagedUser
 	} from '$lib/clients/userClient';
-	import { type Role } from '$lib/stores/user';
-	import { guardUserRow, demoteBlocked, deleteBlocked } from '$lib/utils/userGuard';
+		import { guardUserRow, demoteBlocked, deleteBlocked } from '$lib/utils/userGuard';
 
 	let users = $state<ManagedUser[]>([]);
 	let usersLoading = $state(true);
@@ -29,7 +31,7 @@
 	onMount(loadUsers);
 
 	function rowGuard(u: ManagedUser) {
-		return guardUserRow(u, users, $currentUser?.username ?? null);
+		return guardUserRow(u, users, currentUser.current?.username ?? null);
 	}
 
 	async function loadUsers() {

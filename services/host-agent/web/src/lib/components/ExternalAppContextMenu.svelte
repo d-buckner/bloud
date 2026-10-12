@@ -9,7 +9,9 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import Icon from './Icon.svelte';
-	import { isAdmin } from '$lib/stores/user';
+	import { isAdmin, select } from '$lib/store';
+
+	const admin = select(isAdmin);
 
 	interface Props {
 		/** External record the menu acts on, or null while nothing is selected. */
@@ -57,7 +59,7 @@
 	});
 </script>
 
-{#if itemId && $isAdmin}
+{#if itemId && admin.current}
 	<div
 		bind:this={menuEl}
 		class="context-menu"

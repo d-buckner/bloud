@@ -1,26 +1,25 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { isAdmin } from '$lib/stores/user';
+	import { isAdmin, select } from '$lib/store';
 	import AddressSettingsSection from '$lib/components/AddressSettingsSection.svelte';
 	import AISettingsSection from '$lib/components/AISettingsSection.svelte';
 	import UsersSettingsSection from '$lib/components/UsersSettingsSection.svelte';
+
+	const admin = select(isAdmin);
 
 	// The page is a shell: the admin gate and the page header. Every settings
 	// section is a component that owns its own state, its own load-on-mount, and
 	// its own scoped styles. `ready` stays false for a non-admin, so no section
 	// fires an admin-only request on a page that is already redirecting away.
-	let ready = $state(false);
+	// The gate reads the session slice rather than a mount-time snapshot, so a
+	// role that arrives after this page mounted cannot leave a non-admin looking
+	// at an admin form.
+	const ready = $derived(admin.current);
 
-	onMount(async () => {
-		// Redirect non-admins
-		if (!$isAdmin) {
-			goto(resolve('/'));
-			return;
-		}
-		ready = true;
+	$effect(() => {
+		if (!admin.current) void goto(resolve('/'));
 	});
 </script>
 

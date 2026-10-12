@@ -6,83 +6,28 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import Toasts from '$lib/components/Toasts.svelte';
-	import { initApps, disconnectApps } from '$lib/clients/appFacade';
-	import { currentUser, type CurrentUser } from '$lib/stores/user';
-
-	interface SetupStatus {
-		setupRequired: boolean;
-		authentikReady: boolean;
-	}
-
-	interface AuthMeResponse {
-		id: number;
-		username: string;
-		role: 'admin' | 'member';
-	}
+	import { select, startDashboard, stopTransport } from '$lib/store';
 
 	let { children }: { children: Snippet } = $props();
 
 	let sidebarCollapsed = $state(false);
-	let setupRequired = $state(false);
-	let loading = $state(true);
-	let user = $state<AuthMeResponse | null>(null);
 
-	// Check setup status and auth, then initialize app if ready
+	// The session read and the stream are the store's business now. This page only
+	// says when the dashboard starts and stops, and renders the four states the
+	// session slice can be in: not asked yet, anonymous, needs setup, ready.
+	const session = select((s) => s.session);
+
 	onMount(() => {
-		checkStatusAndAuth();
-
-		return () => {
-			disconnectApps();
-		};
+		startDashboard();
+		return () => stopTransport();
 	});
-
-	async function checkStatusAndAuth() {
-		try {
-			// First check setup status
-			const setupRes = await fetch('/api/setup/status');
-			const setupData: SetupStatus = await setupRes.json();
-			setupRequired = setupData.setupRequired;
-
-			// If setup is required, don't check auth
-			if (setupRequired) {
-				loading = false;
-				return;
-			}
-
-			// Check if user is authenticated
-			const authRes = await fetch('/api/auth/me');
-			if (authRes.ok) {
-				user = await authRes.json();
-				// Populate the global user store with role information
-				if (user) {
-					currentUser.set({
-						username: user.username,
-						role: user.role ?? 'admin'
-					} as CurrentUser);
-				}
-			} else {
-				// Not authenticated - redirect to login
-				window.location.href = '/auth/login';
-				return;
-			}
-		} catch {
-			// If we can't reach the API, proceed with normal app (dev mode)
-			setupRequired = false;
-		}
-		loading = false;
-
-		// Only initialize app connections if setup is complete and user is authenticated
-		if (!setupRequired && user) {
-			initApps();
-		}
-	}
 </script>
 
-{#if loading}
+{#if session.current.status === 'bootstrapping'}
 	<div class="loading">
 		<div class="spinner"></div>
 	</div>
-{:else if setupRequired}
+{:else if session.current.setupRequired}
 	<SetupWizard />
 {:else}
 	<div class="app">
@@ -91,7 +36,7 @@
 		     target takes tabindex="-1" so focus actually lands on <main>: a
 		     fragment jump scrolls, and on some browsers that is all it does. -->
 		<a class="skip-link" href="#main">Skip to main content</a>
-		<Sidebar bind:collapsed={sidebarCollapsed} {user} />
+		<Sidebar bind:collapsed={sidebarCollapsed} />
 
 		<main id="main" tabindex="-1" class:collapsed={sidebarCollapsed}>
 			<div class="route-content">

@@ -4,7 +4,9 @@
 	import { browser } from '$app/environment';
 	import Icon from './Icon.svelte';
 	import type { App } from '$lib/types';
-	import { isAdmin } from '$lib/stores/user';
+	import { isAdmin, select } from '$lib/store';
+
+	const admin = select(isAdmin);
 
 	interface Props {
 		app: App | null;
@@ -58,7 +60,7 @@
 	});
 </script>
 
-{#if app && $isAdmin}
+{#if app && admin.current}
 	<div
 		bind:this={menuEl}
 		class="context-menu"

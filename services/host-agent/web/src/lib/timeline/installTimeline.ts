@@ -9,8 +9,8 @@
  * as a coarse fallback.
  */
 
-import type { AppProgress } from '$lib/stores/appProgress';
-import { PHASE_ORDER } from '$lib/stores/appProgress';
+import type { AppProgress } from '$lib/store';
+import { PHASE_ORDER } from '$lib/store';
 
 export interface TimelineStep {
 	id: string;

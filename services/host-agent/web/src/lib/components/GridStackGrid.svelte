@@ -3,10 +3,12 @@
 	import { onMount, onDestroy, mount, unmount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { GridStack } from 'gridstack';
-	import { gridElements, type GridElement } from '$lib/stores/grid';
+	import { removeWidget, saveLayout, select } from '$lib/store';
+	import type { GridElement } from '$lib/types';
+
+	const gridElements = select((s) => s.layout.elements);
 	import { getWidgetById } from '$lib/widgets/registry';
-	import { saveLayout } from '$lib/clients/layoutClient';
-	import { type App } from '$lib/types';
+		import { type App } from '$lib/types';
 	import AppTile from './AppTile.svelte';
 	import LauncherTile from './LauncherTile.svelte';
 	import WidgetWrapper from './WidgetWrapper.svelte';
@@ -87,7 +89,7 @@
 		if (!widget) return null;
 		return mount(WidgetWrapper, {
 			target,
-			props: { widget, onRemove: () => gridElements.removeWidget(element.id) },
+			props: { widget, onRemove: () => removeWidget(element.id) },
 		});
 	}
 
@@ -97,7 +99,7 @@
 	 */
 	function appBlockBottom(occupied: GridNodeState[]): number {
 		const appIds = new Set(
-			$gridElements.filter((el) => el.type === 'app' || el.type === 'launcher').map((el) => el.id)
+			gridElements.current.filter((el) => el.type === 'app' || el.type === 'launcher').map((el) => el.id)
 		);
 		return occupied
 			.filter((node) => appIds.has(node.id))
@@ -220,7 +222,7 @@
 	function persistLayout() {
 		if (suppressLayoutSave) return;
 
-		const storeMap = new Map($gridElements.map((e) => [e.id, e]));
+		const storeMap = new Map(gridElements.current.map((e) => [e.id, e]));
 		const settled = currentGridState().map((node) => {
 			const existing = storeMap.get(node.id);
 			return {
@@ -344,7 +346,7 @@
 		clearTimeout(reconcileTimer);
 		reconcileTimer = setTimeout(() => {
 			reconcileTimer = undefined;
-			reconcile($gridElements);
+			reconcile(gridElements.current);
 		}, 0);
 	}
 
@@ -397,14 +399,14 @@
 		// A narrow first paint already picked a smaller column count, and any
 		// later container resize is picked up here rather than from a
 		// GridStack event.
-		reconcile($gridElements);
+		reconcile(gridElements.current);
 		resizeObserver = new ResizeObserver(scheduleReconcile);
 		resizeObserver.observe(gridEl.parentElement ?? gridEl);
 	});
 
 	// React to store changes (snapshot, widget toggle, app install/uninstall)
 	$effect(() => {
-		reconcile($gridElements);
+		reconcile(gridElements.current);
 	});
 
 	onDestroy(() => {
