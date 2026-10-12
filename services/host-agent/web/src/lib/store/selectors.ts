@@ -8,7 +8,9 @@
  * not be tested, could not be reused, and drifted between the two pages that each
  * had a copy.
  *
- * A selector takes the whole state and returns a value. It never stores one.
+ * A selector takes the whole state and returns a value. It never stores one,
+ * except for the identity cache `memo` keeps, which returns the same value
+ * rather than a new equal one.
  */
 
 import type { App } from '$lib/types';
@@ -16,16 +18,22 @@ import type { RootState } from './reducers';
 import { isGridApp } from './reducers/apps';
 import type { AppProgress } from './reducers/progress';
 import { commandKey, isPending } from './reducers/commands';
+import { memo, memoBy } from './memo';
 
 /** The apps that get a tile, in snapshot order. */
-export function gridApps(state: RootState): App[] {
-	return state.apps.order.map((id) => state.apps.byId[id]).filter((app): app is App => !!app && isGridApp(app));
-}
+export const gridApps = memo<App[], RootState>(
+	(s) => [s.apps],
+	(state) =>
+		state.apps.order
+			.map((id) => state.apps.byId[id])
+			.filter((app): app is App => !!app && isGridApp(app))
+);
 
 /** Every installed app, including system and headless ones. */
-export function allApps(state: RootState): App[] {
-	return state.apps.order.map((id) => state.apps.byId[id]).filter((app): app is App => !!app);
-}
+export const allApps = memo<App[], RootState>(
+	(s) => [s.apps],
+	(state) => state.apps.order.map((id) => state.apps.byId[id]).filter((app): app is App => !!app)
+);
 
 /**
  * One app plus its live progress: the join the home page and the install modal
@@ -40,18 +48,25 @@ export interface AppView {
 	pending: boolean;
 }
 
-export function appView(state: RootState, catalogId: string): AppView {
-	const app = state.apps.byId[catalogId];
-	const progress = state.progress.byId[catalogId] ?? null;
-	return {
-		app,
-		progress,
-		installing: app?.status === 'installing' || app?.status === 'starting',
-		pending:
-			isPending(state.commands, commandKey('install', catalogId)) ||
-			isPending(state.commands, commandKey('uninstall', catalogId))
-	};
-}
+export const appView = memoBy<string, AppView, RootState>(
+	(state, catalogId) => [
+		state.apps.byId[catalogId],
+		state.progress.byId[catalogId],
+		state.commands.byKey[commandKey('install', catalogId)],
+		state.commands.byKey[commandKey('uninstall', catalogId)]
+	],
+	(state, catalogId) => {
+		const app = state.apps.byId[catalogId];
+		return {
+			app,
+			progress: state.progress.byId[catalogId] ?? null,
+			installing: app?.status === 'installing' || app?.status === 'starting',
+			pending:
+				isPending(state.commands, commandKey('install', catalogId)) ||
+				isPending(state.commands, commandKey('uninstall', catalogId))
+		};
+	}
+);
 
 /**
  * Can this tile be opened, or is it still coming up? The set of statuses that
@@ -69,9 +84,10 @@ export function opensProgressInsteadOfLaunching(app: App | undefined): boolean {
 	);
 }
 
-export function enabledWidgetIds(state: RootState): string[] {
-	return state.layout.elements.filter((el) => el.type === 'widget').map((el) => el.id);
-}
+export const enabledWidgetIds = memo<string[], RootState>(
+	(s) => [s.layout],
+	(state) => state.layout.elements.filter((el) => el.type === 'widget').map((el) => el.id)
+);
 
 /** What the home page says in its subtitle, in one place. */
 export interface HomeSummary {
@@ -81,12 +97,15 @@ export interface HomeSummary {
 	empty: boolean;
 }
 
-export function homeSummary(state: RootState): HomeSummary {
-	const apps = gridApps(state).length;
-	const launchers = state.launchers.items.length;
-	const widgets = enabledWidgetIds(state).length;
-	return { apps, launchers, widgets, empty: apps + launchers + widgets === 0 };
-}
+export const homeSummary = memo<HomeSummary, RootState>(
+	(s) => [s.apps, s.launchers, s.layout],
+	(state) => {
+		const apps = gridApps(state).length;
+		const launchers = state.launchers.items.length;
+		const widgets = enabledWidgetIds(state).length;
+		return { apps, launchers, widgets, empty: apps + launchers + widgets === 0 };
+	}
+);
 
 /** Is the dashboard still waiting for its first snapshot? */
 export function homeLoading(state: RootState): boolean {

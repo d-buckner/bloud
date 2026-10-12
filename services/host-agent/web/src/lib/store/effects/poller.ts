@@ -48,7 +48,8 @@ async function tick(): Promise<void> {
 		dispatch(connectionEvent({ type: 'poll.ok' }));
 		dispatch(homeSnapshot((await res.json()) as HomeData));
 	} catch {
-		dispatch(connectionEvent({ type: 'poll.error' }));
+		// Nothing is dispatched: a failed poll does not change which source the
+		// machine treats as authoritative. The next tick is the retry.
 	}
 	schedule();
 }

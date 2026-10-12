@@ -16,7 +16,7 @@
  */
 
 import type { Middleware, MiddlewareAPI } from 'redux';
-import { HOME_SNAPSHOT, TOAST_PUSHED, toastDismissed, toastPushed } from './actions';
+import { HOME_SNAPSHOT, TOAST_PUSHED, isKnownAction, toastDismissed, toastPushed } from './actions';
 import type { Action } from './actions';
 import { statusMap } from './reducers/apps';
 import { TOAST_TTL_MS, detectToasts } from './reducers/toasts';
@@ -33,6 +33,34 @@ type TypedMiddleware =
 	(api: MiddlewareAPI) => (next: (action: Action) => unknown) => (action: Action) => unknown;
 
 const asMiddleware = (fn: TypedMiddleware): Middleware => fn as unknown as Middleware;
+
+/** Types already complained about, so a loop does not drown the console. */
+const complained = new Set<string>();
+
+/**
+ * Refuse an action no reducer claims, instead of letting it fall through every
+ * `default` and change nothing.
+ *
+ * `Action` is structurally `{ type: string }`, so the action union is a
+ * convention the compiler does not enforce: `'apss/upserted'` compiles. The
+ * symptom of that typo is a UI that quietly stops updating, which is an afternoon
+ * of debugging; this makes it a line naming the type, at the moment it happens.
+ *
+ * It is a middleware rather than a check in the `dispatch()` wrapper because
+ * middleware dispatches go through the store too, and the guard should not have a
+ * bypass.
+ */
+export const unknownActionGuard: Middleware = asMiddleware(() => (next) => (action) => {
+	if (isKnownAction(action.type)) return next(action);
+	if (!complained.has(action.type)) {
+		complained.add(action.type);
+		console.error(
+			`[bloud] dropped unknown action "${action.type}". ` +
+				'Add it to KNOWN_ACTION_TYPES in store/actions.ts if it is new.',
+		);
+	}
+	return action;
+});
 
 export const toastTransitions: Middleware = asMiddleware((store) => (next) => (action) => {
 	if (action.type !== HOME_SNAPSHOT) return next(action);

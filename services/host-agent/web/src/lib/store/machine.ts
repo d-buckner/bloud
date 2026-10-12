@@ -27,10 +27,18 @@ export type ConnectionEvent =
 	| { type: 'stream.error' }
 	/** The watchdog saw no event of any kind for FALLBACK_DELAY_MS. */
 	| { type: 'stream.quiet' }
-	/** A fallback poll succeeded. */
+	/**
+	 * A fallback poll succeeded. This is the only poll outcome the machine has a
+	 * use for: it proves the transport is carrying something, so it counts as
+	 * liveness and clears the retry backoff.
+	 *
+	 * A failed poll is deliberately absent. The poller owns its own retry, and a
+	 * failed read does not change which source is authoritative, so there was no
+	 * phase it could mean. An event nothing can interpret is not a signal, it is
+	 * noise that looks like one; "even the poll is failing" is its own phase when
+	 * there is a real requirement for it, not a placeholder now.
+	 */
 	| { type: 'poll.ok' }
-	/** A fallback poll failed. */
-	| { type: 'poll.error' }
 	/** `navigator.onLine` went false. */
 	| { type: 'navigator.offline' }
 	/** `navigator.onLine` came back. */

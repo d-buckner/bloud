@@ -713,12 +713,18 @@ refactor needs the same treatment, or it quietly reverses itself.
   baseline shape as the file-length ratchet, where a recorded ceiling can only
   ever go down. This is the issue's "minimize bloat" made enforceable, and it is
   the check that notices when the next graph library lands.
-- **Settle completeness**, a test rather than a script: every command kind
-  declares a settle kind, and a `convergence` kind with no predicate or no
-  deadline fails the build. This is the same shape as
-  `apps/configtest/waitbudget_test.go`, which fails the build when a declared
-  `appclient` wait budget does not fit inside the phase budget it runs under.
-  A write that can never settle is the bug that check catches.
+- **Settle completeness**, enforced by the type rather than by a test:
+  `CommandSpec` is a discriminated union on the settle kind, so a `convergence`
+  command with no predicate or no deadline does not compile. That landed with
+  phases 0 to 2 and is stronger than the test originally sketched here, for the
+  same reason `apps/configtest/waitbudget_test.go` is stronger than a runtime
+  check: the mistake is impossible to merge.
+- **Action-type registry**: `KNOWN_ACTION_TYPES` in `store/actions.ts` lists
+  every action the store accepts, and a middleware drops a type that is not on
+  it with a console error. `Action` is structurally `{ type: string }`, so the
+  union is a convention the compiler cannot enforce; a typo'd type would fall
+  through every reducer's `default` and the symptom would be a UI that quietly
+  stops updating.
 
 All of them go in the `fast` tier of `validation.yaml` and in the pre-push hook.
 

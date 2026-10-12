@@ -22,6 +22,68 @@ const T0 = 1_700_000_000_000;
 
 const ev = (type: ConnectionEvent['type']): ConnectionEvent => ({ type }) as ConnectionEvent;
 
+// The whole table, typed as a complete record. This is the part that keeps a
+// total transition function honest: `TRANSITIONS` itself is a `Partial`, so a
+// new event type would compile and silently do nothing forever. Here, a new
+// phase or a new event is a type error until someone says what it means.
+const EXPECTED: Record<ConnectionPhase, Record<ConnectionEvent['type'], ConnectionPhase>> = {
+bootstrapping: {
+'boot.done': 'connecting',
+'stream.open': 'streaming',
+'stream.event': 'bootstrapping',
+'stream.error': 'bootstrapping',
+'stream.quiet': 'bootstrapping',
+'poll.ok': 'bootstrapping',
+'navigator.offline': 'bootstrapping',
+'navigator.online': 'bootstrapping',
+'tab.visible': 'bootstrapping'
+},
+connecting: {
+'boot.done': 'connecting',
+'stream.open': 'streaming',
+'stream.event': 'streaming',
+'stream.error': 'connecting',
+'stream.quiet': 'polling',
+'poll.ok': 'connecting',
+'navigator.offline': 'offline',
+'navigator.online': 'connecting',
+'tab.visible': 'connecting'
+},
+streaming: {
+'boot.done': 'streaming',
+'stream.open': 'streaming',
+'stream.event': 'streaming',
+'stream.error': 'connecting',
+'stream.quiet': 'polling',
+'poll.ok': 'streaming',
+'navigator.offline': 'offline',
+'navigator.online': 'streaming',
+'tab.visible': 'connecting'
+},
+polling: {
+'boot.done': 'polling',
+'stream.open': 'streaming',
+'stream.event': 'streaming',
+'stream.error': 'connecting',
+'stream.quiet': 'polling',
+'poll.ok': 'polling',
+'navigator.offline': 'offline',
+'navigator.online': 'polling',
+'tab.visible': 'connecting'
+},
+offline: {
+'boot.done': 'offline',
+'stream.open': 'offline',
+'stream.event': 'offline',
+'stream.error': 'offline',
+'stream.quiet': 'offline',
+'poll.ok': 'offline',
+'navigator.offline': 'offline',
+'navigator.online': 'connecting',
+'tab.visible': 'offline'
+}
+};
+
 describe('nextConnectionPhase', () => {
 	it('opens the stream only once the session is usable', () => {
 		expect(nextConnectionPhase('bootstrapping', ev('boot.done'))).toBe('connecting');
@@ -48,8 +110,7 @@ describe('nextConnectionPhase', () => {
 		expect(nextConnectionPhase('polling', ev('stream.error'))).toBe('connecting');
 	});
 
-	it('does not leave polling because a poll failed: polling is the degraded state', () => {
-		expect(nextConnectionPhase('polling', ev('poll.error'))).toBe('polling');
+	it('does not leave polling because a poll succeeded: polling is already the fallback', () => {
 		expect(nextConnectionPhase('polling', ev('poll.ok'))).toBe('polling');
 	});
 
@@ -59,22 +120,12 @@ describe('nextConnectionPhase', () => {
 		expect(nextConnectionPhase('offline', ev('navigator.online'))).toBe('connecting');
 	});
 
-	it('is total: an event with no rule leaves the phase alone', () => {
-		const phases: ConnectionPhase[] = ['bootstrapping', 'connecting', 'streaming', 'polling', 'offline'];
-		const types: ConnectionEvent['type'][] = [
-			'boot.done',
-			'stream.open',
-			'stream.event',
-			'stream.error',
-			'stream.quiet',
-			'poll.ok',
-			'poll.error',
-			'navigator.offline',
-			'navigator.online'
-		];
-		for (const phase of phases) {
-			for (const type of types) {
-				expect(nextConnectionPhase(phase, ev(type))).toBeTypeOf('string');
+	it('is total and explicit: every phase against every event, declared', () => {
+		for (const phase of Object.keys(EXPECTED) as ConnectionPhase[]) {
+			for (const type of Object.keys(EXPECTED[phase]) as ConnectionEvent['type'][]) {
+				expect(nextConnectionPhase(phase, ev(type)), `${phase} + ${type}`).toBe(
+					EXPECTED[phase][type]
+				);
 			}
 		}
 	});

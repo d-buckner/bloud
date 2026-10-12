@@ -68,6 +68,52 @@ export function action<T extends string, P>(type: T, payload: P): Action & { pay
 	return { type, payload };
 }
 
+/**
+ * Every action type the store accepts, as data.
+ *
+ * `Action` is structurally `{ type: string }`, so the action union is a
+ * convention rather than something the compiler enforces: a typo'd
+ * `'apss/upserted'` compiles, falls through every reducer's `default`, and
+ * changes nothing. That is the worst kind of typo to chase, because the symptom
+ * is a UI that quietly never updates.
+ *
+ * So the kernel refuses a type that is not in this list. Adding an action means
+ * adding it here too, which is the same "the list is the rule" shape as the
+ * `EXCEPTIONS` tables under `scripts/`.
+ */
+export const KNOWN_ACTION_TYPES: readonly string[] = Object.freeze([
+	SESSION_BOOTSTRAP_STARTED,
+	SESSION_BOOTSTRAP_LOADED,
+	SESSION_BOOTSTRAP_FAILED,
+	SESSION_SIGNED_OUT,
+	CONNECTION_EVENT,
+	CONNECTION_RESET,
+	HOME_SNAPSHOT,
+	APPS_UPSERTED,
+	APPS_STATUS_PATCHED,
+	APPS_READ_FAILED,
+	LAYOUT_ELEMENT_ADDED,
+	LAYOUT_ELEMENT_REMOVED,
+	LAYOUT_POSITIONS_SET,
+	LAUNCHERS_REPLACED,
+	PROGRESS_NODE,
+	PROGRESS_PULL,
+	PROGRESS_ACTIVITY,
+	TOAST_PUSHED,
+	TOAST_DISMISSED,
+	COMMAND_STARTED,
+	COMMAND_SETTLED,
+	COMMAND_FAILED,
+	DEV_RESYNC,
+]);
+
+const KNOWN = new Set(KNOWN_ACTION_TYPES);
+
+/** Is this a type the store has a reducer for? */
+export function isKnownAction(type: string): boolean {
+	return KNOWN.has(type);
+}
+
 export const bootstrapStarted = () => action(SESSION_BOOTSTRAP_STARTED, null);
 
 export const bootstrapLoaded = (payload: { user: SessionUser | null; setupRequired: boolean }) =>

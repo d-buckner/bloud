@@ -9,7 +9,7 @@
  * and it is either true or it is not.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createRootStore } from '../kernel';
 import { rootReducer } from '../reducers';
 import { homeSnapshot, toastDismissed, toastPushed } from '../actions';
@@ -99,6 +99,18 @@ describe('toast middleware', () => {
 		store.dispatch(toastPushed({ tone: 'info', message: 'two' }));
 		const ids = store.getState().toasts.items.map((t) => t.id);
 		expect(new Set(ids).size).toBe(2);
+	});
+
+	it('refuses an action no reducer claims, instead of silently changing nothing', () => {
+		const store = createRootStore();
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const before = store.getState();
+
+		store.dispatch({ type: 'apss/upserted', payload: {} });
+
+		expect(store.getState()).toBe(before);
+		expect(errors).toHaveBeenCalledWith(expect.stringContaining('apss/upserted'));
+		errors.mockRestore();
 	});
 
 	it('drops a toast when it is dismissed', () => {

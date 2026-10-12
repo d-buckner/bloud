@@ -27,29 +27,53 @@ export type { CommandKey, SettleKind };
 
 export type CommandResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
-export interface CommandSpec<T> {
+interface CommandBase<T> {
 	/** `install:jellyfin`. The dedupe key and the store key: same thing. */
 	key: CommandKey;
-	kind: SettleKind;
 	/** The request itself. Rejecting is a failure; a 202 is not a settle. */
 	run: () => Promise<T>;
-	/**
-	 * For `reread`: the read that shows the change. Awaited before settling, so
-	 * a settled `reread` means the dashboard is already looking at the new value.
-	 */
-	confirm?: () => Promise<void>;
-	/**
-	 * For `convergence`: what reality has to look like. Evaluated against the
-	 * store, not against a response, because the orchestrator is the thing that
-	 * has to agree.
-	 */
-	settled?: (state: RootState) => boolean;
-	/** How long `convergence` waits before it calls the change unapplied. */
-	within?: number;
 }
 
-/** Default wait for a convergence-bound command. */
-export const DEFAULT_CONVERGENCE_MS = 60_000;
+/** The response is the whole answer: nothing else to wait for. */
+export interface RequestCommand<T> extends CommandBase<T> {
+	kind: 'request';
+	confirm?: undefined;
+	settled?: undefined;
+	within?: undefined;
+}
+
+/**
+ * The write is done when the read that shows it comes back. `confirm` is
+ * required, not optional: a `reread` with no read is a `request` wearing a
+ * different name, which is how a save ends up reporting success for a change
+ * nothing re-read.
+ */
+export interface RereadCommand<T> extends CommandBase<T> {
+	kind: 'reread';
+	confirm: () => Promise<void>;
+	settled?: undefined;
+	within?: undefined;
+}
+
+/**
+ * The write is done when reality agrees. Both halves are required: a
+ * `convergence` command with no predicate can never settle, and one with no
+ * deadline can wait forever. That is a build failure rather than a runtime
+ * discovery, which is the same shape as
+ * `apps/configtest/waitbudget_test.go` enforces on the backend.
+ */
+export interface ConvergenceCommand<T> extends CommandBase<T> {
+	kind: 'convergence';
+	settled: (state: RootState) => boolean;
+	within: number;
+	confirm?: undefined;
+}
+
+/**
+ * A command, as a discriminated union. The settle kind is what picks the
+ * variant, so the compiler, not a test, is what refuses an incomplete one.
+ */
+export type CommandSpec<T> = RequestCommand<T> | RereadCommand<T> | ConvergenceCommand<T>;
 
 /** In-flight promises, so a second call joins the first instead of repeating it. */
 const inFlight = new Map<CommandKey, Promise<CommandResult<unknown>>>();
@@ -78,7 +102,7 @@ async function execute<T>(spec: CommandSpec<T>): Promise<CommandResult<T>> {
 
 	try {
 		const value = await spec.run();
-		if (spec.confirm) await spec.confirm();
+		if (spec.kind === 'reread') await spec.confirm();
 		if (spec.kind === 'convergence') await awaitConvergence(spec);
 		dispatch(commandSettled({ key: spec.key, at: Date.now() }));
 		return { ok: true, value };
@@ -102,9 +126,7 @@ function messageOf(err: unknown): string {
  * failure the UI is allowed to say out loud, and it is the one outcome a 202
  * cannot report.
  */
-function awaitConvergence<T>(spec: CommandSpec<T>): Promise<void> {
-	if (!spec.settled) return Promise.resolve();
-	const within = spec.within ?? DEFAULT_CONVERGENCE_MS;
+function awaitConvergence<T>(spec: ConvergenceCommand<T>): Promise<void> {
 	if (spec.settled(getState())) return Promise.resolve();
 
 	return new Promise<void>((resolve, reject) => {
@@ -120,9 +142,9 @@ function awaitConvergence<T>(spec: CommandSpec<T>): Promise<void> {
 		};
 		const deadline = setTimeout(() => {
 			finish(() => reject(new Error(`${spec.key} was accepted but never applied`)));
-		}, within);
+		}, spec.within);
 		unsubscribe = store.subscribe(() => {
-			if (spec.settled && spec.settled(getState())) finish(resolve);
+			if (spec.settled(getState())) finish(resolve);
 		});
 	});
 }

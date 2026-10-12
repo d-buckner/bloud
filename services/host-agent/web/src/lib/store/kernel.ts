@@ -23,7 +23,7 @@ import { HOME_SNAPSHOT, devResync, homeSnapshot } from './actions';
 import type { Action } from './actions';
 import { rootReducer } from './reducers';
 import type { RootState } from './reducers';
-import { toastTransitions, toastTtl } from './middleware';
+import { toastTransitions, toastTtl, unknownActionGuard } from './middleware';
 
 /** Where the live store is parked so a hot reload can pick it back up. */
 const STORE_KEY = '__BLOUD_STORE__';
@@ -42,7 +42,7 @@ const rememberSnapshot: Middleware = asMiddleware(() => (next) => (action) => {
 	return next(action);
 });
 
-export const MIDDLEWARE = [toastTransitions, toastTtl, rememberSnapshot];
+export const MIDDLEWARE = [unknownActionGuard, toastTransitions, toastTtl, rememberSnapshot];
 
 interface DevtoolsCompose {
 	__REDUX_DEVTOOLS_EXTENSION_COMPOSE__?: (config: { name: string }) => (...m: Middleware[]) => StoreEnhancer;
@@ -97,6 +97,7 @@ export function lastHomeSnapshot(): HomeData | null {
 	return lastSnapshot;
 }
 
+/** The one way app code dispatches. */
 export function dispatch(action: Action): void {
 	store.dispatch(action);
 }
