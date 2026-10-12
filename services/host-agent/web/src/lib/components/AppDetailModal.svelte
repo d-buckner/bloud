@@ -5,7 +5,9 @@
 	import CloseButton from './CloseButton.svelte';
 	import Icon from './Icon.svelte';
 	import type { CatalogApp } from '$lib/types';
-	import { isAdmin } from '$lib/stores/user';
+	import { isAdmin, select } from '$lib/store';
+
+	const admin = select(isAdmin);
 
 	interface Props {
 		app: CatalogApp | null;
@@ -114,14 +116,14 @@
 				<span class="status-text">Uninstalling...</span>
 			{:else if installed}
 				<button class="btn btn-secondary" onclick={handleClose} disabled={uninstallInProgress}>Close</button>
-				{#if $isAdmin}
+				{#if admin.current}
 					<button class="btn btn-danger" onclick={doUninstall} disabled={uninstallInProgress}>
 						{#if uninstallInProgress}Removing...{:else}Uninstall{/if}
 					</button>
 				{/if}
 			{:else}
 				<button class="btn btn-secondary" onclick={handleClose}>Cancel</button>
-				{#if $isAdmin}
+				{#if admin.current}
 					<button class="btn btn-primary" onclick={doInstall} disabled={installing}>
 						{#if installing}Getting...{:else}Get{/if}
 					</button>

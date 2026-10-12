@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, it, expect } from 'vitest';
-import { detectToasts } from '../toasts';
+import { detectToasts } from '../reducers/toasts';
 import type { App } from '$lib/types';
 
 function app(catalog_id: string, status: string, display_name?: string): App {

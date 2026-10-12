@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { get, post, put, del } from './httpClient';
-import type { Role } from '$lib/stores/user';
+import type { Role } from '$lib/types';
 
 export interface ManagedUser {
 	id: number;

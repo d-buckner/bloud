@@ -1,7 +1,9 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import Icon from './Icon.svelte';
-	import { toasts } from '$lib/stores/toasts';
+	import { select } from '$lib/store';
+
+	const toasts = select((s) => s.toasts.items);
 
 	const TONE_ICON: Record<string, string> = {
 		success: 'check-circle',
@@ -10,9 +12,9 @@
 	};
 </script>
 
-{#if $toasts.length > 0}
+{#if toasts.current.length > 0}
 	<div class="toast-container" role="status" aria-live="polite">
-		{#each $toasts as toast (toast.id)}
+		{#each toasts.current as toast (toast.id)}
 			<div class="toast" class:success={toast.tone === 'success'} class:error={toast.tone === 'error'}>
 				<Icon name={TONE_ICON[toast.tone] ?? 'info'} size={18} />
 				<span class="toast-message">{toast.message}</span>

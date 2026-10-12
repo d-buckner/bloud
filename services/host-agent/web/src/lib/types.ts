@@ -91,6 +91,9 @@ export interface IntentResponse {
 	app?: App;
 }
 
+/** Bloud's two roles. A member can use the apps; only an admin can change the box. */
+export type Role = 'admin' | 'member';
+
 // Grid element: null x/y means autoPosition (GridStack picks the cell)
 export interface GridElement {
 	type: 'app' | 'widget' | 'launcher';

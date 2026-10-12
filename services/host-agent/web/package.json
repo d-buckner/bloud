@@ -31,6 +31,7 @@
 	"dependencies": {
 		"@dagrejs/dagre": "^3.0.0",
 		"@xyflow/svelte": "^1.6.0",
-		"gridstack": "^12.6.0"
+		"gridstack": "^12.6.0",
+		"redux": "^5.0.1"
 	}
 }

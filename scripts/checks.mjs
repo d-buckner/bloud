@@ -194,6 +194,20 @@ const CHECKS = [
     run: () => ({ script: 'check:file-length', args: [] }),
   },
   {
+    // Whole-tree on purpose, and cheap: it greps the .svelte set and validates
+    // its own exception table, which goes stale when a component is cleaned up
+    // rather than when a new one misbehaves.
+    id: 'check:no-component-timers',
+    tiers: ['commit', 'push'],
+    run: () => ({ script: 'check:no-component-timers', args: [] }),
+  },
+  {
+    // Absolute rule with an empty exception table, so it costs a grep.
+    id: 'check:no-legacy-store',
+    tiers: ['commit', 'push'],
+    run: () => ({ script: 'check:no-legacy-store', args: [] }),
+  },
+  {
     id: 'lint:go:apps',
     tiers: ['push'],
     run: (files) => (any(files, isApps) ? { script: 'lint:go:apps', args: [] } : null),

@@ -1,6 +1,8 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { launchers } from '$lib/stores/launchers';
+	import { select } from '$lib/store';
+
+	const launchers = select((s) => s.launchers.items);
 	import AppIcon from '$lib/components/AppIcon.svelte';
 
 	interface Props {
@@ -10,7 +12,7 @@
 
 	let { itemId, onContextMenu }: Props = $props();
 
-	let launcher = $derived($launchers.find((l) => l.id === itemId));
+	let launcher = $derived(launchers.current.find((l) => l.id === itemId));
 	let displayName = $derived(launcher?.name ?? itemId);
 	let url = $derived(launcher?.url ?? '');
 

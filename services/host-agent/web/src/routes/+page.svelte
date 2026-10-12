@@ -19,21 +19,27 @@
 	import Button from '$lib/components/Button.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { AppStatus, type App } from '$lib/types';
-	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
-	import { launchers } from '$lib/stores/launchers';
-	import { enabledWidgetIds } from '$lib/stores/grid';
-	import { installApp, uninstallApp, renameApp } from '$lib/clients/appFacade';
+	import {
+		appView,
+		enabledWidgetIds,
+		gridApps,
+		homeLoading,
+		homeSummary,
+		installApp,
+		opensProgressInsteadOfLaunching,
+		renameApp,
+		select,
+		uninstallApp
+	} from '$lib/store';
 	import { fetchExternalApps, removeExternalApp, type ExternalApp } from '$lib/clients/settingsClient';
 	import { getAppUrl } from '$lib/utils/appUrl';
 
-	// Clicking an in-flight or unhealthy tile opens the live install view
-	// (investigation is the point); clicking a running tile opens the app.
-	const INSTALL_VIEW_STATUSES = new Set<string>([
-		AppStatus.Error,
-		AppStatus.Installing,
-		AppStatus.Starting,
-		AppStatus.Failed
-	]);
+	const installed = select(gridApps);
+	const summary = select(homeSummary);
+	const loading = select(homeLoading);
+	const readError = select((s) => s.apps.error);
+	const launchers = select((s) => s.launchers.items);
+	const widgets = select(enabledWidgetIds);
 
 	// Context menu state
 	let contextMenuApp = $state<App | null>(null);
@@ -61,37 +67,37 @@
 	let externalRecords = $state<ExternalApp[]>([]);
 	let externalRecordsInFlight: Promise<ExternalApp[]> | null = null;
 
-	let externalMenuLauncher = $derived($launchers.find((l) => l.id === externalMenuId));
+	let externalMenuLauncher = $derived(launchers.current.find((l) => l.id === externalMenuId));
 
-	// Live reference: re-resolve from the store each render so the modal
-	// tracks status/progress updates for the app the user clicked.
-	let installModalLiveApp = $derived.by(() => {
-		const id = installModalApp?.catalog_id;
-		if (!id) return null;
-		return $apps.find((a) => a.catalog_id === id) ?? installModalApp;
-	});
+	// Live reference: the modal reads the app through the store rather than
+	// holding the object the user clicked, so status and progress keep updating.
+	const installModalView = select((s) =>
+		installModalApp ? appView(s, installModalApp.catalog_id) : null
+	);
+	let installModalLiveApp = $derived(installModalView.current?.app ?? null);
 
 	let mounted = $state(false);
 
 	/** One-line summary of what is on the grid, shown under the title. */
 	let subtitle = $derived.by(() => {
-		if (!mounted || $loading) return 'Loading…';
-		if ($error) return 'Could not reach the host agent';
-		const appCount = $apps.length;
-		const launcherCount = $launchers.length;
-		const widgetCount = $enabledWidgetIds.length;
+		if (!mounted || loading.current) return 'Loading…';
+		if (readError.current) return 'Could not reach the host agent';
+		const counts = summary.current;
 		const noun = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
-		return [noun(appCount, 'app'), noun(launcherCount, 'launcher'), noun(widgetCount, 'widget')].join(' · ');
+		return [noun(counts.apps, 'app'), noun(counts.launchers, 'launcher'), noun(counts.widgets, 'widget')].join(
+			' · '
+		);
 	});
 
 	onMount(() => {
 		mounted = true;
 	});
 
+	// Clicking an in-flight or unhealthy tile opens the live install view
+	// (investigation is the point); clicking a running tile opens the app.
 	function handleAppClick(app: App) {
 		if (!browser) return;
-		if (INSTALL_VIEW_STATUSES.has(app.status)) {
-			// Keep a live reference so the modal tracks status/progress updates.
+		if (opensProgressInsteadOfLaunching(app)) {
 			installModalApp = app;
 			return;
 		}
@@ -101,11 +107,8 @@
 	}
 
 	async function handleRetryInstall(appName: string) {
-		try {
-			await installApp(appName);
-		} catch (err) {
-			console.error('Retry install failed:', err);
-		}
+		const result = await installApp(appName);
+		if (!result.ok) console.error('Retry install failed:', result.error);
 	}
 
 	function handleContextMenu(e: MouseEvent, app: App) {
@@ -195,21 +198,16 @@
 
 	// Modal actions
 	async function doUninstall(appName: string) {
-		try {
-			await uninstallApp(appName);
-		} catch (err) {
-			console.error('Uninstall failed:', err);
-		}
+		const result = await uninstallApp(appName);
+		if (!result.ok) console.error('Uninstall failed:', result.error);
 	}
 
 	async function doRename(appName: string, newDisplayName: string) {
 		const result = await renameApp(appName, newDisplayName);
-		if (!result.success) {
-			console.error('Rename failed:', result.error);
-		}
+		if (!result.ok) console.error('Rename failed:', result.error);
 	}
 
-	let isEmpty = $derived($apps.length === 0 && $launchers.length === 0 && $enabledWidgetIds.length === 0);
+	let isEmpty = $derived(summary.current.empty);
 </script>
 
 <svelte:head>
@@ -237,10 +235,10 @@
 		</div>
 	</header>
 
-	{#if !mounted || $loading}
+	{#if !mounted || loading.current}
 		<LoadingGrid />
-	{:else if $error}
-		<ErrorState message={$error} />
+	{:else if readError.current}
+		<ErrorState message={readError.current} />
 	{:else if isEmpty}
 		<EmptyState />
 	{:else}

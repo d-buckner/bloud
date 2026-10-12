@@ -2,25 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 	import { page } from '$app/state';
 	import Icon from './Icon.svelte';
-	import { isAdmin } from '$lib/stores/user';
-	import { visibleApps } from '$lib/stores/apps';
+	import { gridApps, isAdmin, select } from '$lib/store';
 	import { AppStatus } from '$lib/types';
 	import { resolve } from '$app/paths';
 	import type { RouteId } from '$app/types';
 
-	interface User {
-		id: number;
-		username: string;
-	}
-
 	interface Props {
 		collapsed?: boolean;
-		user?: User | null;
 	}
 
-	let { collapsed = $bindable(false), user = null }: Props = $props();
+	let { collapsed = $bindable(false) }: Props = $props();
 
 	let currentPath = $derived(page.url.pathname);
+	const user = select((s) => s.session.user);
+	const admin = select(isAdmin);
+	const installed = select(gridApps);
 
 	interface NavItem {
 		href: RouteId;
@@ -36,13 +32,11 @@
 		{ href: '/developer', label: 'Developer', icon: 'terminal', adminOnly: true }
 	];
 
-	let navItems = $derived(
-		$isAdmin ? allNavItems : allNavItems.filter((item) => !item.adminOnly)
-	);
+	let navItems = $derived(admin.current ? allNavItems : allNavItems.filter((item) => !item.adminOnly));
 
 	// Apps that need a look: install gave up (failed) or degraded (error).
 	let attentionApps = $derived(
-		$visibleApps.filter((a) => a.status === AppStatus.Failed || a.status === AppStatus.Error)
+		installed.current.filter((a) => a.status === AppStatus.Failed || a.status === AppStatus.Error)
 	);
 </script>
 
@@ -94,11 +88,11 @@
 	</ul>
 
 	<div class="sidebar-footer">
-		{#if user}
+		{#if user.current}
 			<div class="user-section">
-				<span class="username" title={user.username}>
+				<span class="username" title={user.current.username}>
 					<Icon name="user" size={16} />
-					<span class="username-text">{user.username}</span>
+					<span class="username-text">{user.current.username}</span>
 				</span>
 				<form action="/auth/logout" method="POST" class="logout-form" data-sveltekit-reload>
 					<button

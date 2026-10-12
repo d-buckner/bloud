@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, it, expect } from 'vitest';
 import { deriveTimeline } from '../installTimeline';
-import type { AppProgress } from '$lib/stores/appProgress';
+import type { AppProgress } from '$lib/store';
 
 const NOW = 1_700_000_000_000;
 
