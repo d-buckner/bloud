@@ -36,6 +36,24 @@ sso:
 provides:
   appApi:
     secrets: [password]
+    # The contract names its credential `password` because that is the field the
+    # consumer's binding carries, and for AFFiNE that is literally true. Home
+    # Assistant's is a token minted on a profile page, so the offer renames the
+    # box: a field labeled "Password" invites the operator to type the one string
+    # that will be refused on every call.
+    secretLabels:
+      password: Long-lived access token
+    secretHelp:
+      password: >-
+        Mint it in Home Assistant itself: open your profile (bottom of the
+        sidebar), then Long-lived access tokens, then Create. It is not your
+        account password.
+    # The username names the local break-glass account, and it stays a static
+    # value rather than an operator input: a remote token belongs to whichever
+    # account minted it, and nothing in the catalog reads this field for Home
+    # Assistant, so asking for an account name would be asking for decoration.
+    # The contract requires the key, so it is declared; the form leaves it out,
+    # because a value the catalog can answer is not a question.
     values:
       username: bloud-bootstrap-admin
 

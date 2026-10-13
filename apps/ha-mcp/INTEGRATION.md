@@ -37,22 +37,34 @@ Home Assistant was restarted or upgraded.
 
 ## The credential: a token Home Assistant minted
 
-`ha-mcp` needs `HOMEASSISTANT_URL` and `HOMEASSISTANT_TOKEN`. The token comes
-from Home Assistant's own `appApi` offer: a long-lived access token Bloud minted
-for the owner account over Home Assistant's WebSocket API. Not the owner
-password, and not a Bloud invention: it is a credential Home Assistant issued and
-Home Assistant validates, and it is revocable inside Home Assistant. The mint,
-the reuse rule, and the revocation path are documented in
-[`../homeassistant/INTEGRATION.md`](../homeassistant/INTEGRATION.md#companion-token-appapi).
+`ha-mcp` needs `HOMEASSISTANT_URL` and `HOMEASSISTANT_TOKEN`. Both come from
+Home Assistant's own `appApi` offer, and the token is a long-lived access token.
+Not the owner password, and not a Bloud invention: it is a credential Home
+Assistant issued and Home Assistant validates, and it is revocable inside Home
+Assistant. Who mints it is the only part that depends on whose install it is. If
+Bloud runs Home Assistant, the configurator mints it for the owner account over
+Home Assistant's WebSocket API; if the operator registered a Home Assistant
+Bloud does not run, they minted it on that instance's own profile page and typed
+it into the registration form. The mint, the reuse rule, and the revocation path
+are documented in
+[`../homeassistant/INTEGRATION.md`](../homeassistant/INTEGRATION.md#companion-token-appapi),
+and the remote case in
+[When the install is not Bloud's](../homeassistant/INTEGRATION.md#when-the-install-is-not-blouds).
 
 The binding arrives through the `appApi` contract with `requires: [password]`.
 The contract's secret is named `password` and carries a token here; that is the
 one place the two vocabularies meet, and the contract's wording now says what it
 means: a credential the provider's own sign-in validates.
 
-The wrapper dials the **container** address (`http://apps-homeassistant:8123`),
-not the browser-facing one: this is a server-side call, and the container address
-is what `apps-net` DNS answers.
+The wrapper dials `binding.BaseURL` and asks nothing else about where the
+provider lives. For a Home Assistant Bloud booted that field is the **container**
+address (`http://apps-homeassistant:8123`): this is a server-side call, and the
+container address is what `apps-net` DNS answers. For a registered remote
+instance the resolver puts the operator's endpoint in that same field, so the env
+file carries that origin instead. The wrapper needs no change between the two and
+has no branch on provider kind: the gate, the bearer, and the readiness probe are
+all about the harness on this side, not about which Home Assistant is on the
+other.
 
 ## The gate, and why the bearer has to be real
 
@@ -136,7 +148,9 @@ Three values cannot be rendered into the container spec because they are resolve
 bindings or generated secrets, so the configurator writes
 `{{appDataDir}}/config/env` and the container declares it as `envFile`:
 
-- `HOMEASSISTANT_URL`: the container address from the `appApi` binding
+- `HOMEASSISTANT_URL`: the address from the `appApi` binding, which is the
+  container address for a Home Assistant Bloud runs and the registered endpoint
+  for a remote one
 - `HOMEASSISTANT_TOKEN`: the long-lived token from that binding's secret
 - `MCP_SECRET_PATH`: the internal high-entropy path this app mints
 
@@ -184,9 +198,10 @@ runs, both containers exist.
 
 ## Trade-offs
 
-- **The token is an owner token.** Whatever the agent does through these tools, it
-  does as the Home Assistant administrator. A dedicated service account is the
-  right follow-up.
+- **The token is an owner token on a Bloud-booted install.** Whatever the agent
+  does through these tools, it does as the Home Assistant administrator. A remote
+  install is the operator's choice of account, so the same caveat is theirs. A
+  dedicated service account is the right follow-up.
 - **`READ_ONLY_MODE=0`.** Write-capable tools are on, because an agent that can
   only describe an automation is not worth the install. Flipping it is one metadata
   line, and the server then refuses writes with a `READ_ONLY_MODE` error rather
@@ -278,6 +293,13 @@ held the app up. Reinstalling brought it back with the new token. `ERROR` is
 terminal by engine design (`levels.go`: "never retry without an explicit status
 reset"), so this is the honest shape: a consumer whose provider was taken away
 says so until the operator acts, rather than pretending to serve.
+
+**The remote provider path is unit-tested, not live-verified.** Registering
+someone else's Home Assistant and reading the env file that lands is pinned by
+`services/host-agent/internal/engine/orchestrator/external_app_homeassistant_seam_test.go`:
+the real resolver plus the real `ha-mcp` configurator against one shared secrets
+store, asserting the file carries the registered endpoint and the operator's
+token. No test reaches a Home Assistant over a network.
 
 ## Icon
 

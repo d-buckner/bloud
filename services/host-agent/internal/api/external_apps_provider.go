@@ -25,8 +25,10 @@ type externalProviderField struct {
 	Default string `json:"default,omitempty"`
 	// Help names where the value comes from, because the answer differs by
 	// whether the provider was booted by Bloud or is someone's install down
-	// the hall: a runtime value a configurator would have minted is now
-	// something the operator reads out of the remote app's own UI.
+	// the hall: a runtime value a configurator would have minted is now something
+	// the operator reads out of the remote app's own UI, and a credential is
+	// whatever that app's own UI issues, which the contract's secret name never
+	// says.
 	Help string `json:"help,omitempty"`
 }
 
@@ -143,11 +145,22 @@ func providerContractFields(app *catalog.App) []externalProviderContract {
 			})
 		}
 		for _, secret := range spec.Secrets {
+			// The contract's secret name is the consumer's wire field, not the
+			// operator's vocabulary, so the offer says what the person pasting the
+			// value calls it. Without a label the key is all there is to go on.
+			label := offer.SecretLabels[secret]
+			if label == "" {
+				label = humanizeFieldKey(secret)
+			}
 			fields = append(fields, externalProviderField{
 				Key:      secret,
-				Label:    humanizeFieldKey(secret),
+				Label:    label,
 				Kind:     "secret",
 				Required: true,
+				// The provider knows where its own credential is minted and the
+				// form's label does not, so the offer says it. The loader guarantees a
+				// key here names a secret this offer publishes and a non-empty sentence.
+				Help: offer.SecretHelp[secret],
 			})
 		}
 		out = append(out, externalProviderContract{Name: name, Fields: fields})

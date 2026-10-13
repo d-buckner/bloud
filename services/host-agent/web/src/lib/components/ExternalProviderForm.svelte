@@ -9,6 +9,7 @@
 	import {
 		buildProviderPayload,
 		deriveProviderInputs,
+		exampleEndpoint,
 		missingProviderInputs,
 		type ProviderFieldValues
 	} from '$lib/utils/providerInputs';
@@ -52,6 +53,11 @@
 	// app that declares the same secret name. For a remote Sonarr that is the
 	// endpoint and one API key, and nothing else.
 	let inputs = $derived(deriveProviderInputs(current?.contracts ?? []));
+
+	// The example names whichever app is selected, and changes with it. A fixed
+	// example is a different app's host sitting under the field the operator is
+	// filling for the app they chose.
+	let endpointPlaceholder = $derived(exampleEndpoint(selected));
 
 	$effect(() => {
 		void load();
@@ -128,7 +134,7 @@
 		<input
 			id="prov-url"
 			type="text"
-			placeholder="https://radarr.example.com"
+			placeholder={endpointPlaceholder}
 			bind:value={url}
 			disabled={saving || !selected}
 			autocomplete="off"

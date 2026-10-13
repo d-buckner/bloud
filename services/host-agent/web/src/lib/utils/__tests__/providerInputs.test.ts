@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildProviderPayload,
 	deriveProviderInputs,
+	exampleEndpoint,
 	missingProviderInputs,
 	readProviderInput,
 	type ProviderInput
@@ -182,5 +183,24 @@ describe('missingProviderInputs', () => {
 
 	it('reports every missing input, in form order', () => {
 		expect(missingProviderInputs(deriveProviderInputs(affine), {})).toEqual(['Username', 'Password']);
+	});
+});
+
+describe('exampleEndpoint', () => {
+	// The placeholder is the only statement about the field's shape while it is
+	// empty, so it has to name the app being registered. Both call sites used to
+	// hardcode one app's host, which meant that registering anything else showed a
+	// different product's address in the box being filled for yours.
+	it('names the app being registered', () => {
+		expect(exampleEndpoint('homeassistant')).toBe('https://homeassistant.example.com');
+		expect(exampleEndpoint('paperless-ngx')).toBe('https://paperless-ngx.example.com');
+	});
+
+	// A launcher, or a bare contract provider like an AI upstream, has no catalog
+	// app to name, and inventing one would exemplify something the field does not
+	// hold.
+	it('falls back to the bare domain when there is no app to name', () => {
+		expect(exampleEndpoint()).toBe('https://example.com');
+		expect(exampleEndpoint('')).toBe('https://example.com');
 	});
 });
