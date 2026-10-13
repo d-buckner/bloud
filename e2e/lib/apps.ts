@@ -1,5 +1,51 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { escapeRegExp } from './origin';
+
+/**
+ * A display name is not a unique key, so a label never goes into `hasText`
+ * bare. A string `hasText` matches a substring, and "Home Assistant" is a
+ * substring of "Home Assistant MCP": the catalog sorts by catalog ID, which
+ * puts `ha-mcp` before `homeassistant`, so `.first()` asserted against the
+ * wrapper's card and reported an installed app as not installed. Anchoring
+ * the pattern makes the label name exactly one app.
+ *
+ * The match is scoped to the element that carries the display name rather
+ * than the whole card or tile, for the same reason in the other direction: a
+ * card's text includes its description, and a description may name another
+ * app (Prowlarr's lists the PVRs it syncs to).
+ */
+function exactLabel(label: string): RegExp {
+  // The `\s` padding is load-bearing. A RegExp in `hasText` is tested against
+  // the element's raw textContent, which is only normalized for *string*
+  // matching, and the markup indents the name inside its element: the h3 in
+  // CatalogAppCard renders as "\n\t\t\t\tHome Assistant\n\t\t\t". Anchors
+  // alone match nothing.
+  return new RegExp(`^\\s*${escapeRegExp(label.trim())}\\s*$`);
+}
+
+/** The one element of `kind` whose display name is exactly `label`. */
+function byLabel(
+  container: Page,
+  kind: string,
+  titleSelector: string,
+  label: string,
+): Locator {
+  return container
+    .locator(`.${kind}`)
+    .filter({ has: container.locator(titleSelector, { hasText: exactLabel(label) }) })
+    .first();
+}
+
+/** The catalog card for the app whose display name is exactly `label`. */
+export function catalogCard(page: Page, label: string): Locator {
+  return byLabel(page, 'app-card', '.app-title', label);
+}
+
+/** The home-screen tile for the app whose display name is exactly `label`. */
+export function homeTile(page: Page, label: string): Locator {
+  return byLabel(page, 'app-slot', '.app-label', label);
+}
 
 /**
  * Click an installed app's tile on the Bloud home screen and wait for the
@@ -9,7 +55,7 @@ import { expect, type Page } from '@playwright/test';
  */
 export async function openAppFromHome(page: Page, label: string): Promise<Page> {
   await page.goto('/');
-  const tile = page.locator('.app-slot', { hasText: label }).first();
+  const tile = homeTile(page, label);
   await expect(tile).toBeVisible({ timeout: 15_000 });
 
   // The tile opens the app through its own click handler: it is a div with
@@ -41,7 +87,7 @@ export async function openAppFromHome(page: Page, label: string): Promise<Page> 
  * install phase label or spinner (a converged tile carries neither).
  */
 export async function expectRunningTile(page: Page, label: string): Promise<void> {
-  const tile = page.locator('.app-slot', { hasText: label }).first();
+  const tile = homeTile(page, label);
   await expect(tile).toBeVisible({ timeout: 15_000 });
   await expect(tile.locator('.install-spinner')).toHaveCount(0);
   await expect(tile.locator('.phase-label')).toHaveCount(0);
@@ -49,18 +95,10 @@ export async function expectRunningTile(page: Page, label: string): Promise<void
 
 /**
  * Assert the catalog lists the app and marks it installed.
- *
- * The match is scoped to the card's title, not to the card's whole text: a
- * string `hasText` match searches the description too, and a description may
- * name another app (Prowlarr's mentions the PVRs it syncs to), which would
- * resolve to that app's card instead.
  */
 export async function expectInstalledInCatalog(page: Page, label: string): Promise<void> {
   await page.goto('/catalog');
-  const card = page
-    .locator('.app-card')
-    .filter({ has: page.locator('.app-title', { hasText: label }) })
-    .first();
+  const card = catalogCard(page, label);
   await expect(card).toBeVisible({ timeout: 15_000 });
   await expect(card).toHaveClass(/installed/);
 }

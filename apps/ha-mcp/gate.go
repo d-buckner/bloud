@@ -1,0 +1,237 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package hamcp
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+)
+
+// The gate is the app's front door, in the literal sense: it is the container
+// that publishes the app's port, so Traefik's generated service points here and
+// nothing can reach the MCP server around it.
+//
+// It exists because ha-mcp's standard mode has no notion of a bearer. Its own
+// SECURITY.md is explicit that the URL-path secret is the boundary, which is a
+// reasonable posture for a tool a person runs on their own laptop. Bloud's `mcp`
+// contract promises consumers a bearer, and Hermes sends one on every call, so
+// the promise has to be kept somewhere. A proxy that compares one header is the
+// smallest thing that keeps it.
+const nginxFileName = "nginx.conf"
+
+// GateConfigurator owns the apps-ha-mcp-gate node: write the nginx config, then
+// prove the endpoint a consumer actually calls.
+type GateConfigurator struct {
+	port    int
+	secrets configurator.AppSecretsProvider
+	logger  *slog.Logger
+	api     *mcpAPI
+}
+
+// NewGateConfigurator builds the gate node's configurator.
+func NewGateConfigurator(port int, deps configurator.Deps) *GateConfigurator {
+	if port == 0 {
+		port = defaultPort
+	}
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	c := &GateConfigurator{
+		port:    port,
+		secrets: deps.Secrets,
+		logger:  logger.With("app", appName, "node", gateNodeName),
+	}
+	c.api = newAPI(deps.HTTP, func() string {
+		return fmt.Sprintf("http://localhost:%d", c.port)
+	})
+	return c
+}
+
+// Name returns the graph node this configurator owns.
+func (c *GateConfigurator) Name() string { return gateNodeName }
+
+// PreStart writes the nginx config the gate container mounts. It is rewritten
+// whenever the bearer or the internal endpoint path changes, which is also the
+// only time the gate needs a recreate: nginx reads its config at start.
+func (c *GateConfigurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
+	bearer, endpointPath, err := ensureCredentials(c.secrets, c.logger)
+	if err != nil {
+		return configurator.NoRestart(), err
+	}
+	content, err := renderNginxConfig(bearer, endpointPath)
+	if err != nil {
+		return configurator.NoRestart(), err
+	}
+
+	confPath := filepath.Join(state.DataPath, configDir, nginxFileName)
+	if err := os.MkdirAll(filepath.Dir(confPath), 0o755); err != nil {
+		return configurator.NoRestart(), fmt.Errorf("creating the %s config directory: %w", appName, err)
+	}
+	changed, err := managedfile.Write(confPath, []byte(content), managedfile.ModeSharedConfig)
+	if err != nil {
+		return configurator.NoRestart(), fmt.Errorf("writing the %s gate config: %w", appName, err)
+	}
+	if !changed {
+		return configurator.NoRestart(), nil
+	}
+	c.logger.Info("wrote ha-mcp gate config", "path", confPath,
+		"bearer", bearer != "", "endpoint_path", endpointPath != "")
+	return configurator.MustRestart("ha-mcp gate config rewritten"), nil
+}
+
+// PostStart proves the endpoint a consumer calls: a real MCP `initialize` at the
+// published path, through the gate, carrying the published bearer.
+//
+// Every weaker probe lies in a different direction. The gate's own health route
+// says nginx is up and says nothing about the server behind it. The server's
+// health route is unreachable from here (it publishes no port) and says nothing
+// about the gate. Only the composed path can answer the question a consumer is
+// about to ask, and presenting the bearer is part of what the probe proves: an
+// unauthenticated probe would report a healthy node that every real consumer is
+// about to be refused by.
+//
+// Because PostStart also runs on every resync pass, a path that breaks later,
+// including one that breaks because a container moved, is surfaced rather than
+// left silently up.
+func (c *GateConfigurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
+	if err := c.api.waitServing(ctx, currentBearer(c.secrets)); err != nil {
+		return fmt.Errorf("waiting for the ha-mcp endpoint: %w", err)
+	}
+	c.logger.Info("ha-mcp is serving MCP through the gate")
+	return nil
+}
+
+// --- nginx config rendering ---
+
+// nginxTemplate is the whole nginx configuration, not a snippet: the container
+// runs nginx with -c on the rendered file, so there is no stock config for it to
+// be included by.
+//
+// The shape is default-deny. One exact-match location serves the MCP endpoint,
+// one answers the container health check, and everything else is 404: there is no
+// proxy to the server on any other path, so a path this app did not declare does
+// not exist from outside.
+//
+// @RESOLVER@ is substituted by the container's own entrypoint, which is the only
+// place that can know it. See the comment in metadata.yaml.
+const nginxTemplate = `# Generated by Bloud; rewritten on every reconciliation.
+worker_processes 1;
+error_log /dev/stderr warn;
+pid /tmp/nginx.pid;
+
+events { worker_connections 256; }
+
+http {
+    # On, not off. This container's whole job is deciding whether a credential is
+    # the right one, and a gate that silently refuses is undebuggable: the access
+    # log is where "someone called without the bearer" and "the upstream moved" are
+    # visible without exec'ing into a container.
+    access_log /dev/stdout;
+
+    server {
+        listen %[1]d;
+        server_name _;
+
+        # The container health check. Deliberately not proxied: a server
+        # mid-restart is not a dead gate.
+        location = /healthz { return 200 "ok"; }
+%[2]s
+        # Default deny. Anything this file did not name is not there.
+        location / { return 404; }
+    }
+}
+`
+
+// mcpLocation is the one location that reaches the server.
+//
+// The `if` is the documented-safe kind: a comparison followed by `return`, which
+// nginx evaluates in the default server context without the nesting problems that
+// give `if` its reputation. The comparison is exact and includes the "Bearer "
+// prefix, so a request presenting the bare token is refused rather than
+// half-parsed.
+//
+// proxy_buffering stays off because a streamable-HTTP server answers with a
+// server-sent-events stream that it holds open; buffered would hold the response
+// until the upstream finished, which is never.
+const mcpLocation = `
+        location = %[1]s {
+            if ($http_authorization != "Bearer %[2]s") { return 401; }
+
+            # A variable upstream plus a resolver is what makes nginx re-resolve
+            # instead of pinning the address it read at config load. Without it a
+            # recreate of the server container leaves this gate answering 502
+            # until it is restarted too.
+            resolver @RESOLVER@ valid=10s ipv6=off;
+            set $ha_mcp_upstream %[3]s;
+            rewrite ^ %[4]s break;
+            proxy_pass http://$ha_mcp_upstream:%[5]d;
+
+            proxy_http_version 1.1;
+            proxy_set_header Host %[3]s;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+            client_max_body_size 20m;
+        }
+`
+
+// mcpLocationLocked is what the MCP path answers before the credentials exist:
+// refusal, and no route to the server at all. Rendering the proxy with an empty
+// bearer would be the one configuration worse than this, because it would match
+// nothing and serve everything.
+const mcpLocationLocked = `
+        location = /mcp { return 401; }
+`
+
+// renderNginxConfig renders the gate's configuration for one pair of secrets.
+//
+// The published path is fixed (/mcp) and carries no secrecy: the bearer is the
+// credential. The internal path is the generated one, so the two never have to be
+// the same value, and the value the image treats as its credential is never
+// published to a consumer.
+func renderNginxConfig(bearer, endpointPath string) (string, error) {
+	location := mcpLocationLocked
+	if bearer != "" && endpointPath != "" {
+		if !nginxSafeLiteral(bearer) {
+			return "", fmt.Errorf("the %s bearer contains a character nginx cannot compare", httpTokenKey)
+		}
+		if !nginxSafeLiteral(endpointPath) {
+			return "", fmt.Errorf("the %s value contains a character nginx cannot route on", endpointPathKey)
+		}
+		location = fmt.Sprintf(mcpLocation, mcpPublicPath, bearer, nodeName, endpointPath, defaultPort)
+	}
+	return fmt.Sprintf(nginxTemplate, defaultPort, location), nil
+}
+
+// mcpPublicPath is the path this app publishes through the `mcp` contract. It has
+// to match provides.mcp.values.path in metadata.yaml, and it is the path a
+// consumer calls, so it is a constant rather than a value read from the binding:
+// the gate and the contract must not be able to disagree.
+const mcpPublicPath = "/mcp"
+
+// nginxSafeLiteral reports whether a generated secret can be dropped into an
+// nginx config without quoting concerns: URL-safe base64 (what randomToken
+// returns) and nothing else. A quote, a backslash, a space, or a newline would
+// change the meaning of the file rather than the value being compared, so the
+// render fails instead.
+func nginxSafeLiteral(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range strings.TrimPrefix(s, "/") {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}

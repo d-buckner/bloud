@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
+import { catalogCard, homeTile } from '../lib/apps';
 import { getAppStatus, uninstallApp, waitForApp } from '../lib/api';
 
 // The user-visible live install state contract
@@ -31,7 +32,7 @@ test.describe('live install state (install streaming)', () => {
   test('catalog card shows a size estimate', async ({ authenticatedPage }) => {
     const page = authenticatedPage;
     await page.goto('/catalog');
-    const card = page.locator('.app-card', { hasText: 'Jellyfin' }).first();
+    const card = catalogCard(page, 'Jellyfin');
     await expect(card).toBeVisible({ timeout: 15_000 });
     await expect(card.locator('.app-size')).toHaveText(/~1\.[0-9] GB/);
   });
@@ -42,13 +43,13 @@ test.describe('live install state (install streaming)', () => {
     const page = authenticatedPage;
 
     await page.goto('/catalog');
-    await page.locator('.app-card', { hasText: 'Jellyfin' }).first().click();
+    await catalogCard(page, 'Jellyfin').click();
     await page.getByRole('button', { name: 'Get' }).click();
 
     // The tile must appear on the home grid immediately: the install 202
     // carries the app record, so no polling round-trip is needed.
     await page.goto('/');
-    const tile = page.locator('.app-slot', { hasText: 'Jellyfin' }).first();
+    const tile = homeTile(page, 'Jellyfin');
     await expect(tile).toBeVisible({ timeout: 5_000 });
 
     // The icon spinner is visible while installing (the tile itself shows

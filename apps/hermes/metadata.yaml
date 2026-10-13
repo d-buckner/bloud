@@ -66,6 +66,11 @@ integrations:
       # than hardwired: install the MCP app and the agent gains the namespace,
       # uninstall it and the entry is removed on the next pass.
       - app: dav-mcp
+      # The house itself. Home Assistant holds the entities, devices, and
+      # automations, and `apps/ha-mcp` exposes them as a tool namespace over a
+      # long-lived token Bloud minted for the owner account. Same shape as the
+      # other wrappers: Hermes changes nothing when the app appears.
+      - app: ha-mcp
 
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider

@@ -37,6 +37,8 @@ func TestNodeNamesStable(t *testing.T) {
 		"apps-arr-mcp",
 		"apps-calino",
 		"apps-dav-mcp",
+		"apps-ha-mcp",
+		"apps-ha-mcp-gate",
 		"apps-hermes",
 		"apps-hermes-webui",
 		"apps-homeassistant",

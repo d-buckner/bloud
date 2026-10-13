@@ -470,9 +470,9 @@ func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 // A fully-onboarded HA *deregisters* GET /api/onboarding: the endpoint 404s
 // forever. The old code read that as "still booting", burned the whole
 // postStart timeout into an ERROR, and since PostStart re-runs on every
-// reconcile, the app could never reach 'running'. With a non-system owner in
-// the auth store, the permanent 404 now means "already onboarded" (no token
-// needed) and the probe never blocks.
+// reconcile, the app could never reach 'running'. With HA's own onboarding
+// store reporting every step closed, the permanent 404 now means "already
+// onboarded" (no token needed) and the probe never blocks.
 func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 	srv := newAPIServer(t, true)
 	srv.mu.Lock()
@@ -480,7 +480,7 @@ func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 	srv.mu.Unlock()
 
 	data := t.TempDir()
-	writeOwnerFile(t, filepath.Join(data, "config"))
+	writeOnboardedFile(t, filepath.Join(data, "config"))
 
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
 	c.baseURLOverride = srv.srv.URL
@@ -496,13 +496,65 @@ func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 	assert.Empty(t, srv.postBodies, "must not re-run onboarding")
 }
 
-// writeOwnerFile drops a minimal .storage/auth document holding a
-// non-system-generated owner user, exactly what ownerOnDisk reads.
-func writeOwnerFile(t *testing.T, cfgDir string) {
+// The onboarding store, not the auth store, is what makes a 404 permanent. An
+// instance can be fully onboarded and still hold no owner at all: HA sets
+// is_owner only for the first non-system user it creates, so a store whose
+// users are all is_owner:false is a real shape, not a corrupt one. Inferring
+// "onboarded" from that flag made this instance look mid-boot forever, and each
+// resync paid the full AppPhaseBudget for an endpoint that was never returning.
+func TestPostStartSkipsWhenOnboardedWithNoOwnerUser(t *testing.T) {
+	srv := newAPIServer(t, true)
+	srv.mu.Lock()
+	srv.deregistered = true
+	srv.mu.Unlock()
+
+	data := t.TempDir()
+	cfg := filepath.Join(data, "config")
+	writeOnboardedFile(t, cfg)
+	require.NoError(t, os.WriteFile(filepath.Join(cfg, ".storage", "auth"),
+		[]byte(`{"version":1,"key":"auth","data":{"users":[`+
+			`{"id":"1","is_owner":false,"system_generated":true},`+
+			`{"id":"2","is_owner":false,"system_generated":false}]}}`), 0o600))
+
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
+	c.baseURLOverride = srv.srv.URL
+	c.pollInterval = 10 * time.Millisecond
+	ctx, cancel := testCtx(t, 2*time.Second)
+	defer cancel()
+
+	require.NoError(t, c.PostStart(ctx, &configurator.AppState{
+		DataPath: data, SSOEnabled: true, OIDC: testOIDC(),
+	}))
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	assert.Empty(t, srv.postBodies, "must not re-run onboarding")
+}
+
+// A 404 with the steps still open is the boot race, not a finished onboarding:
+// the probe must keep waiting rather than declare the instance onboarded.
+func TestOnboardingStepsClosedIsFalseWhileAStepIsOpen(t *testing.T) {
+	cfg := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(cfg, ".storage"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cfg, ".storage", "onboarding"),
+		[]byte(`{"version":4,"data":{"done":["user","core_config"]}}`), 0o600))
+	assert.False(t, onboardingStepsClosed(cfg))
+
+	require.NoError(t, os.WriteFile(filepath.Join(cfg, ".storage", "onboarding"),
+		[]byte(`{"version":4,"data":{"done":["user","core_config","analytics","integration"]}}`), 0o600))
+	assert.True(t, onboardingStepsClosed(cfg))
+
+	// No store at all is a booting instance, never an onboarded one.
+	assert.False(t, onboardingStepsClosed(t.TempDir()))
+}
+
+// writeOnboardedFile drops the .storage/onboarding document HA writes once
+// every first-run step is closed, exactly what onboardingStepsClosed reads.
+func writeOnboardedFile(t *testing.T, cfgDir string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Join(cfgDir, ".storage"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, ".storage", "auth"),
-		[]byte(`{"version":1,"key":"auth","data":{"users":[{"id":"1","is_owner":true,"system_generated":false}]}}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, ".storage", "onboarding"),
+		[]byte(`{"version":4,"minor_version":1,"key":"onboarding","data":{"done":`+
+			`["user","core_config","analytics","integration"]}}`), 0o600))
 }
 
 func TestPostStartFailsWhenProviderNeverLives(t *testing.T) {

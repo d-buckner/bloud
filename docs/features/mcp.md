@@ -1,12 +1,14 @@
 # Bloud MCP
 
-**Status:** Shipped. Three providers today: `apps/affine-mcp`, `apps/dav-mcp`,
-and `apps/arr-mcp`, all consumed by Hermes. AFFiNE's own MCP server is
-deliberately not exposed.
-**Last updated:** 2026-10-14
+**Status:** Shipped. Four providers today: `apps/affine-mcp`, `apps/dav-mcp`,
+`apps/arr-mcp`, and `apps/ha-mcp`, all consumed by Hermes. AFFiNE's own MCP server
+is deliberately not exposed.
+**Last updated:** 2026-10-12
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md),
 [plans/arr-mcp-provider.md](../plans/arr-mcp-provider.md) for a provider that
-fills several contracts at once, and
+fills several contracts at once,
+[plans/home-assistant-mcp.md](../plans/home-assistant-mcp.md) for a provider whose
+target has no bearer of its own, and
 [plans/native-mcp-endpoint.md](../plans/native-mcp-endpoint.md) for the tools a
 wrapper cannot write
 
@@ -21,7 +23,8 @@ each provider as a tool namespace.
 ```
 affine-mcp  (provides mcp)  <──┐
 dav-mcp  (provides mcp)    <──┼──  hermes (integrates mcp, optional + multi)
-arr-mcp  (provides mcp)    <──┘
+arr-mcp  (provides mcp)    <──┤
+ha-mcp  (provides mcp)     <──┘
 ```
 
 Dependencies are a set, not a menu: the resolver binds every compatible
@@ -81,6 +84,36 @@ Its inbound bearer is the ordinary kind, an opaque string Bloud generates and
 the listener checks by hash. The config sink is the image's own `config.yaml`,
 written by the configurator, rather than an env file, because that is the shape
 arr-mcp reads.
+
+### What the fourth provider changed about the shape
+
+`apps/ha-mcp` wraps Home Assistant, and neither of its boundaries looked like the
+other three. Home Assistant's own MCP integration is the Assist surface: query
+state, call a service. Authoring an automation, a helper, or a dashboard is what
+makes an agent worth putting in a house, and that is what `ha-mcp` does.
+
+Two things the earlier providers got for free had to be built:
+
+- **The inbound bearer is enforced by a container the wrapper owns.** Every other
+  provider's image checks the bearer Bloud writes into its config. `ha-mcp`'s
+  standard mode has no such notion: its own source says the security boundary is a
+  high-entropy path, not a credential, and it disables fastmcp's Host/Origin guard
+  on the assumption it sits behind an operator's proxy. The contract still requires
+  `httpToken`, so the app ships a second container, `apps-ha-mcp-gate`, that holds
+  the published port and refuses anything that does not carry the bearer. The
+  server publishes no port at all, so nothing can reach it around the gate.
+- **The target credential is a token the provider minted, not a password.**
+  `appApi` was described as carrying the target's account password, and for AFFiNE
+  and Radicale that is literally true. Home Assistant has a better primitive, a
+  long-lived access token, revocable in its own UI and never needing to be a
+  password; it just has no REST endpoint to mint one, so the configurator does it
+  over Home Assistant's WebSocket API. The contract's wording now says what it
+  means: a credential the provider's own sign-in validates.
+
+The path the wrapper publishes is `/mcp`, a fixed public path, because the bearer
+is the credential and a path a config file can name cannot be a secret. The server
+listens on a separate generated path that only the gate knows, which keeps
+upstream's own posture intact instead of replacing it.
 
 ### What removing the built-in server also removed
 
@@ -251,8 +284,12 @@ it. A consumer that declares the contract without `requires: [password]` gets
 both values and an empty password, the same least-privilege rule every contract
 follows.
 
-The password is the target's real account credential, published by the provider,
-not a Bloud invention:
+The password is the target's real credential, published by the provider, not a
+Bloud invention. For a target whose own auth layer accepts a token, it is that
+token instead: Home Assistant mints a long-lived access token for its owner
+account and publishes that, so the break-glass password never leaves Home
+Assistant's tree and the credential a wrapper holds is revocable inside the
+provider.
 
 ```go
 c.secrets.SetAppSecret("affine", "password", ownerPassword)

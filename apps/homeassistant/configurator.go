@@ -33,6 +33,17 @@ const (
 	// avoids a chicken-and-egg client-registration step.
 	onboardingClientID = "https://home-assistant.io/iOS"
 
+	// loginRedirectURI is the redirect URI Home Assistant accepts for the
+	// built-in client above without fetching anything: indieauth hard-codes the
+	// pair. The login flow verifies the redirect URI of the flow's context, so
+	// a headless login needs a pair that passes without a network read.
+	loginRedirectURI = "homeassistant://auth-callback"
+
+	// credentialAuthHandler is Home Assistant's built-in username/password auth
+	// provider id. The login flow takes the handler as the pair
+	// [type, id], and for the built-in provider both halves are this string.
+	credentialAuthHandler = "homeassistant"
+
 	// componentDomain is the hass-oidc-auth integration domain (manifest.json).
 	componentDomain = "auth_oidc"
 )
@@ -304,6 +315,16 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 		}
 	}
 
+	// The long-lived token a machine consumer (apps/ha-mcp) authenticates to
+	// Home Assistant with. Not fatal on purpose: the token is only useful to a
+	// consumer, so a Home Assistant install with none must not fail its own
+	// install over it. PostStart runs on every reconciliation pass, so a mint
+	// that fails here is retried by the self-healing pass without an operator
+	// having to retry the install.
+	if _, err := c.ensureCompanionToken(ctx); err != nil {
+		c.logger.Warn("Home Assistant companion token is not available yet; a consumer that needs it stays unresolved", "error", err)
+	}
+
 	if state.SSOEnabled {
 		if err := c.waitForOIDCReady(ctx); err != nil {
 			// The OIDC provider registers at HA startup and its /auth/oidc/welcome
@@ -512,7 +533,8 @@ func (c *Configurator) waitForOIDCReady(ctx context.Context) error {
 // the owner's access token, or "" when HA was already fully onboarded (or no
 // owner step is pending).
 func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (string, error) {
-	body, alreadyOnboarded, err := c.api.onboardingStatus(ctx, c.pollInterval, func() bool { return ownerOnDisk(configDir) })
+	body, alreadyOnboarded, err := c.api.onboardingStatus(ctx, c.pollInterval,
+		func() bool { return onboardingStepsClosed(configDir) })
 	if err != nil {
 		return "", err
 	}
@@ -608,32 +630,46 @@ func (c *Configurator) finishFirstRunSteps(ctx context.Context, token string) er
 	return nil
 }
 
-// ownerOnDisk reports whether Home Assistant's auth store (read the same way
-// ensureReverseProxy reads the http store) already holds an owner user. That
-// distinguishes the permanent 404 of /api/onboarding (endpoint deregistered
-// once every step is closed) from the transient 404 of a booting instance.
-func ownerOnDisk(configDir string) bool {
-	raw, err := os.ReadFile(filepath.Join(configDir, ".storage", "auth"))
+// onboardingStepNames is HA's first-run step flow, mirroring
+// homeassistant/components/onboarding/const.py STEPS. HA deregisters
+// /api/onboarding once every one of these is closed, which is what makes a 404
+// from that route permanent rather than a boot race.
+var onboardingStepNames = []string{"user", "core_config", "analytics", "integration"}
+
+// onboardingStepsClosed reports whether Home Assistant's own onboarding store
+// says every first-run step is closed. That is the exact condition HA uses to
+// stop registering /api/onboarding, so reading it answers "is this 404
+// permanent?" from the same source of truth that made it permanent.
+//
+// The check this replaced inferred onboarding from an `is_owner` flag in
+// .storage/auth. HA sets that flag only for the first non-system user it ever
+// creates (auth/__init__.py `_user_should_be_owner`), so a fully onboarded
+// instance can legitimately have no owner at all. The permanent 404 then read
+// as the transient booting one, and every resync burned the whole
+// AppPhaseBudget waiting for an endpoint that was never coming back.
+func onboardingStepsClosed(configDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(configDir, ".storage", "onboarding"))
 	if err != nil {
 		return false
 	}
 	var doc struct {
 		Data struct {
-			Users []struct {
-				IsOwner         bool `json:"is_owner"`
-				SystemGenerated bool `json:"system_generated"`
-			} `json:"users"`
+			Done []string `json:"done"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return false
 	}
-	for _, u := range doc.Data.Users {
-		if u.IsOwner && !u.SystemGenerated {
-			return true
+	done := make(map[string]bool, len(doc.Data.Done))
+	for _, step := range doc.Data.Done {
+		done[step] = true
+	}
+	for _, step := range onboardingStepNames {
+		if !done[step] {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // storedProxyTrusted reports whether the on-disk http entry already carries

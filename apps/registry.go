@@ -26,6 +26,7 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/arr-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/calino"
 	_ "codeberg.org/d-buckner/bloud/apps/dav-mcp"
+	_ "codeberg.org/d-buckner/bloud/apps/ha-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/hermes"
 	_ "codeberg.org/d-buckner/bloud/apps/hermes-webui"
 	_ "codeberg.org/d-buckner/bloud/apps/homeassistant"
@@ -59,6 +60,8 @@ func NodeNames() []string {
 		"apps-arr-mcp",
 		"apps-calino",
 		"apps-dav-mcp",
+		"apps-ha-mcp",
+		"apps-ha-mcp-gate",
 		"apps-hermes",
 		"apps-hermes-webui",
 		"apps-homeassistant",

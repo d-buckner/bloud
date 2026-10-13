@@ -122,17 +122,19 @@ func (a *haAPI) probeProxyTrust(ctx context.Context) (trusted, reachable bool, s
 
 // onboardingStatus retries GET /api/onboarding until one of:
 //   - a 200 answer (the step list is returned),
-//   - a permanent 404 alongside an owner in the auth store (Home Assistant
-//     deregisters the endpoint once every step is closed), reported as
+//   - a 404 that stepsClosed confirms is permanent (Home Assistant deregisters
+//     the endpoint once every first-run step is closed), reported as
 //     alreadyOnboarded=true,
 //   - the caller's context deadline.
 //
 // During boot the HTTP listener is already up (waitAPI passes on any <500)
-// while this route still 404s, so a bare 404 (owner not yet on disk) keeps
-// being retried. This needs the response body and the two distinct 404
-// meanings at once (a body the Wait primitive does not surface), so it is a
-// thin loop over the framework's Do rather than a Wait.
-func (a *haAPI) onboardingStatus(ctx context.Context, iv time.Duration, ownerPresent func() bool) ([]byte, bool, error) {
+// while this route still 404s, so a bare 404 (steps not yet closed on disk)
+// keeps being retried. The two 404 meanings are told apart by HA's own
+// onboarding store, not by the HTTP answer, because the endpoint cannot report
+// its own absence. This needs the response body and that distinction at once (a
+// body the Wait primitive does not surface), so it is a thin loop over the
+// framework's Do rather than a Wait.
+func (a *haAPI) onboardingStatus(ctx context.Context, iv time.Duration, stepsClosed func() bool) ([]byte, bool, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, false, fmt.Errorf("timed out waiting for the Home Assistant onboarding API (HTTP listener is up but /api/onboarding keeps failing): %w", err)
@@ -141,7 +143,7 @@ func (a *haAPI) onboardingStatus(ctx context.Context, iv time.Duration, ownerPre
 		if err == nil {
 			return body, false, nil
 		}
-		if appclient.StatusOf(err) == http.StatusNotFound && ownerPresent != nil && ownerPresent() {
+		if appclient.StatusOf(err) == http.StatusNotFound && stepsClosed != nil && stepsClosed() {
 			return nil, true, nil
 		}
 		if iv <= 0 {
@@ -195,6 +197,86 @@ func (a *haAPI) exchangeAuthCode(ctx context.Context, authCode string) (string, 
 		return "", fmt.Errorf("token exchange returned no access token")
 	}
 	return tok.AccessToken, nil
+}
+
+// loginForAccessToken drives Home Assistant's credential login flow headlessly
+// and returns a short-lived access token for the account. This is the only
+// REST-reachable path from a stored password to a bearer token: Home Assistant
+// has no password grant, so the flow has to be stepped through exactly as the
+// browser does (init, then submit the form, then exchange the code).
+//
+// The client id and redirect pair is one of Home Assistant's built-in clients,
+// which is what lets indieauth's redirect verification pass without any
+// client registration and without a network fetch of a client's web page.
+func (a *haAPI) loginForAccessToken(ctx context.Context, username, password string) (string, error) {
+	var init struct {
+		FlowID string `json:"flow_id"`
+	}
+	if err := a.cl.POST("/auth/login_flow").JSON(map[string]any{
+		"client_id":    onboardingClientID,
+		"redirect_uri": loginRedirectURI,
+		// The handler is a [type, id] pair, and the id is null for the built-in
+		// credentials provider: Home Assistant keys its provider registry by
+		// (type, id) and the default provider's id is None, not its type name.
+		// Sending ["homeassistant", "homeassistant"] is a 500 with
+		// "Unknown auth provider ('homeassistant', 'homeassistant')".
+		"handler": []any{credentialAuthHandler, nil},
+	}).OK(http.StatusOK).DoInto(ctx, &init); err != nil {
+		return "", fmt.Errorf("starting the Home Assistant login flow: %w", err)
+	}
+	if init.FlowID == "" {
+		return "", fmt.Errorf("the Home Assistant login flow carried no flow id")
+	}
+
+	var submit struct {
+		Type   string            `json:"type"`
+		Result string            `json:"result"`
+		Errors map[string]string `json:"errors"`
+	}
+	if err := a.cl.POST("/auth/login_flow/"+init.FlowID).JSON(map[string]any{
+		"client_id": onboardingClientID,
+		"username":  username,
+		"password":  password,
+	}).OK(http.StatusOK).DoInto(ctx, &submit); err != nil {
+		return "", fmt.Errorf("submitting the Home Assistant login credentials: %w", err)
+	}
+	if submit.Result == "" {
+		// A wrong password is a FORM result carrying errors.base, answered 200.
+		// Naming the reason matters here: this call is only ever made with the
+		// password Bloud generated, so a rejection means the account or its
+		// password changed outside Bloud, not that a user mistyped.
+		reason := submit.Errors["base"]
+		if reason == "" {
+			reason = "flow returned " + submit.Type + " with no authorization code"
+		}
+		return "", fmt.Errorf("the %s login was refused by Home Assistant: %s", username, reason)
+	}
+	return a.exchangeAuthCode(ctx, submit.Result)
+}
+
+// tokenValid reports whether an access token is still accepted. /api/config is
+// used because it is small and admin-gated, which is the permission level the
+// companion token needs anyway. /api/ would answer 200 to a revoked token: the
+// auth middleware marks a bad bearer as unauthenticated rather than refusing
+// it, and only an auth-required view turns that into a 401.
+//
+// It returns a three-state answer on purpose. A transport failure or a 5xx is
+// "inconclusive" (ok=false, err=nil is never returned for those): a caller that
+// mints a replacement token on an inconclusive read would mint one per pass
+// during a Home Assistant outage.
+func (a *haAPI) tokenValid(ctx context.Context, token string) (valid bool, err error) {
+	_, callErr := a.cl.GET("/api/config").
+		Header("Authorization", "Bearer "+token).
+		NoRetry().
+		Timeout(15 * time.Second).
+		Do(ctx)
+	if callErr == nil {
+		return true, nil
+	}
+	if appclient.StatusOf(callErr) == http.StatusUnauthorized {
+		return false, nil
+	}
+	return false, callErr
 }
 
 // finishStep closes one onboarding step that follows "user" with the owner

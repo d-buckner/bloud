@@ -203,6 +203,15 @@ apps:
     files:
       - apps/dav-mcp/**
 
+  # The Home Assistant MCP wrapper: headless, no login of its own, and it
+  # authenticates to its target with a token rather than through the identity
+  # provider. Nothing here to exercise from a browser.
+  ha-mcp:
+    auth: none
+    validation-level: embed
+    files:
+      - apps/ha-mcp/**
+
   immich:
     auth: native-oidc
     validation-level: embed

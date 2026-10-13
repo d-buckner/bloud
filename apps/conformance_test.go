@@ -35,6 +35,16 @@ type appSpec struct {
 	// that are front ends for an agent have no useful config to write without
 	// one, so the harness has to supply the binding their PreStart requires.
 	WithAgent bool
+	// OwnsTeardown says the configurator implements configurator.Remover
+	// because it leaves something behind outside its own container and data
+	// (Home Assistant's minted long-lived token, for example). The harness
+	// fails a Remover that is not declared, so this is the declaration.
+	OwnsTeardown bool
+	// WithAppAPI hands the configurator a wired appApi provider: an installed
+	// target publishing an account and a credential. A wrapper's config is that
+	// credential plus the address it belongs to, so without a binding the
+	// harness would only ever exercise the "not ready" shape.
+	WithAppAPI bool
 	// Preseed runs against a fresh data dir before each pass.
 	Preseed func(dataDir string) error
 }
@@ -50,7 +60,9 @@ var conformanceTable = []appSpec{
 	{Dir: "dav-mcp", Node: "apps-dav-mcp", DefaultPort: 9333},
 	{Dir: "hermes", Node: "apps-hermes", DefaultPort: 9119, WithSSO: true},
 	{Dir: "hermes-webui", Node: "apps-hermes-webui", DefaultPort: 8787, WithSSO: true, WithAgent: true},
-	{Dir: "homeassistant", Node: "apps-homeassistant", DefaultPort: 8123, WithSSO: true, Preseed: preseedHAComponent},
+	{Dir: "homeassistant", Node: "apps-homeassistant", DefaultPort: 8123, WithSSO: true, OwnsTeardown: true, Preseed: preseedHAComponent},
+	{Dir: "ha-mcp", Node: "apps-ha-mcp", DefaultPort: 8086, WithAppAPI: true},
+	{Dir: "ha-mcp", Node: "apps-ha-mcp-gate", DefaultPort: 8086, WithAppAPI: true},
 	{Dir: "immich", Node: "apps-immich-server", DefaultPort: 2283, WithSSO: true},
 	{Dir: "jellyfin", Node: "apps-jellyfin", DefaultPort: 8096},
 	{Dir: "navidrome", Node: "apps-navidrome", DefaultPort: 4533},
@@ -104,11 +116,12 @@ func TestConformance(t *testing.T) {
 			// registry, so Cfg is resolved inside it; the table only has to
 			// say which node to build.
 			tc := configtest.Case{
-				Node:        spec.Node,
-				Metadata:    md,
-				DefaultPort: spec.DefaultPort,
-				State:       stateForSpec(spec),
-				Preseed:     spec.Preseed,
+				Node:         spec.Node,
+				Metadata:     md,
+				DefaultPort:  spec.DefaultPort,
+				State:        stateForSpec(spec),
+				Preseed:      spec.Preseed,
+				AllowRemover: spec.OwnsTeardown,
 			}
 			configtest.Run(t, tc)
 		})
@@ -152,6 +165,19 @@ func stateForSpec(spec appSpec) func(dataDir, bloudDataDir string) *configurator
 					Endpoint:  "http://hermes.localhost:8080/v1",
 					APIKey:    "conformance-agent-key",
 					ModelName: "hermes",
+				},
+			}
+		}
+		if spec.WithAppAPI {
+			st.Integrations.AppAPIs = []configurator.AppAPIBinding{
+				{
+					ProviderRef: configurator.ProviderRef{
+						App:       "homeassistant",
+						Installed: true,
+						BaseURL:   "http://apps-homeassistant:8123",
+					},
+					Username: "conformance-owner",
+					Password: "conformance-long-lived-token",
 				},
 			}
 		}

@@ -241,6 +241,88 @@ only onboarding step needed):
   404 covers both "provider never registered" and "HA still booting", so the check
   retries until the deadline. No token needed.
 
+## Companion token (`appApi`)
+
+`apps/ha-mcp` needs a credential into Home Assistant and cannot be a browser: it
+is a machine consumer that will never sit through a login flow or an OIDC
+redirect. So Home Assistant publishes one under the `appApi` contract, and the
+configurator mints it in `PostStart` (`companion.go`, `wsclient.go`).
+
+**What is published is a long-lived access token, not the owner password.** The
+break-glass password stays inside this app's tree. That distinction is the whole
+design: `appApi`'s guarantee is "a credential the provider's own auth layer
+validates", and a token Home Assistant issued satisfies it just as well as the
+password does, while being revocable inside Home Assistant and never leaving as
+a password.
+
+### How the token is made
+
+There is no REST endpoint for long-lived tokens. The documented paths are the
+profile page and the WebSocket command, and the profile page is a browser flow,
+so minting means the WebSocket API:
+
+1. Password to short-lived bearer, over REST. HA has no password grant, so the
+   credential login flow is stepped through the way a browser does it:
+   `POST /auth/login_flow` (`client_id` plus a `redirect_uri` indieauth accepts
+   without a network read: the built-in iOS client and `homeassistant://auth-callback`),
+   then `POST /auth/login_flow/{flow_id}` with the username and password, which
+   on success comes back `{"type":"create_entry","result":"<code>"}`
+   (`components/auth/login_flow.py`, `_async_flow_result_to_response`), then
+   `POST /auth/token` with that code. A wrong password is a FORM result carrying
+   `errors.base`, answered **200**, so the code has to read the body rather than
+   trust the status.
+2. Short-lived bearer to long-lived token, over WebSocket. Connect to
+   `/api/websocket`, answer `auth_required` with `{"type":"auth",
+   "access_token": …}`, then send
+   `{"type":"auth/long_lived_access_token","client_name":"Bloud ha-mcp","lifespan":3650}`.
+   `lifespan` is in **days**; 3650 is HA's own "no expiry" convention (10 years).
+   The result is the token string.
+
+### Why it is minted once
+
+`PostStart` runs on every reconciliation pass, and a mint per pass would leave a
+new row on the owner's profile page every ~60s. So the token is stored in the
+secrets store under the contract's secret name and reused: each pass makes one
+small authenticated request (`GET /api/config`, admin-gated, tiny body) and
+reuses the token when it answers 200.
+
+The verification is three-state, not two. A transport error or a 5xx is
+*inconclusive* and keeps the stored token; only a 401 means "gone". Minting on an
+inconclusive read would mint one per pass through any Home Assistant restart,
+which is the exact failure the reuse rule exists to prevent.
+
+`/api/` would answer 200 to a revoked token: HA's auth middleware marks a bad
+bearer as unauthenticated rather than refusing it, and only an auth-required view
+turns that into a 401.
+
+### Revocation
+
+Uninstall revokes it (`Remove`, before the container goes away). `/auth/revoke`
+does not work here: it matches refresh tokens, and a long-lived access token has
+no refresh token. The path is `auth/refresh_tokens` to list the account's tokens
+and `auth/delete_refresh_token` to delete one, matched on
+`client_name == "Bloud ha-mcp"` and `token_type == "long_lived_access_token"`,
+so a token rotated by hand is still cleaned up and a token belonging to another
+integration on the same owner is not touched.
+
+A revocation that cannot reach Home Assistant is reported as a failure rather
+than swallowed: an uninstall that leaves a live admin token somewhere should say
+so.
+
+### Cost, stated plainly
+
+- The token is an **owner** token. Whatever the agent can do through `ha-mcp`, it
+can do as the Home Assistant administrator. A dedicated service account with a
+narrower permission set is the right follow-up; it is not this change, and it is
+not a regression either, because the owner account already exists and already
+holds this same authority.
+- One inert token exists on every Home Assistant install whether or not anything
+  consumes it. It costs a row on the profile page and nothing at runtime.
+- The `appApi` contract's wording had to grow: the secret is now "a credential the
+  provider's own sign-in validates", which for Home Assistant is a token it
+  minted rather than the account password.
+
+
 ## Manual browser test: status and observations (manual test session, 2026-09-04)
 
 The full product flow was validated end-to-end by hand (fresh VM):
