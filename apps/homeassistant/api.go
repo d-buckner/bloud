@@ -122,17 +122,19 @@ func (a *haAPI) probeProxyTrust(ctx context.Context) (trusted, reachable bool, s
 
 // onboardingStatus retries GET /api/onboarding until one of:
 //   - a 200 answer (the step list is returned),
-//   - a permanent 404 alongside an owner in the auth store (Home Assistant
-//     deregisters the endpoint once every step is closed), reported as
+//   - a 404 that stepsClosed confirms is permanent (Home Assistant deregisters
+//     the endpoint once every first-run step is closed), reported as
 //     alreadyOnboarded=true,
 //   - the caller's context deadline.
 //
 // During boot the HTTP listener is already up (waitAPI passes on any <500)
-// while this route still 404s, so a bare 404 (owner not yet on disk) keeps
-// being retried. This needs the response body and the two distinct 404
-// meanings at once (a body the Wait primitive does not surface), so it is a
-// thin loop over the framework's Do rather than a Wait.
-func (a *haAPI) onboardingStatus(ctx context.Context, iv time.Duration, ownerPresent func() bool) ([]byte, bool, error) {
+// while this route still 404s, so a bare 404 (steps not yet closed on disk)
+// keeps being retried. The two 404 meanings are told apart by HA's own
+// onboarding store, not by the HTTP answer, because the endpoint cannot report
+// its own absence. This needs the response body and that distinction at once (a
+// body the Wait primitive does not surface), so it is a thin loop over the
+// framework's Do rather than a Wait.
+func (a *haAPI) onboardingStatus(ctx context.Context, iv time.Duration, stepsClosed func() bool) ([]byte, bool, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, false, fmt.Errorf("timed out waiting for the Home Assistant onboarding API (HTTP listener is up but /api/onboarding keeps failing): %w", err)
@@ -141,7 +143,7 @@ func (a *haAPI) onboardingStatus(ctx context.Context, iv time.Duration, ownerPre
 		if err == nil {
 			return body, false, nil
 		}
-		if appclient.StatusOf(err) == http.StatusNotFound && ownerPresent != nil && ownerPresent() {
+		if appclient.StatusOf(err) == http.StatusNotFound && stepsClosed != nil && stepsClosed() {
 			return nil, true, nil
 		}
 		if iv <= 0 {
