@@ -1,0 +1,166 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: podly
+displayName: Podly
+description: Removes ads from podcasts and serves the ad-free versions as RSS feeds
+category: media
+port: 5001
+# The `lite` image variant: 0.45 GB of compressed layers (summed from the manifest
+# of 2.7.5-lite, amd64) and 1.23 GB unpacked, measured after pulling it. The
+# estimate this line carried before the pull was about 1.1 GB, which is close
+# enough to keep as the rule of thumb: a registry publishes no uncompressed layer
+# sizes, so a manifest can only ever be summed, not read. This is the image alone,
+# before the app has downloaded an episode.
+#
+# The `latest` variant of the same release is 4.73 GB compressed (one layer of it
+# is 4.38 GB of Python packages, mostly local Whisper and its CPU torch) and
+# about 9.5 GB unpacked. Bloud ships `lite` because a podcast feed should not
+# cost more than ten times its own runtime to start, and because transcription is
+# a capability Bloud can wire to an endpoint rather than a model to cache on
+# every install. See INTEGRATION.md.
+estimatedSizeMB: 1100
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # The app's ad-removal works on the transcript, so transcription is the one
+  # capability it cannot do without. `required: false` is the honest bit: with no
+  # endpoint declared the app still installs, still strips nothing it cannot
+  # find, and says so in its own UI, rather than being held in ERROR waiting on
+  # a credential only the operator can supply.
+  #
+  # `transcription` rather than `inference` because the app dials
+  # `/v1/audio/transcriptions`, and an OpenAI-compatible server can answer
+  # completions and 404 on that route. The operator says which endpoint
+  # transcribes; nothing here guesses.
+  transcription:
+    required: false
+    multi: false
+    requires:
+      - apiKey
+    compatible:
+      - source: setting
+  # The second external half. Transcription turns audio into a transcript; this
+  # model decides which spans of that transcript are advertising, which is the
+  # only thing this app does that a feed reader cannot. Declaring only
+  # `transcription` produces an install that transcribes every episode and cuts
+  # nothing, and it looks like a working app that simply never removes an ad.
+  #
+  # Separate from `transcription` for the mirror-image reason: an endpoint that
+  # transcribes need not complete text and vice versa, and the app dials a
+  # different route for each (`/v1/audio/transcriptions`, `/v1/chat/completions`).
+  inference:
+    required: false
+    multi: false
+    requires:
+      - apiKey
+    compatible:
+      - source: setting
+        default: true
+
+# Podly cannot delegate authentication, and this is not a gap in its
+# configuration: the only credential paths the app has are its own session
+# cookie (bcrypt-hashed local users) and the per-feed `feed_token`/`feed_secret`
+# query parameters a podcast player presents. There is no OIDC client, no
+# trusted-header mode, and no proxy-auth hook, so `forward-auth` would gate the
+# browser and still leave the feeds to their own devices.
+#
+# The feeds are the reason to keep the app's own auth on rather than off. A
+# player cannot follow an SSO redirect, so a bypassed /feed path is the only way
+# a phone can subscribe; with `REQUIRE_AUTH=false` that path is open to anyone
+# who finds it, and feed ids are sequential integers. With auth on, the same
+# path demands a feed token the app mints per share link, which is a credential
+# rather than an unguessable URL. See INTEGRATION.md.
+sso:
+  strategy: none
+
+# The credential a person types into Podly's sign-in form. Bloud mints it,
+# stores it, reveals it once, and can rotate it; the username is the fixed
+# `bloud` account the configurator creates and keeps in step (the reveal snippet
+# carries a URL and a password, so the name has to be the part that never
+# changes).
+#
+# `rotate: bloud` is backed by a second, non-revealed admin account: Podly reads
+# PODLY_ADMIN_PASSWORD once, when its users table is still empty, so a rotated
+# value could never reach the app through the environment. The configurator
+# signs in as the service account and sets the human account's password through
+# the app's own API instead. See INTEGRATION.md.
+provides:
+  clientPassword:
+    secrets:
+      - password
+    clientAccess:
+      secret: password
+      reveal: once
+      rotate: bloud
+      label: "Podly sign-in password"
+      reaches: "Podly's web UI and every ad-free feed it serves, as the shared bloud account"
+      snippet: url-and-password
+
+containers:
+  # One container, and it runs two processes: the image's start script launches
+  # the writer (which owns every database write, including user mutations, and
+  # is reached over a local IPC socket), waits for its IPC port, then starts the
+  # web app. Both are in one container by upstream's design, so there is nothing
+  # for the graph to order here.
+  - name: apps-podly
+    image: ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.5-lite
+    network: apps-net
+    restartPolicy: always
+    environment:
+      TZ: Etc/UTC
+      PORT: "5001"
+      # The image's entrypoint drops to its own unprivileged `appuser` only when
+      # both are set; with neither it runs the whole app as root. These are
+      # upstream compose's defaults.
+      PUID: "1000"
+      PGID: "1000"
+      SERVER_THREADS: "4"
+      # `waitress` runs **one** worker thread when this is unset (`main.py`:
+      # `int(threads_env) if threads_env is not None else 1`), and upstream ships
+      # `SERVER_THREADS=1` in every one of its compose files. One thread means one
+      # slow request makes the whole app unreachable: a feed host that accepts the
+      # TCP connection and then sends nothing holds the only worker, and every
+      # later request queues behind it indefinitely, including Bloud's own health
+      # probe. Observed on a real install: adding a feed from a host that stalls
+      # Python clients left the app serving nothing for an hour on an ESTABLISHED,
+      # silent socket, with `waitress.queue` depth climbing the whole time.
+      #
+      # Four is `waitress`'s own documented default, and it is safe here rather than
+      # merely smaller: the app opens SQLite in WAL mode with a 90s `busy_timeout`
+      # (`src/app/__init__.py`), which is the configuration built for concurrent
+      # connections, so concurrent workers wait instead of erroring. This shrinks
+      # the blast radius from one stalled feed to four; the fetch itself has no
+      # timeout upstream, so it does not close the hole. See INTEGRATION.md.
+    # The app reads its configuration from process environment and nothing else,
+    # and the values that matter (auth on, the service account's password, the
+    # session-signing key) are per-install and rotatable. So they come from a
+    # file the configurator writes rather than from `environment:`, which can
+    # only render static metadata. The runtime reads this file on the host at
+    # create time: it is never mounted, so the secret stays out of the container
+    # spec and out of `podman inspect`.
+    envFile: "{{appDataDir}}/config/env"
+    ports:
+      - host: 5001
+        container: 5001
+    volumes:
+      # The image's whole state tree: SQLite db, the config store, downloaded and
+      # processed audio, and logs all live under /app/src/instance.
+      - source: "{{appDataDir}}/instance"
+        destination: /app/src/instance
+    healthCheck:
+      # Upstream's own probe. `/` is in the app's public paths, so it answers
+      # without a session even with REQUIRE_AUTH on, and the image is a Python
+      # image, so urllib is always there (there is no curl).
+      test:
+        - CMD-SHELL
+        - 'python3 -c "import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:5001/\")"'
+      interval: 10
+      timeout: 10
+      # First boot runs the Flask-Migrate migrations before the listener opens,
+      # and the start script waits up to 30s for the writer's IPC socket. Ten
+      # minutes of headroom is for a cold pull on slow hardware.
+      retries: 60

@@ -28,6 +28,8 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applySetPublicURLIntent(i)
 		case SetInferenceIntent:
 			o.applySetInferenceIntent(i)
+		case SetTranscriptionIntent:
+			o.applySetTranscriptionIntent(i)
 		case RevokeClientSessionsIntent:
 			o.applyRevokeClientSessionsIntent(i)
 		case AddExternalAppIntent:

@@ -66,13 +66,13 @@ func ParseEndpoint(raw string) (Endpoint, error) {
 		return Endpoint{}, fmt.Errorf("scheme %q is not http or https", u.Scheme)
 	}
 	if u.User != nil {
-		return Endpoint{}, fmt.Errorf("an inference endpoint cannot carry credentials")
+		return Endpoint{}, fmt.Errorf("an endpoint cannot carry credentials")
 	}
 	if u.RawQuery != "" {
-		return Endpoint{}, fmt.Errorf("an inference endpoint cannot carry a query string")
+		return Endpoint{}, fmt.Errorf("an endpoint cannot carry a query string")
 	}
 	if u.Fragment != "" {
-		return Endpoint{}, fmt.Errorf("an inference endpoint cannot carry a fragment")
+		return Endpoint{}, fmt.Errorf("an endpoint cannot carry a fragment")
 	}
 
 	host := strings.ToLower(strings.TrimSpace(u.Hostname()))

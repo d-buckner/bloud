@@ -79,6 +79,72 @@ export function testAIEndpoint(baseUrl: string, apiKey?: string): Promise<TestAI
 	return post<TestAIResponse>('/api/settings/ai/test', { baseUrl, apiKey });
 }
 
+/**
+ * The instance's speech-to-text endpoint: one OpenAI-compatible
+ * `/v1/audio/transcriptions` the operator declares, plus the apps that consume
+ * it.
+ *
+ * It is a separate surface from `AISettings` because it is a separate contract.
+ * A server that answers completions is not known to answer audio uploads, so
+ * the two are configured independently even when one box serves both.
+ */
+export interface TranscriptionSettings {
+	configured: boolean;
+	name: string;
+	baseUrl: string;
+	model: string;
+	hasApiKey: boolean;
+	servedTo: string[];
+}
+
+export interface SetTranscriptionRequest {
+	/** Empty removes the provider. */
+	baseUrl: string;
+	name?: string;
+	/** Empty leaves the endpoint's own default model in force. */
+	model?: string;
+	/**
+	 * Omit to keep the stored credential. Send an empty string to clear it.
+	 * The API never returns the key, only `hasApiKey`.
+	 */
+	apiKey?: string;
+}
+
+/**
+ * What the save accepted, as the API canonicalized it.
+ *
+ * The endpoint is echoed back parsed rather than verbatim, so the form can poll
+ * for the stored value without reimplementing the parser, same as the address
+ * setting's response.
+ */
+export interface SetTranscriptionResponse {
+	status: string;
+	baseUrl: string;
+	model: string;
+	configured: boolean;
+}
+
+export function fetchTranscriptionSettings(): Promise<TranscriptionSettings> {
+	return get<TranscriptionSettings>('/api/settings/transcription');
+}
+
+export function setTranscriptionSettings(
+	data: SetTranscriptionRequest
+): Promise<SetTranscriptionResponse> {
+	return put<SetTranscriptionResponse>('/api/settings/transcription', data);
+}
+
+/**
+ * List the models a candidate transcription endpoint offers, so the picker
+ * shows that server's real models rather than a list Bloud maintains.
+ */
+export function discoverTranscriptionModels(
+	baseUrl: string,
+	apiKey?: string
+): Promise<TestAIResponse> {
+	return post<TestAIResponse>('/api/settings/transcription/models', { baseUrl, apiKey });
+}
+
 // External apps. A launcher is a tile that opens a URL; a provider stands in
 // for something Bloud does not run and wires into the integration graph.
 export interface ExternalApp {

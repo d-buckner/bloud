@@ -521,6 +521,7 @@ for _, pvr := range state.Integrations.PVRs {
 | `SSO` (`sso`) | `APIToken`, to read the provider's users |
 | `ModelSources` (`modelSource`) | `Endpoint`, `APIKey`, `Models` |
 | `Inference` (`inference`) | `Endpoint`, `APIKey`, `DefaultModel`, `Models`, `ViaGateway` |
+| `Transcription` (`transcription`) | `Endpoint`, `APIKey`, `Model` |
 
 Every binding embeds `ProviderRef`, the part that is the same for all of them:
 
@@ -539,6 +540,13 @@ installs the provider's declared default, never that other installed providers
 are ignored. `Installed` distinguishes the ones that are actually there, and a
 payload the provider has not published yet is empty, which means "not ready",
 never "use this empty credential".
+
+Two contracts (`inference` and `transcription`) can also name the operator's
+Settings as a provider, with `compatible: [{source: setting}]`. That provider is
+not a catalog app: it has no container, no node, and no graph edge, and the
+binding's `App` carries the record id rather than an app name. A consumer of a
+setting-sourced contract is reset when the setting changes, which is the
+substitute for the edge it does not have.
 
 `requires` is what keeps a payload least privilege: declaring a contract gets an
 app the provider's address, and nothing more. Only the credentials you list are

@@ -46,6 +46,7 @@ func TestNodeNamesStable(t *testing.T) {
 		"apps-jellyfin",
 		"apps-navidrome",
 		"apps-paperless-ngx",
+		"apps-podly",
 		"apps-prowlarr",
 		"apps-qbittorrent",
 		"apps-radarr",

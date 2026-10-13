@@ -170,6 +170,44 @@ export async function ensureInstalled(name: string): Promise<void> {
   await waitForApp(name, 'running');
 }
 
+/**
+ * One client credential, as the reveal endpoint hands it over. This is the only
+ * API call in the suite that returns a credential value: the descriptor list at
+ * the same path deliberately has no value field at any reveal policy.
+ *
+ * Under `reveal: once` (the policy every app in the catalog declares) this is
+ * single-use per value: a second reveal of the same credential answers 409, and
+ * only a rotation produces one that can be shown again. A spec that needs the
+ * value therefore has to ask before anything else has.
+ */
+export interface ClientCredential {
+  secret: string;
+  value: string;
+  snippet: string;
+}
+
+export async function revealClientCredential(app: string, secret: string): Promise<ClientCredential> {
+  return fetchJSON<ClientCredential>(
+    `/api/apps/${app}/client-credentials/${secret}/reveal`,
+    { method: 'POST', body: '{}' },
+  );
+}
+
+/**
+ * Rotates a client credential and returns the new value, which a rotation always
+ * hands over (that is what makes a lost credential recoverable).
+ *
+ * The call is not free: rotation ends every live session the app holds and forces
+ * the recreate that installs whatever change the rotation implies. A spec should
+ * reach for it only when the reveal is already spent.
+ */
+export async function rotateClientCredential(app: string, secret: string): Promise<ClientCredential> {
+  return fetchJSON<ClientCredential>(
+    `/api/apps/${app}/client-credentials/${secret}/rotate`,
+    { method: 'POST', body: '{}' },
+  );
+}
+
 // External apps (PR 1: launchers only). A launcher is a tile that opens a URL.
 export interface Launcher {
   id: string;
@@ -191,4 +229,65 @@ export async function addLauncher(input: { name: string; url: string; icon?: str
 
 export async function removeLauncher(id: string): Promise<void> {
   await fetchJSON('/api/external-apps/' + id, { method: 'DELETE' });
+}
+
+// Transcription: the one endpoint the instance declares for speech-to-text.
+export interface TranscriptionSettings {
+  configured: boolean;
+  name: string;
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  servedTo: string[];
+}
+
+export async function getTranscriptionSettings(): Promise<TranscriptionSettings> {
+  return fetchJSON<TranscriptionSettings>('/api/settings/transcription');
+}
+
+/**
+ * Saves the transcription endpoint and returns the state the orchestrator applied.
+ *
+ * The save is an intent: the PUT answers 202 and the write lands on the
+ * orchestrator's queue, so a read-back fired straight after it reports whatever
+ * the queue has reached, which is usually the previous value. That is the failure
+ * where a spec passes for the wrong reason or fails for one it cannot name: the
+ * assertion reads an empty endpoint seconds before the save is stored. So this
+ * polls until the stored state matches what the save reported, the same way
+ * `savePublicURLAndWait` does, and a payload that was dropped or rewritten fails
+ * here with both values in the message instead of as a bare mismatch later.
+ *
+ * The credential is waited on only when the request carried one. An omitted
+ * `apiKey` means "keep the stored key", so its presence is not this save's to
+ * wait for.
+ */
+export async function setTranscriptionSettings(body: {
+  baseUrl: string;
+  name?: string;
+  model?: string;
+  apiKey?: string;
+}): Promise<TranscriptionSettings> {
+  const accepted = await fetchJSON<{
+    baseUrl: string;
+    model: string;
+    configured: boolean;
+  }>('/api/settings/transcription', { method: 'PUT', body: JSON.stringify(body) });
+
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const live = await getTranscriptionSettings();
+    const applied =
+      live.baseUrl === accepted.baseUrl &&
+      live.model === accepted.model &&
+      live.configured === accepted.configured &&
+      (body.apiKey === undefined || live.hasApiKey === (body.apiKey !== ''));
+    if (applied) return live;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `transcription settings never converged: wanted ${accepted.baseUrl || 'unset'}, ` +
+          `still ${live.baseUrl || 'unset'}`,
+      );
+    }
+    await delay(500);
+  }
 }

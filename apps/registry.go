@@ -34,6 +34,7 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
 	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
 	_ "codeberg.org/d-buckner/bloud/apps/paperless-ngx"
+	_ "codeberg.org/d-buckner/bloud/apps/podly"
 	_ "codeberg.org/d-buckner/bloud/apps/prowlarr"
 	_ "codeberg.org/d-buckner/bloud/apps/qbittorrent"
 	_ "codeberg.org/d-buckner/bloud/apps/radarr"
@@ -69,6 +70,7 @@ func NodeNames() []string {
 		"apps-jellyfin",
 		"apps-navidrome",
 		"apps-paperless-ngx",
+		"apps-podly",
 		"apps-prowlarr",
 		"apps-qbittorrent",
 		"apps-radarr",

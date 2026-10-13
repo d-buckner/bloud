@@ -328,6 +328,32 @@ type InferenceBinding struct {
 	ViaGateway bool
 }
 
+// TranscriptionBinding is a speech-to-text endpoint a consumer can POST audio
+// to: an OpenAI-compatible `/v1/audio/transcriptions`.
+//
+// It is its own binding rather than two more fields on InferenceBinding because
+// the two promise different things. An inference upstream is a server that
+// answers completions; a transcription endpoint is a server that answers audio
+// uploads, and the same box can do one and not the other. A consumer that asked
+// for this binding has been told, by the operator's own declaration, that the
+// address transcribes.
+type TranscriptionBinding struct {
+	ProviderRef
+	// Endpoint is the base URL an SDK should be constructed with, path
+	// included, for example https://api.openai.com/v1. As with inference, this
+	// is the field that always carries something dialable; ProviderRef.BaseURL
+	// is a container-network fact and is empty for an instance provider.
+	Endpoint string
+	// APIKey is the bearer to send. Empty when the endpoint needs none.
+	APIKey string
+	// Model is the model id to request, empty when the operator expressed no
+	// preference and the endpoint's own default stands. It is a concrete id
+	// rather than a tier for the same reason inference's DefaultModel is: the
+	// server behind this address has no Bloud-side name translation in front
+	// of it.
+	Model string
+}
+
 // PVRBinding is an app that holds recordings or a library and accepts requests
 // or indexers over its own API: the consumer needs the key that API
 // authenticates with.
@@ -542,6 +568,7 @@ type Integrations struct {
 	SSO             []SSOBinding
 	ModelSources    []ModelSourceBinding
 	Inference       []InferenceBinding
+	Transcription   []TranscriptionBinding
 	MCPServers      []MCPBinding
 	AppAPIs         []AppAPIBinding
 	AgentAPIs       []AgentAPIBinding
