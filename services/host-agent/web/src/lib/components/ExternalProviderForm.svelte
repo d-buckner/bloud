@@ -16,10 +16,13 @@
 
 	interface Props {
 		/**
-		 * Notified after a successful add. The only caller ever wanted it so the
-		 * modal could re-read its list; that list is gone, so nothing passes it
-		 * now. Kept as an optional hook rather than a hole in the component's
-		 * contract, because "I saved something" is the caller's business.
+		 * Notified after a successful add. The modal closes on it and the dashboard
+		 * re-reads its external-app records off that.
+		 *
+		 * It used to be an optional hook with no caller, because the only reason a
+		 * caller existed was a list this modal no longer renders. Dropping it also
+		 * dropped the close: the form reset itself and left the dialog standing, so
+		 * the only evidence a save had happened was a form that quietly emptied.
 		 */
 		onsaved?: () => void;
 	}
