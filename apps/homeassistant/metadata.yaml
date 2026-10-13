@@ -27,6 +27,18 @@ sso:
   callbackPath: /auth/oidc/callback
   userCreation: true
 
+# The machine credential: a long-lived access token Bloud mints for the
+# break-glass owner and publishes under the `appApi` contract, so a companion
+# that is not a browser (apps/ha-mcp) can authenticate without ever holding the
+# owner password. The username is a value because Home Assistant's own UI shows
+# it; the token is the secret, and it is revocable, which the password is not.
+# See INTEGRATION.md "Companion token".
+provides:
+  appApi:
+    secrets: [password]
+    values:
+      username: bloud-bootstrap-admin
+
 containers:
   - name: apps-homeassistant
     image: docker.io/homeassistant/home-assistant:2026.9.0

@@ -1,0 +1,174 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: ha-mcp
+displayName: Home Assistant MCP
+description: MCP tool server for Home Assistant, so an agent can search entities and design automations against the instance Bloud already runs
+category: productivity
+port: 8086
+estimatedSizeMB: 320
+
+# No browser UI: the wrapper serves an MCP endpoint and nothing to click, so the
+# dashboard draws no tile for it. It is otherwise an ordinary app: installed,
+# reconciled, and routed like every other.
+headless: true
+
+# A wrapper, not Home Assistant itself. ha-mcp is a standalone MCP server that
+# talks to Home Assistant over its REST and WebSocket APIs with a long-lived
+# access token, so the target needs no plugin and no restart.
+#
+# The credential comes from Home Assistant's `appApi` offer: a long-lived token
+# Bloud minted for the owner account (see apps/homeassistant/INTEGRATION.md),
+# not the owner password. The wrapper is not a browser and cannot join the
+# identity provider, which is exactly the audience that contract exists for.
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  appApi:
+    required: true
+    multi: false
+    requires:
+      - password
+    compatible:
+      - app: homeassistant
+        default: true
+
+# The `mcp` contract a harness (Hermes) consumes, under the `ha-mcp` namespace.
+# `path` is the public path the gate answers on; the path the server actually
+# listens on is a separate high-entropy secret the gate maps to it, so the two
+# never have to be the same value and the published one carries no secrecy.
+provides:
+  mcp:
+    secrets: [httpToken]
+    values:
+      serverName: ha-mcp
+      path: /mcp
+
+containers:
+  # The MCP server itself. It publishes no port: nothing outside this app may
+  # reach it directly, because the image has no notion of the bearer the `mcp`
+  # contract promises. The gate below is the only door.
+  - name: apps-ha-mcp
+    # ha-mcp 8.6.0. The image tag carries no `v` prefix: upstream publishes
+    # `v8.6.0` on GitHub but the registry tag is the bare version.
+    image: ghcr.io/homeassistant-ai/ha-mcp:8.6.0
+    # The image's default command is the stdio server. `ha-mcp-web` is the
+    # streamable-HTTP entry point, and it is the standard-mode one: the OAuth
+    # entry point (`ha-mcp-oauth`) exists to collect a token from a human at a
+    # consent form, which is the opposite of a machine consumer.
+    command: [ha-mcp-web]
+    network: apps-net
+    restartPolicy: always
+    environment:
+      # Bind the container's all-interfaces default explicitly: the only thing
+      # that can dial this server is the gate on the same network, and it dials
+      # it by container name.
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8086"
+      # Opt in to the image's unauthenticated liveness route. Standard mode has
+      # no auth of its own, so /healthz is off unless asked for; it says only
+      # that the process is up, which is the right job for a liveness probe.
+      MCP_HEALTHZ: "1"
+      # The settings UI is a browser page for a human to paste a Home Assistant
+      # token into and flip tool policy switches. Bloud configures this
+      # container through env and the contract, so there is nothing for a
+      # visitor to do there, and every route it adds is one more to reason
+      # about. Disabling it also means no second secret path to publish.
+      HA_MCP_DISABLE_SETTINGS_UI: "1"
+      # The image checks PyPI for a newer release on startup. A pinned
+      # container cannot act on that answer, and a home server should not be
+      # phoning a version check into the internet on every restart.
+      HA_MCP_DISABLE_UPDATE_CHECK: "1"
+      # Tool responses pass through to an agent's context. Redacting keeps a
+      # Home Assistant secret (an API key sitting in an integration's config)
+      # from being echoed into a model's transcript.
+      REDACT_SECRETS: "1"
+      # Write-capable tools stay on: the point of the integration is an agent
+      # that can build an automation, not one that can only describe one. Flip
+      # this to "1" to make the whole surface read-only; the server then blocks
+      # writes with a READ_ONLY_MODE error rather than half-working.
+      READ_ONLY_MODE: "0"
+    # Written by the configurator on every pass: the resolved Home Assistant
+    # address and token, plus the high-entropy path the server listens on.
+    # The image reads its whole configuration from process env and nothing
+    # else, so this is the only way a resolved binding reaches it. The file
+    # lives in the app's own data tree and is not mounted: the runtime reads it
+    # on the host and passes the values in at create time.
+    envFile: "{{appDataDir}}/config/env"
+    healthCheck:
+      # The image has no shell, no wget, and no curl, but it is a Python image:
+      # the interpreter that runs the server can make the request. Exec form,
+      # because CMD-SHELL would fail outright with no shell to run.
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import sys,urllib.request;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8086/healthz',timeout=5).status==200 else 1)",
+        ]
+      interval: 10
+      timeout: 10
+      # The port binds once the ASGI app is up, which needs no Home Assistant
+      # round trip: the server does not contact Home Assistant before it
+      # listens. The retries cover process start, not a dependency.
+      retries: 6
+
+  # The bearer gate. ha-mcp's standard mode authenticates by URL-path secrecy
+  # and says so in its own SECURITY.md; the `mcp` contract promises consumers a
+  # bearer, and Hermes sends one on every call. This container is where the
+  # bearer is real: it rejects anything that does not present the published
+  # token, and it is the only container that publishes the app's port, so
+  # nothing reaches the server around it.
+  #
+  # nginx rather than a purpose-built proxy because Bloud ships no images of its
+  # own, and this is the smallest upstream artifact that does exactly one thing:
+  # one header comparison and one proxy. See INTEGRATION.md.
+  - name: apps-ha-mcp-gate
+    image: docker.io/library/nginx:1.29-alpine
+    network: apps-net
+    # The server's own endpoint path is a secret this app mints, and the server
+    # node's PreStart is what publishes it, so the gate is ordered after it.
+    dependsOn: [apps-ha-mcp]
+    restartPolicy: always
+    ports:
+      # The app's port, and the only published one: Traefik's generated service
+      # is http://localhost:<app port>, so whatever answers the app's URL has to
+      # be this container.
+      - host: 8086
+        container: 8086
+    volumes:
+      - source: "{{appDataDir}}/config/nginx.conf"
+        destination: /etc/nginx/ha-mcp-gate.conf.in
+        options: [ro]
+    # The generated config carries one placeholder: the address of the DNS
+    # resolver nginx must use. nginx resolves a literal upstream name once, at
+    # config load, and then never again, so a static `proxy_pass` would pin the
+    # server's container IP and answer 502 forever the moment that container is
+    # recreated with a new one (measured: recreate, then 502 until the gate
+    # restarts). A variable upstream plus a `resolver` makes nginx re-resolve
+    # every few seconds instead, which is the difference between a self-healing
+    # pair and a manual restart.
+    #
+    # The resolver address is only knowable from inside the container: podman
+    # puts its per-network DNS at that network's gateway, and the gateway
+    # address depends on how many networks already exist. So the entrypoint
+    # reads it out of the container's own resolv.conf and substitutes it, then
+    # runs nginx from the result. The mounted file is read-only, hence the copy
+    # to /tmp.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sed "s|@RESOLVER@|$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)|" \
+          /etc/nginx/ha-mcp-gate.conf.in > /tmp/nginx.conf
+        exec nginx -g 'daemon off;' -c /tmp/nginx.conf
+    healthCheck:
+      # BusyBox wget, in the image for exactly this. Proves nginx is up and its
+      # config parsed; it deliberately does not touch the server, because a
+      # server mid-restart is not a dead gate. Whether the whole path serves MCP
+      # is what the gate's PostStart checks, where the answer can be reported.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8086/healthz"]
+      interval: 10
+      timeout: 10
+      retries: 6

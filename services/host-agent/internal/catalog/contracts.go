@@ -272,11 +272,17 @@ var contracts = []Contract{
 	// consumer that does not require the secret gets the username with an empty
 	// password, the same rule every other contract follows (invariant 15).
 	//
-	// The password is the account's real password, not a Bloud invention. A
-	// string Bloud generated and published would authenticate against nothing.
-	// For a target that removed programmatic tokens (AFFiNE 0.27 removed its
-	// personal-access-token API), the account password is the only credential
-	// the target still validates.
+	// The secret is a credential the provider's own sign-in validates, not a
+	// Bloud invention: a string Bloud invented and published would authenticate
+	// against nothing. Usually that is the account's real password, because for
+	// a target that removed programmatic tokens (AFFiNE 0.27 removed its
+	// personal-access-token API) the password is the only credential left. It
+	// may instead be a token the provider mints through its own API when the
+	// provider has one and the password is worth keeping out of the consumer:
+	// Home Assistant publishes a long-lived access token it issued for the
+	// account, which is revocable inside the provider and never leaves as a
+	// password. Either way the rule is the same, and it is what the provider's
+	// own auth layer answers, not what Bloud calls it.
 	{
 		Name:    "appApi",
 		Secrets: []string{"password"},

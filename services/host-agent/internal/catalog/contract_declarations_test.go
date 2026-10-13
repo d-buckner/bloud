@@ -92,3 +92,57 @@ func TestShippedCatalog_AppAPIWiring(t *testing.T) {
 		"the wrapper's namespace must differ from affine's or a harness would collide")
 	assert.Equal(t, "/mcp", offered.Values["path"])
 }
+
+// TestShippedCatalog_AppAPIWiring_HomeAssistant pins the second `appApi` chain:
+// homeassistant provides it and ha-mcp consumes it.
+//
+// The provider side differs from AFFiNE's on purpose, and the difference is the
+// reason this is a separate assertion rather than a loop. AFFiNE publishes
+// `username` as a runtime value because its owner's address is an email the
+// operator typed and Bloud cannot know it until AFFiNE is up. Home Assistant's
+// owner is the account Bloud itself created, with a name that has been metadata
+// since the app was added, so the value is static and there is nothing to
+// discover. A consumer waiting for a runtime username here would wait forever for
+// a fact that was always known.
+//
+// What the wrapper publishes matters more than what it consumes: the `mcp` offer
+// is the whole security promise to every harness, and it must name the bearer and
+// nothing else. The server's internal path is deliberately absent, and it cannot
+// be added without also adding it to the contract, which is a change to a core
+// vocabulary rather than to this app.
+func TestShippedCatalog_AppAPIWiring_HomeAssistant(t *testing.T) {
+	apps, err := NewLoader(realCatalogDir(t)).LoadAll()
+	require.NoError(t, err)
+
+	spec, known := ContractFor("appApi")
+	require.True(t, known, "appApi must be in the registry")
+
+	ha := apps["homeassistant"]
+	require.NotNil(t, ha, "homeassistant must be in the shipped catalog")
+	offer, ok := ha.Provides["appApi"]
+	require.True(t, ok, "homeassistant must provide appApi")
+	assert.Equal(t, spec.Secrets, offer.Secrets,
+		"the provider must publish exactly the contract's secret")
+	assert.Equal(t, "bloud-bootstrap-admin", offer.Values["username"],
+		"the owner account is Bloud's own bootstrap admin, named in metadata")
+	assert.NotContains(t, offer.RuntimeValues, "username",
+		"the account name is known before Home Assistant is up, so it is not a runtime value")
+
+	wrapper := apps["ha-mcp"]
+	require.NotNil(t, wrapper, "ha-mcp must be in the shipped catalog")
+	integration, ok := wrapper.Integrations["appApi"]
+	require.True(t, ok, "ha-mcp must declare integrations.appApi")
+	assert.True(t, integration.Required,
+		"the wrapper cannot authenticate without Home Assistant's credential, so the contract is required")
+	assert.Equal(t, []string{"password"}, integration.Requires,
+		"the token is the whole consumer surface; the username arrives unasked")
+
+	provided, ok := wrapper.Provides["mcp"]
+	require.True(t, ok, "ha-mcp must provide mcp")
+	assert.Equal(t, "ha-mcp", provided.Values["serverName"],
+		"the namespace must name this app, not its target")
+	assert.Equal(t, "/mcp", provided.Values["path"],
+		"the published path is the gate's public path, which carries no secrecy")
+	assert.Equal(t, []string{"httpToken"}, provided.Secrets,
+		"the bearer is the only published credential")
+}

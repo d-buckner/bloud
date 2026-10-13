@@ -33,6 +33,17 @@ const (
 	// avoids a chicken-and-egg client-registration step.
 	onboardingClientID = "https://home-assistant.io/iOS"
 
+	// loginRedirectURI is the redirect URI Home Assistant accepts for the
+	// built-in client above without fetching anything: indieauth hard-codes the
+	// pair. The login flow verifies the redirect URI of the flow's context, so
+	// a headless login needs a pair that passes without a network read.
+	loginRedirectURI = "homeassistant://auth-callback"
+
+	// credentialAuthHandler is Home Assistant's built-in username/password auth
+	// provider id. The login flow takes the handler as the pair
+	// [type, id], and for the built-in provider both halves are this string.
+	credentialAuthHandler = "homeassistant"
+
 	// componentDomain is the hass-oidc-auth integration domain (manifest.json).
 	componentDomain = "auth_oidc"
 )
@@ -302,6 +313,16 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 		if err := c.waitForProxyTrust(ctx); err != nil {
 			return err
 		}
+	}
+
+	// The long-lived token a machine consumer (apps/ha-mcp) authenticates to
+	// Home Assistant with. Not fatal on purpose: the token is only useful to a
+	// consumer, so a Home Assistant install with none must not fail its own
+	// install over it. PostStart runs on every reconciliation pass, so a mint
+	// that fails here is retried by the self-healing pass without an operator
+	// having to retry the install.
+	if _, err := c.ensureCompanionToken(ctx); err != nil {
+		c.logger.Warn("Home Assistant companion token is not available yet; a consumer that needs it stays unresolved", "error", err)
 	}
 
 	if state.SSOEnabled {

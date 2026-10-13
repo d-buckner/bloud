@@ -197,6 +197,86 @@ func (a *haAPI) exchangeAuthCode(ctx context.Context, authCode string) (string, 
 	return tok.AccessToken, nil
 }
 
+// loginForAccessToken drives Home Assistant's credential login flow headlessly
+// and returns a short-lived access token for the account. This is the only
+// REST-reachable path from a stored password to a bearer token: Home Assistant
+// has no password grant, so the flow has to be stepped through exactly as the
+// browser does (init, then submit the form, then exchange the code).
+//
+// The client id and redirect pair is one of Home Assistant's built-in clients,
+// which is what lets indieauth's redirect verification pass without any
+// client registration and without a network fetch of a client's web page.
+func (a *haAPI) loginForAccessToken(ctx context.Context, username, password string) (string, error) {
+	var init struct {
+		FlowID string `json:"flow_id"`
+	}
+	if err := a.cl.POST("/auth/login_flow").JSON(map[string]any{
+		"client_id":    onboardingClientID,
+		"redirect_uri": loginRedirectURI,
+		// The handler is a [type, id] pair, and the id is null for the built-in
+		// credentials provider: Home Assistant keys its provider registry by
+		// (type, id) and the default provider's id is None, not its type name.
+		// Sending ["homeassistant", "homeassistant"] is a 500 with
+		// "Unknown auth provider ('homeassistant', 'homeassistant')".
+		"handler": []any{credentialAuthHandler, nil},
+	}).OK(http.StatusOK).DoInto(ctx, &init); err != nil {
+		return "", fmt.Errorf("starting the Home Assistant login flow: %w", err)
+	}
+	if init.FlowID == "" {
+		return "", fmt.Errorf("the Home Assistant login flow carried no flow id")
+	}
+
+	var submit struct {
+		Type   string            `json:"type"`
+		Result string            `json:"result"`
+		Errors map[string]string `json:"errors"`
+	}
+	if err := a.cl.POST("/auth/login_flow/"+init.FlowID).JSON(map[string]any{
+		"client_id": onboardingClientID,
+		"username":  username,
+		"password":  password,
+	}).OK(http.StatusOK).DoInto(ctx, &submit); err != nil {
+		return "", fmt.Errorf("submitting the Home Assistant login credentials: %w", err)
+	}
+	if submit.Result == "" {
+		// A wrong password is a FORM result carrying errors.base, answered 200.
+		// Naming the reason matters here: this call is only ever made with the
+		// password Bloud generated, so a rejection means the account or its
+		// password changed outside Bloud, not that a user mistyped.
+		reason := submit.Errors["base"]
+		if reason == "" {
+			reason = "flow returned " + submit.Type + " with no authorization code"
+		}
+		return "", fmt.Errorf("the %s login was refused by Home Assistant: %s", username, reason)
+	}
+	return a.exchangeAuthCode(ctx, submit.Result)
+}
+
+// tokenValid reports whether an access token is still accepted. /api/config is
+// used because it is small and admin-gated, which is the permission level the
+// companion token needs anyway. /api/ would answer 200 to a revoked token: the
+// auth middleware marks a bad bearer as unauthenticated rather than refusing
+// it, and only an auth-required view turns that into a 401.
+//
+// It returns a three-state answer on purpose. A transport failure or a 5xx is
+// "inconclusive" (ok=false, err=nil is never returned for those): a caller that
+// mints a replacement token on an inconclusive read would mint one per pass
+// during a Home Assistant outage.
+func (a *haAPI) tokenValid(ctx context.Context, token string) (valid bool, err error) {
+	_, callErr := a.cl.GET("/api/config").
+		Header("Authorization", "Bearer "+token).
+		NoRetry().
+		Timeout(15 * time.Second).
+		Do(ctx)
+	if callErr == nil {
+		return true, nil
+	}
+	if appclient.StatusOf(callErr) == http.StatusUnauthorized {
+		return false, nil
+	}
+	return false, callErr
+}
+
 // finishStep closes one onboarding step that follows "user" with the owner
 // bearer token. A 403 means a previous reconciliation already closed the step:
 // declared AlreadyDone so the idempotent replay is a no-op, not a string

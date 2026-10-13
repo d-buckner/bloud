@@ -34,6 +34,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | How client credentials work (declare, reveal, rotate, revoke) | [features/client-credentials.md](features/client-credentials.md) |
 | Tools an agent asks Bloud itself, and where wrappers stop | [plans/native-mcp-endpoint.md](plans/native-mcp-endpoint.md) |
 | One MCP provider over Seerr and the arr stack, with many optional integrations | [plans/arr-mcp-provider.md](plans/arr-mcp-provider.md) |
+| A standalone MCP container for Home Assistant, and the token it has to mint | [plans/home-assistant-mcp.md](plans/home-assistant-mcp.md) |
 | In-flight designs | [plans/](plans/) |
 
 ## Sections

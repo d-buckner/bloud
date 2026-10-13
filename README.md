@@ -97,6 +97,12 @@ flowchart TD
         c_dav_mcp["dav-mcp"]
     end
 
+    subgraph app_ha_mcp["Home Assistant MCP"]
+        c_ha_mcp["ha-mcp"]
+        c_ha_mcp_gate["gate"]
+        c_ha_mcp_gate --> c_ha_mcp
+    end
+
     subgraph app_hermes["Hermes"]
         c_hermes["hermes"]
     end
@@ -181,10 +187,12 @@ flowchart TD
     app_calino -->|caldav| app_radicale
     app_dav_mcp -->|appApi| app_radicale
     app_dav_mcp -->|caldav| app_radicale
+    app_ha_mcp -->|appApi| app_homeassistant
     app_hermes -->|mcp| app_affine_mcp
     app_hermes -->|mcp| app_arr_mcp
     app_hermes -->|native-oidc| app_authentik
     app_hermes -->|mcp| app_dav_mcp
+    app_hermes -->|mcp| app_ha_mcp
     app_hermes -->|inference| ai_model
     app_hermes_webui -->|agentApi| app_hermes
     app_homeassistant -->|native-oidc| app_authentik
@@ -212,6 +220,7 @@ flowchart TD
     app_traefik -->|proxy| app_authentik
     app_traefik -->|proxy| app_calino
     app_traefik -->|proxy| app_dav_mcp
+    app_traefik -->|proxy| app_ha_mcp
     app_traefik -->|proxy| app_hermes
     app_traefik -->|proxy| app_hermes_webui
     app_traefik -->|proxy| app_homeassistant
@@ -249,6 +258,7 @@ removal.
 - **Hermes**: Self-improving AI agent with persistent memory, scheduled automations, and a web dashboard
 - **Hermes Web UI**: Browser and mobile front end for the Hermes agent, with SSO sign-in and a dedicated client password
 - **Home Assistant**: Open-source home automation platform
+- **Home Assistant MCP**: MCP tool server for Home Assistant, so an agent can search entities and design automations against the instance Bloud already runs
 - **Immich**: Self-hosted photo and video management
 - **Jellyfin**: Free software media system for streaming movies, TV, and music
 - **Navidrome**: Modern music server and streamer compatible with Subsonic/Airsonic clients
@@ -283,7 +293,7 @@ It's built for things you have the right to use.
 | **LDAP** | Jellyfin, Radicale, Seerr |
 | **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
 | **Native OIDC** | AFFiNE, Hermes, Hermes Web UI, Home Assistant, Immich, Paperless-ngx, Vaultwarden |
-| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP |
+| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Home Assistant MCP |
 <!-- END GENERATED LOGIN TABLE -->
 
 Clients that speak a native protocol, a Subsonic player or a TV app talking to Jellyfin, keep
