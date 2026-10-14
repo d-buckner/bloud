@@ -170,3 +170,9 @@ user; the app's own settings UI is the right place for this.
   published secret.
 - `e2e/tests/calino.spec.ts`: installing Calino brings Radicale with it, the
   bundle is gated by forward-auth, and after sign-in the SPA mounts.
+
+## Validation strategy
+
+`sso.strategy` is `forward-auth`: the app has no login of its own, so the gate
+is forward-auth on the whole origin. The browser talks to the DAV server under
+the user's own credential, which is Radicale's `ldap` strategy, not this app's.

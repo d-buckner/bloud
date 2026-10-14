@@ -409,3 +409,8 @@ failing, and a 4xx profile list failing with the sibling named.
 | Seerr keeps a services entry for a PVR that is gone | Either the entry's hostname is not the one Bloud writes (`binding.Node`), so it is treated as an admin's own entry, or no reconciliation has run since the uninstall: the prune happens in PostStart, and the framework does not re-queue consumers when a provider's node is removed. Reconcile, or delete the entry in Seerr → Settings → Services. |
 | Users can see no libraries | Library sync is best-effort and failed (logged as a warning); enable libraries in Seerr → Settings → Jellyfin, or check the Jellyfin connection. |
 | Container reports unhealthy / permission denied in logs | The config directory is not writable by uid 1000: PreStart's `0777` was not applied (check the mount source path). |
+
+## Validation strategy
+
+`sso.strategy` is `none`: Seerr manages its own users through Jellyfin login.
+The spec asserts its onboarding was wired by the configurator.

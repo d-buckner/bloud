@@ -357,3 +357,10 @@ What to look for, in order:
    endpoint and model, and that a second pass does not rewrite them.
 6. Subscribe to a feed from the app's own UI in a podcast player, and confirm the
    enclosure URLs carry the deployment's scheme.
+
+## Validation strategy
+
+`sso.strategy` is `none`: the only credential paths are the app's own session
+cookie and the per-feed tokens a player presents. The credential a person types
+is a Bloud-minted `clientPassword`, so the browser journey is a password login
+rather than an SSO round trip.

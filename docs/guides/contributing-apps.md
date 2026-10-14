@@ -847,10 +847,11 @@ stage that broke. Write one test case per observable behavior: converge →
   catalog → home tile → open → sign-in (`openAppFromHome` opens the app
   popup; only the sign-in body is app-specific). See
   `e2e/tests/jellyfin.spec.ts`.
-- An entry for the app in `validation.yaml` under `apps:` (auth strategy,
-  validation level, file globs, `e2e-project`). `./bloud validate` infers
-  the affected apps from this registry, so keeping it in sync means your
-  app's tests run automatically whenever its files change.
+- The affected-app registry is derived, not hand-edited: `./bloud validate`
+  reads `apps/*/metadata.yaml` for the app set and file globs, and treats
+  `e2e/tests/<name>.spec.ts` (when present) as the app's `e2e-project`. So no
+  `validation.yaml` edit is needed; the app's tests run automatically whenever
+  its files change.
 
 ## Reference Apps
 

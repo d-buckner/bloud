@@ -186,3 +186,10 @@ wrapper is an AFFiNE capability rather than a separate product.
 - **The MCP bearer is a long-lived instance credential.** One bearer means every
   harness acts as one principal, the same instance-level boundary the `mcp`
   contract states for every provider.
+
+## Validation strategy
+
+`sso.strategy` is `none`: a harness authenticates to the MCP endpoint with a
+bearer Bloud generates, so there is no browser journey to gate. The regression
+gates are the conformance harness, the configurator tests, and the
+shipped-catalog contract-declaration test that pins the `appApi` chain.

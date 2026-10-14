@@ -305,3 +305,9 @@ token. No test reaches a Home Assistant over a network.
 
 selfh.st/icons has no ha-mcp entry, and the app is `headless`, so there is no tile
 for an icon to appear on. The app ships none, like the other MCP wrappers.
+
+## Validation strategy
+
+Headless with `sso.strategy` of `none`: the app authenticates to its target with
+a token rather than through the identity provider, so nothing here is exercised
+from a browser.

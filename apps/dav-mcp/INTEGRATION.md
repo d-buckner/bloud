@@ -193,3 +193,11 @@ real dependency-graph path):
 
 selfh.st/icons has no dav-mcp entry, so the app ships no icon and the
 dashboard falls back to the letter avatar.
+
+## Validation strategy
+
+`sso.strategy` is `none`: a harness authenticates to the MCP endpoint with a
+bearer Bloud generates, so there is no browser journey to gate. The regression
+gates are the conformance harness, the configurator tests, and the
+shipped-catalog contract-declaration test that pins the `caldav` and `appApi`
+chains.

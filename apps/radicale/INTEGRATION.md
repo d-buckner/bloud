@@ -409,3 +409,10 @@ Radicale container and the feed providers.
   calendar is mounted at `/<user>/family/`, so a personal collection with
   that name collides with the mount. Nothing detects it; the name is reserved
   by convention.
+
+## Validation strategy
+
+`sso.strategy` is `ldap` for the same reason Jellyfin's is: CalDAV and CardDAV
+clients cannot follow a browser SSO redirect, so the app has to verify the
+password the client sends. The regression gate is the DAV round trip itself,
+not a page.

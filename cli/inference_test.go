@@ -2,7 +2,11 @@
 
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // testInference is a small manifest shaped like the real validation.yaml
 // inference block: module globs ordered most-specific first, a wildcard for
@@ -190,5 +194,80 @@ func TestRealManifestRootConfigTriggersWildcard(t *testing.T) {
 	triggers, _, _ := inferTriggers([]string{"package.json"}, manifest)
 	if !triggers["*"] {
 		t.Errorf("package.json change did not trigger the wildcard: %v", triggers)
+	}
+}
+
+// TestDeriveAppsMatchesCatalog pins the derivation against what the catalog
+// declares, so a new app is picked up with no validation.yaml edit and the
+// derivation reproduces the registry the block used to carry. System apps and
+// non-app directories never appear.
+func TestDeriveAppsMatchesCatalog(t *testing.T) {
+	root, err := getProjectRoot()
+	if err != nil {
+		t.Skipf("no project root available: %v", err)
+	}
+	apps, err := deriveApps(root)
+	if err != nil {
+		t.Fatalf("deriveApps: %v", err)
+	}
+	for _, excluded := range []string{"authentik", "traefik", "configtest"} {
+		if _, ok := apps[excluded]; ok {
+			t.Errorf("deriveApps included %q, want it excluded", excluded)
+		}
+	}
+	cases := []struct {
+		name    string
+		project bool
+	}{
+		{"jellyfin", true},      // ldap, has a spec
+		{"sonarr", true},        // forward-auth, has a spec
+		{"affine-mcp", false},   // none, no spec
+		{"hermes-webui", false}, // native-oidc, no spec
+		{"podly", true},         // none, has a spec
+		{"seerr", true},         // none, has a spec
+	}
+	for _, tc := range cases {
+		app, ok := apps[tc.name]
+		if !ok {
+			t.Errorf("deriveApps missing %q", tc.name)
+			continue
+		}
+		if len(app.Files) != 1 || app.Files[0] != "apps/"+tc.name+"/**" {
+			t.Errorf("deriveApps[%q].Files = %v, want [apps/%s/**]", tc.name, app.Files, tc.name)
+		}
+		if (app.E2EProject != "") != tc.project {
+			t.Errorf("deriveApps[%q].E2EProject = %q, want present=%v", tc.name, app.E2EProject, tc.project)
+		}
+	}
+}
+
+// TestDeriveAppsPicksUpANewApp is the regression this change exists to prevent:
+// a fresh app directory with a metadata.yaml appears in the derived registry
+// with no validation.yaml edit.
+func TestDeriveAppsPicksUpANewApp(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "apps", "newapp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "apps", "newapp", "metadata.yaml"), []byte("name: newapp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "e2e", "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "e2e", "tests", "newapp.spec.ts"), []byte("// x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	apps, err := deriveApps(root)
+	if err != nil {
+		t.Fatalf("deriveApps: %v", err)
+	}
+	app, ok := apps["newapp"]
+	if !ok {
+		t.Fatal("deriveApps did not pick up a new app with a metadata.yaml and no validation.yaml entry")
+	}
+	if app.E2EProject != "newapp" {
+		t.Errorf("deriveApps[newapp].E2EProject = %q, want newapp", app.E2EProject)
 	}
 }

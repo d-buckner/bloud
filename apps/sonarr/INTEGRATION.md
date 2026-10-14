@@ -312,3 +312,8 @@ cd apps && go test ./sonarr/...
 | Grabs land uncategorised | The `tv-sonarr` category does not exist in qBittorrent. qBittorrent never creates categories by itself; `PostStart` creates it, so a reconcile fixes it. |
 | `qBittorrent download client test failed` in the log | The provider cannot be reached from the Sonarr container at `apps-qbittorrent:8081`, or its WebUI subnet whitelist was reset by a config edit. |
 | root folder missing (`/api/v3/rootfolder` empty) | `PostStart` has not run since the volume was created, or `POST /api/v3/rootfolder` failed (check the API key). A reconcile re-runs it. |
+
+## Validation strategy
+
+`sso.strategy` is `forward-auth`: the Servarr web UIs (and qBittorrent) have no
+SSO of their own, so the browser journey is the regression gate.
