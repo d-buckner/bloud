@@ -256,6 +256,18 @@ apps:
       - apps/navidrome/**
     e2e-project: navidrome
 
+  # Podly cannot delegate sign-in at all: its only credential paths are its own
+  # session cookie and the per-feed tokens a player presents. `none` names that
+  # ingress, and the credential a person types is a Bloud-minted clientPassword
+  # (see apps/podly/INTEGRATION.md), so the browser journey is a password login
+  # rather than an SSO round trip.
+  podly:
+    auth: none
+    validation-level: full
+    files:
+      - apps/podly/**
+    e2e-project: podly
+
   homeassistant:
     auth: native-oidc
     validation-level: embed

@@ -67,6 +67,7 @@ var conformanceTable = []appSpec{
 	{Dir: "jellyfin", Node: "apps-jellyfin", DefaultPort: 8096},
 	{Dir: "navidrome", Node: "apps-navidrome", DefaultPort: 4533},
 	{Dir: "paperless-ngx", Node: "apps-paperless-ngx", DefaultPort: 8000, WithSSO: true},
+	{Dir: "podly", Node: "apps-podly", DefaultPort: 5001},
 	{Dir: "prowlarr", Node: "apps-prowlarr", DefaultPort: 9696},
 	{Dir: "qbittorrent", Node: "apps-qbittorrent", DefaultPort: 8081},
 	{Dir: "radarr", Node: "apps-radarr", DefaultPort: 7878},

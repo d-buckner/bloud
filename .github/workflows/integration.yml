@@ -73,6 +73,12 @@ jobs:
             test-run: 'TestCalendarAggregation'
           - group: vaultwarden
             test-run: 'TestVaultwarden'
+          # Podly gets its own leg because of its image: 4.73 GB of compressed
+          # layers, which is the slowest pull in the catalog by an order of
+          # magnitude. Sharing a runner with another group would make that pull
+          # the thing that group's deadline has to survive.
+          - group: podly
+            test-run: 'TestPodly'
           - group: media-stack
             test-run: 'TestMediaStack'
           - group: catalog

@@ -170,6 +170,44 @@ export async function ensureInstalled(name: string): Promise<void> {
   await waitForApp(name, 'running');
 }
 
+/**
+ * One client credential, as the reveal endpoint hands it over. This is the only
+ * API call in the suite that returns a credential value: the descriptor list at
+ * the same path deliberately has no value field at any reveal policy.
+ *
+ * Under `reveal: once` (the policy every app in the catalog declares) this is
+ * single-use per value: a second reveal of the same credential answers 409, and
+ * only a rotation produces one that can be shown again. A spec that needs the
+ * value therefore has to ask before anything else has.
+ */
+export interface ClientCredential {
+  secret: string;
+  value: string;
+  snippet: string;
+}
+
+export async function revealClientCredential(app: string, secret: string): Promise<ClientCredential> {
+  return fetchJSON<ClientCredential>(
+    `/api/apps/${app}/client-credentials/${secret}/reveal`,
+    { method: 'POST', body: '{}' },
+  );
+}
+
+/**
+ * Rotates a client credential and returns the new value, which a rotation always
+ * hands over (that is what makes a lost credential recoverable).
+ *
+ * The call is not free: rotation ends every live session the app holds and forces
+ * the recreate that installs whatever change the rotation implies. A spec should
+ * reach for it only when the reveal is already spent.
+ */
+export async function rotateClientCredential(app: string, secret: string): Promise<ClientCredential> {
+  return fetchJSON<ClientCredential>(
+    `/api/apps/${app}/client-credentials/${secret}/rotate`,
+    { method: 'POST', body: '{}' },
+  );
+}
+
 // External apps (PR 1: launchers only). A launcher is a tile that opens a URL.
 export interface Launcher {
   id: string;

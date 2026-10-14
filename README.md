@@ -142,6 +142,10 @@ flowchart TD
         c_paperless_ngx --> c_paperless_ngx_redis
     end
 
+    subgraph app_podly["Podly"]
+        c_podly["podly"]
+    end
+
     subgraph app_prowlarr["Prowlarr"]
         c_prowlarr["prowlarr"]
     end
@@ -228,6 +232,7 @@ flowchart TD
     app_traefik -->|proxy| app_jellyfin
     app_traefik -->|proxy| app_navidrome
     app_traefik -->|proxy| app_paperless_ngx
+    app_traefik -->|proxy| app_podly
     app_traefik -->|proxy| app_prowlarr
     app_traefik -->|proxy| app_qbittorrent
     app_traefik -->|proxy| app_radarr
@@ -263,6 +268,7 @@ removal.
 - **Jellyfin**: Free software media system for streaming movies, TV, and music
 - **Navidrome**: Modern music server and streamer compatible with Subsonic/Airsonic clients
 - **Paperless-ngx**: Document management system that turns scans and PDFs into a searchable archive
+- **Podly**: Removes ads from podcasts and serves the ad-free versions as RSS feeds
 - **Prowlarr**: Indexer manager that syncs indexers to Sonarr, Radarr, and other PVRs
 - **qBittorrent**: BitTorrent client with a web interface
 - **Radarr**: Movie collection manager for Usenet and BitTorrent users
@@ -293,12 +299,17 @@ It's built for things you have the right to use.
 | **LDAP** | Jellyfin, Radicale, Seerr |
 | **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
 | **Native OIDC** | AFFiNE, Hermes, Hermes Web UI, Home Assistant, Immich, Paperless-ngx, Vaultwarden |
-| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Home Assistant MCP |
+| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Home Assistant MCP, Podly |
 <!-- END GENERATED LOGIN TABLE -->
 
 Clients that speak a native protocol, a Subsonic player or a TV app talking to Jellyfin, keep
 the login path their protocol defines. Bloud fronts the web UIs and stays out of the way of
 those.
+
+The last row is the honest exception: those apps keep an account of their own. The MCP servers
+are machine endpoints guarded by a token Bloud mints, and Podly is a person-facing app that
+cannot join a provider at all, so its sign-in password is one Bloud generates and shows you
+once, from the app's menu on the dashboard.
 
 ## what is not done yet
 

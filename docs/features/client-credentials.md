@@ -97,11 +97,13 @@ response carries `endsAllSessions: true` so the UI can render the confirm
 honestly.
 
 **Revoke** ends every live session without changing the credential.
-`POST .../revoke` submits a `RevokeClientSessionsIntent`; the orchestrator
-calls the configurator's `RevokeSessions` through the container exec channel
-and forces a recreate, because the app loaded its sessions into memory at boot
-and never re-reads the file while it runs. The response is 202: the request is
-not the effect.
+`POST .../revoke` submits a `RevokeClientSessionsIntent`; the orchestrator calls
+the configurator's `RevokeSessions` and forces a recreate, because a store the
+app has already loaded is not something a host-side change can reach. What
+`RevokeSessions` does is the app's own business: hermes-webui deletes its session
+file through the container exec channel, and Podly rotates the key its session
+cookies are signed under, which is the only way to end a session in an app that
+keeps no list of them. The response is 202: the request is not the effect.
 
 | | Rotate | Revoke |
 |---|---|---|
@@ -128,6 +130,21 @@ declaring `always` today is shipping a remote plaintext endpoint. Prefer `once`.
 [client-credentials-hermes-webui-pilot.md](../plans/client-credentials-hermes-webui-pilot.md)
 is the first app built on this pattern: hermes-webui, where a browser signs in
 with OIDC and a phone signs in with a Bloud-minted password.
+
+## The second app: the credential as the only login
+
+[apps/podly/INTEGRATION.md](../../apps/podly/INTEGRATION.md) is the second app on
+the pattern, and it exercises the parts the pilot left soft. Podly cannot join a
+provider at all, so the client password is not one path next to SSO: it is the
+sign-in, for the browser and for every feed.
+
+It is also the first app where `rotate: bloud` has to do real work. In the pilot a
+rotation reaches the app through its config file, because the app re-reads that
+file at boot. Podly reads its admin password from the environment only while its
+user table is empty, so the rotated value can only arrive as an API call, and the
+configurator makes it: it signs in with a second, non-revealed service account
+and sets the human account's password through the app's own user API. A `rotate`
+policy that could not do that would be a label.
 
 ## API summary
 

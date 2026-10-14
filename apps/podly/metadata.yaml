@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: podly
+displayName: Podly
+description: Removes ads from podcasts and serves the ad-free versions as RSS feeds
+category: media
+port: 5001
+# The `latest` image variant bundles local Whisper and its CPU torch: 4.73 GB of
+# compressed layers, summed from the manifest of 2.7.5-latest (amd64), one layer
+# of which is 4.38 GB of Python packages. Unpacked is an estimate rather than a
+# measurement, because a registry publishes no uncompressed layer sizes: gzip on
+# Python packages and shared libraries runs about 2x, so about 9.5 GB, and that
+# is the image alone, before the app has downloaded an episode.
+#
+# The `lite` variant of the same release is 0.45 GB compressed and cannot
+# transcribe without a hosted Whisper.
+estimatedSizeMB: 9500
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+
+# Podly cannot delegate authentication, and this is not a gap in its
+# configuration: the only credential paths the app has are its own session
+# cookie (bcrypt-hashed local users) and the per-feed `feed_token`/`feed_secret`
+# query parameters a podcast player presents. There is no OIDC client, no
+# trusted-header mode, and no proxy-auth hook, so `forward-auth` would gate the
+# browser and still leave the feeds to their own devices.
+#
+# The feeds are the reason to keep the app's own auth on rather than off. A
+# player cannot follow an SSO redirect, so a bypassed /feed path is the only way
+# a phone can subscribe; with `REQUIRE_AUTH=false` that path is open to anyone
+# who finds it, and feed ids are sequential integers. With auth on, the same
+# path demands a feed token the app mints per share link, which is a credential
+# rather than an unguessable URL. See INTEGRATION.md.
+sso:
+  strategy: none
+
+# The credential a person types into Podly's sign-in form. Bloud mints it,
+# stores it, reveals it once, and can rotate it; the username is the fixed
+# `bloud` account the configurator creates and keeps in step (the reveal snippet
+# carries a URL and a password, so the name has to be the part that never
+# changes).
+#
+# `rotate: bloud` is backed by a second, non-revealed admin account: Podly reads
+# PODLY_ADMIN_PASSWORD once, when its users table is still empty, so a rotated
+# value could never reach the app through the environment. The configurator
+# signs in as the service account and sets the human account's password through
+# the app's own API instead. See INTEGRATION.md.
+provides:
+  clientPassword:
+    secrets:
+      - password
+    clientAccess:
+      secret: password
+      reveal: once
+      rotate: bloud
+      label: "Podly sign-in password"
+      reaches: "Podly's web UI and every ad-free feed it serves, as the shared bloud account"
+      snippet: url-and-password
+
+containers:
+  # One container, and it runs two processes: the image's start script launches
+  # the writer (which owns every database write, including user mutations, and
+  # is reached over a local IPC socket), waits for its IPC port, then starts the
+  # web app. Both are in one container by upstream's design, so there is nothing
+  # for the graph to order here.
+  - name: apps-podly
+    image: ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.5-latest
+    network: apps-net
+    restartPolicy: always
+    environment:
+      TZ: Etc/UTC
+      PORT: "5001"
+      # The image's entrypoint drops to its own unprivileged `appuser` only when
+      # both are set; with neither it runs the whole app as root. These are
+      # upstream compose's defaults.
+      PUID: "1000"
+      PGID: "1000"
+    # The app reads its configuration from process environment and nothing else,
+    # and the values that matter (auth on, the service account's password, the
+    # session-signing key) are per-install and rotatable. So they come from a
+    # file the configurator writes rather than from `environment:`, which can
+    # only render static metadata. The runtime reads this file on the host at
+    # create time: it is never mounted, so the secret stays out of the container
+    # spec and out of `podman inspect`.
+    envFile: "{{appDataDir}}/config/env"
+    ports:
+      - host: 5001
+        container: 5001
+    volumes:
+      # The image's whole state tree: SQLite db, the config store, downloaded and
+      # processed audio, and logs all live under /app/src/instance.
+      - source: "{{appDataDir}}/instance"
+        destination: /app/src/instance
+    healthCheck:
+      # Upstream's own probe. `/` is in the app's public paths, so it answers
+      # without a session even with REQUIRE_AUTH on, and the image is a Python
+      # image, so urllib is always there (there is no curl).
+      test:
+        - CMD-SHELL
+        - 'python3 -c "import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:5001/\")"'
+      interval: 10
+      timeout: 10
+      # First boot runs the Flask-Migrate migrations before the listener opens,
+      # and the start script waits up to 30s for the writer's IPC socket. Ten
+      # minutes of headroom is for a cold pull on slow hardware.
+      retries: 60
