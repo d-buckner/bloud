@@ -96,45 +96,10 @@ containers:
       timeout: 5
       retries: 10
 
-  # The configurator for this node writes the env file every Penpot container is
-  # created from, which is why the exporter and the admin console below declare a
-  # dependency on it: the graph has to order the writer before the readers, and
-  # a declared env file that does not exist yet is an error, not a no-op.
-  - name: apps-penpot-backend
-    image: docker.io/penpotapp/backend:2.18.3
-    networks:
-      - apps-net
-      - penpot-internal
-    restartPolicy: always
-    envFile: "{{appDataDir}}/config/penpot.env"
-    # The database credentials are the one part of Penpot's environment that a
-    # static manifest *can* state: `{{postgresPassword}}` is rendered by the
-    # catalog renderer, and the env file (whose values win over `environment:`)
-    # deliberately does not carry these three keys.
-    environment:
-      PENPOT_DATABASE_URI: postgresql://apps-penpot-postgres/penpot
-      PENPOT_DATABASE_USERNAME: penpot
-      PENPOT_DATABASE_PASSWORD: "{{postgresPassword}}"
-    extraHosts:
-      # The backend performs the OIDC code exchange and the discovery fetch
-      # server-side, by the same hostname the browser uses.
-      - sso.localhost:host-gateway
-    volumes:
-      - source: "{{appDataDir}}/assets"
-        destination: /opt/data/assets
-    dependsOn:
-      - apps-penpot-postgres
-      - apps-penpot-valkey
-    healthCheck:
-      # A TCP probe, not an HTTP one: the JVM opens its listener only after
-      # migrations and startup tasks finish, so "something is listening on 6060"
-      # is the readiness signal this image can be checked against without
-      # depending on a management path that is not part of its documented API.
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6060'"]
-      interval: 10
-      timeout: 10
-      retries: 90
-
+  # The exporter reads the env file the backend's configurator writes, so the
+  # graph has to order the writer before the reader: a declared env file that
+  # does not exist yet is an error, not a no-op. Same for the admin console and
+  # the frontend.
   - name: apps-penpot-exporter
     image: docker.io/penpotapp/exporter:2.18.3
     network: penpot-internal
@@ -217,3 +182,55 @@ containers:
       interval: 5
       timeout: 10
       retries: 60
+
+  # Listed last, and the reason is a line of orchestrator code rather than a
+  # preference: primaryContainerNode() returns the app's *last* declared
+  # container, and that node is where ensureSSO provisions the OIDC client, in
+  # its own lifecycle pass, before its own container is created. Penpot's JVM
+  # reads PENPOT_OIDC_* exactly once, at process start, and never retries: with
+  # this block above the routed frontend, Authentik got the client 40 seconds
+  # after the JVM had already failed to discover it, the login page offered a
+  # provider that could not authenticate anyone, and nothing short of a resync
+  # recreate could fix it. See INTEGRATION.md.
+  #
+  # dependsOn, not this order, is what makes the graph converge, so being last
+  # here does not delay anything: the exporter, the admin console, and the
+  # frontend all still wait on this node, and this node waits only on its
+  # database.
+  #
+  # This configurator also writes the env file every other Penpot container is
+  # created from, which is what the dependsOn entries above point at.
+  - name: apps-penpot-backend
+    image: docker.io/penpotapp/backend:2.18.3
+    networks:
+      - apps-net
+      - penpot-internal
+    restartPolicy: always
+    envFile: "{{appDataDir}}/config/penpot.env"
+    # The database credentials are the one part of Penpot's environment that a
+    # static manifest *can* state: `{{postgresPassword}}` is rendered by the
+    # catalog renderer, and the env file (whose values win over `environment:`)
+    # deliberately does not carry these three keys.
+    environment:
+      PENPOT_DATABASE_URI: postgresql://apps-penpot-postgres/penpot
+      PENPOT_DATABASE_USERNAME: penpot
+      PENPOT_DATABASE_PASSWORD: "{{postgresPassword}}"
+    extraHosts:
+      # The backend performs the OIDC code exchange and the discovery fetch
+      # server-side, by the same hostname the browser uses.
+      - sso.localhost:host-gateway
+    volumes:
+      - source: "{{appDataDir}}/assets"
+        destination: /opt/data/assets
+    dependsOn:
+      - apps-penpot-postgres
+      - apps-penpot-valkey
+    healthCheck:
+      # A TCP probe, not an HTTP one: the JVM opens its listener only after
+      # migrations and startup tasks finish, so "something is listening on 6060"
+      # is the readiness signal this image can be checked against without
+      # depending on a management path that is not part of its documented API.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6060'"]
+      interval: 10
+      timeout: 10
+      retries: 90

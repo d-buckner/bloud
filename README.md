@@ -145,13 +145,11 @@ flowchart TD
     subgraph app_penpot["Penpot"]
         c_penpot_postgres["postgres"]
         c_penpot_valkey["valkey"]
-        c_penpot_backend["backend"]
         c_penpot_exporter["exporter"]
         c_penpot_mcp["mcp"]
         c_penpot_admin_console["admin-console"]
         c_penpot_frontend["frontend"]
-        c_penpot_backend --> c_penpot_postgres
-        c_penpot_backend --> c_penpot_valkey
+        c_penpot_backend["backend"]
         c_penpot_exporter --> c_penpot_backend
         c_penpot_exporter --> c_penpot_valkey
         c_penpot_mcp --> c_penpot_backend
@@ -161,6 +159,8 @@ flowchart TD
         c_penpot_frontend --> c_penpot_exporter
         c_penpot_frontend --> c_penpot_mcp
         c_penpot_frontend --> c_penpot_admin_console
+        c_penpot_backend --> c_penpot_postgres
+        c_penpot_backend --> c_penpot_valkey
     end
 
     subgraph app_podly["Podly"]

@@ -1,6 +1,6 @@
 # Penpot Integration
 
-## Status: implemented, verified against the image's own entrypoint and source; booted once in CI, which is where the MCP probe was caught
+## Status: implemented; booted in CI, which is where the three things that only a real boot can catch were caught
 
 `penpot` is [Penpot](https://penpot.app): an open-source design platform for
 interfaces, design systems, and prototypes. It is the first catalog app that
@@ -137,6 +137,28 @@ apps-penpot-backend` for the two strings Penpot writes (`provider initialized`
 and `unable to initialize auth provider`): it is the only signal that
 distinguishes a working SSO from a healthy-looking broken one, and no unit test
 can make it.
+
+**And the first boot was too early for the client to exist.** That one was found
+by running it. Bloud provisions the app's OIDC client in `ensureSSO`, which runs
+on the app's *primary* node, and `primaryContainerNode` is the last container the
+app declares. With the frontend declared last, provisioning happened in the
+frontend's pass, 40 seconds after the backend's JVM had already tried to
+`discover-oidc-config` and been answered with a 404 by Authentik: the client was
+not created yet. Penpot does not retry, so the install converged with every
+container healthy and a login button that goes nowhere, and the browser test's
+click produced no navigation at all.
+
+The fix is the order of the blocks in `metadata.yaml`: the backend is declared
+last, so it is the primary node, so `ensureSSO` runs in its own pass before its
+own container is created. `dependsOn` is what orders the graph, so nothing else
+about convergence changes. `TestMetadataAgreesWithCode` pins the last entry,
+because an alphabetical tidy-up of that file would otherwise take SSO away from
+every new Penpot install, silently.
+
+The alternative reading is that the engine should not make list order load-bearing
+for when an app's identity provider gets created, and that an explicit
+"this node owns the app's SSO" field would be the better shape. That is a
+catalog-and-orchestrator change, not an app one, and it is worth having.
 
 The rest of the OIDC block follows Penpot's requirements rather than Bloud's
 preferences. `email` must be in the scopes because Penpot identifies the account

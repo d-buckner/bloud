@@ -511,6 +511,15 @@ func TestMetadataAgreesWithCode(t *testing.T) {
 	}
 	require.Len(t, md.Containers, 7, "every container is accounted for by a constant")
 
+	// The last declared container is the one the orchestrator treats as the
+	// app's entry point (primaryContainerNode), and that is the node ensureSSO
+	// provisions the OIDC client on, before that node's own container starts.
+	// Penpot's backend reads the client once, at JVM start, so it must be that
+	// node; reordering this file for readability would silently take SSO away
+	// from the first boot.
+	assert.Equalf(t, backendNode, md.Containers[len(md.Containers)-1].Name,
+		"%s must stay last: it is the node Bloud provisions this app's SSO on", backendNode)
+
 	// The containers that read Penpot's environment must name the file the
 	// configurator writes; the ones that do not must not declare it, or a
 	// container is created asking for a file nothing writes. The admin console
