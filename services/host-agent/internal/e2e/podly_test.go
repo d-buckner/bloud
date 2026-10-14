@@ -172,7 +172,7 @@ func TestPodlyClientCredentialLifecycle(t *testing.T) {
 		}
 
 		deadline := time.Now().Add(8 * time.Minute)
-		for podlyLogin(t, podlyHumanUser, rotated) != http.StatusOK {
+		for podlyLoginStatus(t, podlyHumanUser, rotated) != http.StatusOK {
 			if time.Now().After(deadline) {
 				t.Fatal("the rotated password never became the one the app accepts")
 			}
@@ -199,6 +199,7 @@ func TestPodlyClientCredentialLifecycle(t *testing.T) {
 		if err := waitForSessionDeath(t, session); err != nil {
 			t.Error(err)
 		}
+		podlyServes(t)
 		if status := podlyLogin(t, podlyHumanUser, password); status != http.StatusOK {
 			t.Errorf("after a revoke the password should still sign in: status %d, want 200", status)
 		}
@@ -267,6 +268,7 @@ func podlyWhisperSection(t *testing.T, session *http.Cookie) map[string]any {
 // save reset the consumer and the consumer's pass delivered it.
 func TestPodlyTakesItsTranscriptionEndpointFromSettings(t *testing.T) {
 	waitAppRunning(t, "podly", 2*time.Minute)
+	podlyServes(t)
 
 	const (
 		endpoint = "https://transcribe.invalid.test/v1"
@@ -341,6 +343,38 @@ func podlyLogin(t *testing.T, username, password string) int {
 	return resp.StatusCode
 }
 
+// podlyLoginStatus is podlyLogin for a poll: a transport error is "not yet",
+// not a failure.
+//
+// A credential change recreates the container, so the port refuses or resets
+// for as long as the app takes to come back. A loop that treats that as fatal
+// fails on the first attempt after the restart it just asked for, which is the
+// wrong reason to stop: the claim under test is that the rotated password
+// eventually becomes the one the app accepts.
+func podlyLoginStatus(t *testing.T, username, password string) int {
+	t.Helper()
+	resp, err := tryPodlyLogin(username, password)
+	if err != nil {
+		t.Logf("sign-in attempt while the app settles: %v", err)
+		return -1
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+// podlyServes waits for the app's own port to answer again.
+//
+// The app row is not enough here: the orchestrator promotes the node on the
+// health check it ran, and a recreate takes the listener down again when the old
+// container stops, so "running" and "nothing is listening" are both true for a
+// stretch after a rotate or a revoke. Anything that signs in after one of those
+// needs the port, not the row.
+func podlyServes(t *testing.T) {
+	t.Helper()
+	waitHTTPOrFatal(t, 3*time.Minute, podlyURL+"/api/auth/status")
+}
+
 // podlySession signs in and returns the cookie a live session rides on.
 func podlySession(t *testing.T, username, password string) *http.Cookie {
 	t.Helper()
@@ -363,12 +397,16 @@ func podlySession(t *testing.T, username, password string) *http.Cookie {
 
 func podlyLoginRequest(t *testing.T, username, password string) *http.Response {
 	t.Helper()
-	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
-	resp, err := http.Post(podlyURL+"/api/auth/login", "application/json", strings.NewReader(body))
+	resp, err := tryPodlyLogin(username, password)
 	if err != nil {
 		t.Fatalf("POST /api/auth/login: %v", err)
 	}
 	return resp
+}
+
+func tryPodlyLogin(username, password string) (*http.Response, error) {
+	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
+	return http.Post(podlyURL+"/api/auth/login", "application/json", strings.NewReader(body))
 }
 
 // podlySessionAlive asks an authenticated endpoint whether a cookie still gets
@@ -389,6 +427,27 @@ func podlySessionAlive(t *testing.T, session *http.Cookie) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
+// podlySessionDead is podlySessionAlive for a poll, and it can say "cannot
+// tell": a transport error means nothing is listening yet, which is not the same
+// answer as a cookie that no longer gets in. Reading it as dead would let the
+// recreate window pass the revocation assertion for the wrong reason.
+func podlySessionDead(t *testing.T, session *http.Cookie) bool {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, podlyURL+"/api/auth/me", nil)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+	req.AddCookie(session)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Logf("session check while the app settles: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode != http.StatusOK
+}
+
 // waitForSessionDeath waits for a revoke to land. The endpoint answers 202: the
 // revocation is an intent, and it takes a convergence pass plus the recreate that
 // installs the new signing key before an old cookie stops verifying.
@@ -396,7 +455,9 @@ func waitForSessionDeath(t *testing.T, session *http.Cookie) error {
 	t.Helper()
 	deadline := time.Now().Add(8 * time.Minute)
 	for {
-		if !podlySessionAlive(t, session) {
+		// A container mid-recreate is not a session that has died, so the cookie is
+		// only judged by a helper that can say "cannot tell".
+		if podlySessionDead(t, session) {
 			return nil
 		}
 		if time.Now().After(deadline) {
