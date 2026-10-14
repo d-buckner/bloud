@@ -3,6 +3,7 @@
 package orchestrator
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,7 +18,15 @@ import (
 
 // fakeSecrets is an in-memory AppSecretsProvider: the published bag the
 // orchestrator resolves a contract's credentials from.
+//
+// The lock is not decoration. A topological level runs concurrently, so two
+// sibling nodes resyncing in one pass can read and write this bag at the same
+// time, and the real `secrets.Manager` allows for exactly that with its own
+// RWMutex. A fake without one reports a race in the harness rather than a bug in
+// the code under test, and it took a two-node app (ha-mcp's server and gate,
+// both resyncing against one secrets bag) to hit it.
 type fakeSecrets struct {
+	mu        sync.RWMutex
 	published map[string]map[string]string
 	values    map[string]string
 }
@@ -27,6 +36,8 @@ func newFakeSecrets() *fakeSecrets {
 }
 
 func (f *fakeSecrets) publish(app, key, value string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.published[app] == nil {
 		f.published[app] = make(map[string]string)
 	}
@@ -38,6 +49,8 @@ func (f *fakeSecrets) GenerateAppAdminPassword(appName string) (string, error) {
 }
 
 func (f *fakeSecrets) GetAppSecret(appName, key string) string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.published[appName][key]
 }
 
@@ -47,11 +60,15 @@ func (f *fakeSecrets) SetAppSecret(appName, key, value string) error {
 }
 
 func (f *fakeSecrets) DeleteAppSecrets(appName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	delete(f.published, appName)
 	return nil
 }
 
 func (f *fakeSecrets) SetAppContractValue(appName, contract, key, value string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.values == nil {
 		f.values = make(map[string]string)
 	}
@@ -60,6 +77,8 @@ func (f *fakeSecrets) SetAppContractValue(appName, contract, key, value string) 
 }
 
 func (f *fakeSecrets) GetAppContractValue(appName, contract, key string) string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.values[appName+"/"+contract+"/"+key]
 }
 
