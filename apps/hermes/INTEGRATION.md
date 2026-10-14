@@ -31,6 +31,59 @@ own `config.yaml`, memory, skills, and SQLite session store there on first boot.
 Bloud writes **only** the SSO keys into that `config.yaml` (see below); every
 other key belongs to the user and is preserved untouched.
 
+### The attachment inbox (the one tree Hermes shares)
+
+`{{dataDir}}/shared-trees/hermes/inbox` mounts at `/bloud-hermes/inbox` in this
+container **and** in `apps-hermes-webui`. Hermes only reads it; hermes-webui
+writes uploads there.
+
+The reason it has to be the same path on both sides is that hermes-webui's
+attachment protocol passes a path, not bytes. It writes the file, then puts the
+literal absolute path into the user message (`static/messages.js` builds
+`[Attached files: <abs path>]`), and the agent opens it with `read_file`,
+`vision_analyze`, or a shell command. Images are the exception: for a
+vision-capable model the web UI base64-embeds the bytes as an `image_url` part
+(`api/streaming.py:_build_native_multimodal_message`), so no path crosses the
+boundary and those worked before this mount existed. Everything else was ENOENT,
+because the path the agent was handed existed only inside the web UI's mount
+namespace.
+
+Upstream agrees this is the deployment's job. nesquena/hermes-webui#2850, closed
+2026-07-19: "Split-container deployments still need the attachment directory
+mounted at a path visible to the Agent, but that is a deployment-filesystem
+contract rather than a virtual-path bug in the upload payload."
+
+`PreStart` also creates the directory at `1777`. The orchestrator creates mount
+sources `0755` owned by the host agent, and the web UI's runtime uid is neither
+that owner nor a group member, so without the world-write bit every upload is
+`EACCES` inside a mount that looks perfectly healthy.
+
+The sticky bit is the part that is easy to skip and hard to notice. A world-writable
+directory lets any uid in either container unlink or rename a file it does not own,
+and both sides can reach it: the agent has shell access, and the tree sits inside
+the web UI's own file API, which serves delete, rename and move to every signed-in
+user. Sticky leaves the owner's own delete working and takes everyone else's away.
+
+It has to be a plain `os.Chmod`, not `managedfile.EnsureWritable`: that helper
+compares only `.Perm()`, so it returns early on a directory that is already `0777`
+and never adds the bit, which would leave fresh installs sticky and upgraded
+installs not. And it is `os.FileMode(0o777)|os.ModeSticky`, not
+`os.FileMode(0o1777)`, because `FileMode`'s sticky flag is its own high bit and the
+octal literal silently means a plain `0777`.
+
+What this does **not** fix, in case a later reader is chasing one of them:
+
+- Agent-produced media still will not render in the web UI. Its `/api/file/raw`
+  only serves `$HERMES_HOME`, `/tmp`, the last workspace, and
+  `MEDIA_ALLOWED_ROOTS`, and none of those exist here or overlap with
+  `/opt/data/workspace`.
+- The web UI cannot `import agent` (upstream installs it from a shared
+  `hermes-agent-src` volume), so its `get_config()` reads a nonexistent
+  `/root/.hermes/config.yaml` and every config-derived default falls back.
+- Images sent to a model without vision still fail silently: every rejection in
+  `_build_native_multimodal_message` is a bare `continue`, so the turn degrades
+  to text with no error anywhere.
+
 ## The data-directory ownership contract (issue #136)
 
 The host agent reads and rewrites `config.yaml` on **every** reconciliation

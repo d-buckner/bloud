@@ -100,6 +100,38 @@ containers:
     #
     # `set -a` marks every subsequently-sourced assignment for export, which
     # is what the app needs: it reads these with os.getenv.
+    #
+    # The umask rewrite is load-bearing, not hygiene, and it cannot be done the
+    # obvious way. An upload has to be readable by the Hermes agent, which runs
+    # as a different uid with no shared group, so the file needs its world bits:
+    # umask 0022 gives a 0755 session directory holding a 0644 file, and anything
+    # tighter is unreadable across a rootless podman uid boundary. But the image's
+    # init sets `umask 0077` itself (line 41 of /hermeswebui_init.bash, "keep init
+    # scratch files private"), and it does so twice: once in the root phase and
+    # again after it re-execs itself through `su` into the runtime phase (line
+    # 292). A `umask 0022` in this command is therefore overwritten before the
+    # server ever starts; measured, the server process still reported 0077.
+    #
+    # So the command runs a copy of the init script with that one line changed,
+    # which makes the session directory 0755 and the file 0644. Relocating the
+    # script is safe: it uses $0 only for its banner and for the `su` re-exec, and
+    # the re-exec is precisely why the copy has to be the thing that runs. It is
+    # exec'd directly rather than through `bash "$init"` so the script's own shebang
+    # still governs it, and it needs its execute bit because `su` execs the path
+    # (a non-executable copy fails with 126).
+    #
+    # The two guards are what keep this honest across upgrades, and they check the
+    # thing that actually matters: that the line the patch targets is there before,
+    # and gone after. Asserting the *output* contains `umask 0022` instead would
+    # pass on an image that already carried such a line while the 0077 line moved,
+    # which is the exact silent regression the guards exist to prevent. The count is
+    # pinned to one so a second bare `umask 0077` upstream stops the container
+    # rather than being widened without anyone noticing.
+    #
+    # The copy lives under /run, not /tmp, because /tmp is one of the roots the
+    # app's own /api/file/raw serves, so anything there is readable by every
+    # signed-in user. The copy holds no secrets, but there is no reason to put it
+    # inside a served tree.
     command:
       - /bin/bash
       - -lc
@@ -110,7 +142,21 @@ containers:
           . /config/bloud.env
           set +a
         fi
-        exec /hermeswebui_init.bash
+        src=/hermeswebui_init.bash
+        init=/run/bloud-hermes-webui/init.bash
+        found=$(grep -cx 'umask 0077' "$src" || true)
+        if [ "$found" != "1" ]; then
+          echo "hermes-webui init: expected exactly 1 bare 'umask 0077' line, found $found; this patch is stale" >&2
+          exit 1
+        fi
+        mkdir -p "$(dirname "$init")"
+        sed 's|^umask 0077$|umask 0022|' "$src" > "$init"
+        if grep -qx 'umask 0077' "$init"; then
+          echo "hermes-webui init: the umask patch did not apply" >&2
+          exit 1
+        fi
+        chmod 0755 "$init"
+        exec "$init"
     environment:
       # Every value here is static. Anything that varies per install or can be
       # rotated lives in /config/bloud.env, written by the configurator.
@@ -127,6 +173,15 @@ containers:
       # else on the LAN can reach it because it is not a public host address.
       HERMES_WEBUI_HOST: 0.0.0.0
       HERMES_WEBUI_PORT: "8787"
+      # Where uploads go, and therefore the path string the agent is handed.
+      # It must be the destination of the shared inbox volume below, and it must
+      # be a path that exists in the Hermes container too: the web UI puts this
+      # literal path into the user message (`static/messages.js`), and the agent
+      # opens it with its own file tools. Left unset the app defaults to
+      # $HERMES_WEBUI_STATE_DIR/attachments, which is /data/attachments, and
+      # /data is this container's private state directory that Hermes has never
+      # seen. Naming it here is what makes the two containers agree.
+      HERMES_WEBUI_ATTACHMENT_DIR: /bloud-hermes/inbox
     ports:
       - host: 8787
         container: 8787
@@ -136,6 +191,13 @@ containers:
       - source: "{{appDataDir}}/config"
         destination: /config
         options: [ro]
+      # The attachment inbox, shared with the Hermes container. Same host
+      # directory and same destination path in both apps, because the path the
+      # web UI writes is the path the agent is asked to open. It is a
+      # Bloud-owned shared tree rather than either app's private directory, so
+      # neither container mounts the other's state (invariant 15).
+      - source: "{{dataDir}}/shared-trees/hermes/inbox"
+        destination: /bloud-hermes/inbox
     healthCheck:
       # /health is in the app's PUBLIC_PATHS, so the probe answers without a
       # session. Safe for external probing by design.

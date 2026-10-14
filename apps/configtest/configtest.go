@@ -52,8 +52,13 @@ type MetadataSSO struct {
 // MetadataContainer is one container definition, enough to check a generated
 // config file against the volume that mounts it.
 type MetadataContainer struct {
-	Name    string           `yaml:"name"`
-	Volumes []MetadataVolume `yaml:"volumes"`
+	Name    string   `yaml:"name"`
+	Command []string `yaml:"command"`
+	// Environment is the container's static environment block. Per-install and
+	// rotatable values live in a file the configurator writes, so anything
+	// readable here is a constant a configurator can be pinned against.
+	Environment map[string]string `yaml:"environment"`
+	Volumes     []MetadataVolume  `yaml:"volumes"`
 }
 
 // MetadataVolume is one host-to-container mount.

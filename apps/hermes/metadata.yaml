@@ -201,6 +201,22 @@ containers:
     volumes:
       - source: "{{appDataDir}}/data"
         destination: /opt/data
+      # The attachment inbox. hermes-webui writes an upload here and puts the
+      # literal absolute path of the file into the message it hands the agent,
+      # so that path has to resolve to the same bytes on both sides: same host
+      # directory, same destination path. Mounted anywhere else, the agent gets
+      # a path that only ever existed inside the web UI's mount namespace and
+      # every file tool call on it is ENOENT.
+      #
+      # This is a Bloud-owned shared tree, a sibling of media/ and downloads/,
+      # not either app's private state. That is what keeps invariant 15 intact:
+      # neither container mounts the other's data directory.
+      #
+      # The mode is set by the configurators rather than here. ensureMountDirs
+      # creates mount sources 0755 owned by the host agent, and the web UI's
+      # runtime uid is not that owner, so it could not write an upload.
+      - source: "{{dataDir}}/shared-trees/hermes/inbox"
+        destination: /bloud-hermes/inbox
     healthCheck:
       # /api/health is the upstream public liveness path, exempt from the
       # dashboard auth gate (safe for external probes by design).
