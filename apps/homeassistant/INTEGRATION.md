@@ -245,8 +245,11 @@ only onboarding step needed):
 
 `apps/ha-mcp` needs a credential into Home Assistant and cannot be a browser: it
 is a machine consumer that will never sit through a login flow or an OIDC
-redirect. So Home Assistant publishes one under the `appApi` contract, and the
-configurator mints it in `PostStart` (`companion.go`, `wsclient.go`).
+redirect. So Home Assistant publishes one under the `appApi` contract. Who puts
+it there depends on whose Home Assistant it is: when Bloud boots this container
+the configurator mints it in `PostStart` (`companion.go`, `wsclient.go`), and
+when the operator points Bloud at an instance someone else runs they paste one
+in.
 
 **What is published is a long-lived access token, not the owner password.** The
 break-glass password stays inside this app's tree. That distinction is the whole
@@ -254,6 +257,52 @@ design: `appApi`'s guarantee is "a credential the provider's own auth layer
 validates", and a token Home Assistant issued satisfies it just as well as the
 password does, while being revocable inside Home Assistant and never leaving as
 a password.
+
+### When the install is not Bloud's
+
+An operator who already runs Home Assistant elsewhere registers it as an external
+app ([`docs/plans/external-apps.md`](../../docs/plans/external-apps.md)) and
+fills the same `appApi` contract by hand. None of this configurator is involved:
+Bloud does not run the provider, so there is no `PostStart` to mint anything.
+
+- **The operator mints the token in Home Assistant.** Their profile (bottom of
+  the sidebar), then Long-lived access tokens, then Create, and the result goes
+  into the credential box. It is the same page the mint below drives over the
+  WebSocket API, and the same kind of token: Home Assistant issues it and Home
+  Assistant validates it.
+- **Bloud neither mints it nor revokes it.** Revocation happens in Home
+  Assistant, on that same page, by whoever owns that install. Deleting the
+  external record stops Bloud handing the token out and erases its copy from
+  `secrets.json`, but the token itself stays live until someone revokes it in
+  Home Assistant. That is the remote operator's boundary to enforce, and it is
+  the reason they should paste a token rather than their password.
+- **The form asks for the account name.** `provides.appApi.operatorValues:
+  [username]` says that `bloud-bootstrap-admin` is a fact about the install
+  Bloud booted, not about Home Assistant. A remote instance is signed in as
+  whatever its own operator named that account, so the field starts blank and
+  required instead of prefilled with a name that authenticates against nothing
+  there. A prefilled wrong answer saves cleanly and surfaces later as a refused
+  login in whichever consumer received it. A record registered before
+  `operatorValues` existed keeps whatever was stored for it, so the box shows the
+  old name rather than coming up empty, and correcting it is the operator typing
+  the right one; nothing rewrites a stored value behind their back.
+  `apps/jellyfin/metadata.yaml` and
+  `apps/radicale/metadata.yaml` declare the same thing for the same reason.
+- **The credential box says what it wants.** The contract names the secret
+  `password`, because that is the shape the consumer sends, and the generated
+  form labels the input from that name. `provides.appApi.secretHelp.password`
+  is the sentence rendered under it: mint a long-lived access token in Home
+  Assistant, it is not your account password. Typing the login password saves
+  cleanly and the consumer is refused on every call, which is the failure the
+  hint exists to prevent.
+- **Whose authority the credential carries becomes the operator's choice.** The
+  mint below produces an owner token because owner is the account Bloud created.
+  A remote operator mints from whatever account they pick, so the caveat under
+  "Cost, stated plainly" is theirs to decide.
+
+The consumer sees none of this. `apps/ha-mcp` reads `binding.BaseURL` and
+`binding.Password`, and for a registered provider those carry the operator's
+endpoint and the pasted token.
 
 ### How the token is made
 
@@ -311,13 +360,14 @@ so.
 
 ### Cost, stated plainly
 
-- The token is an **owner** token. Whatever the agent can do through `ha-mcp`, it
-can do as the Home Assistant administrator. A dedicated service account with a
-narrower permission set is the right follow-up; it is not this change, and it is
-not a regression either, because the owner account already exists and already
-holds this same authority.
-- One inert token exists on every Home Assistant install whether or not anything
-  consumes it. It costs a row on the profile page and nothing at runtime.
+- The token this configurator mints is an **owner** token. Whatever the agent can
+  do through `ha-mcp`, it can do as the Home Assistant administrator. A dedicated
+  service account with a narrower permission set is the right follow-up; it is not
+  this change, and it is not a regression either, because the owner account already
+  exists and already holds this same authority.
+- One inert token exists on every Home Assistant install Bloud boots, whether or
+  not anything consumes it. It costs a row on the profile page and nothing at
+  runtime. A registered remote instance gets none: Bloud mints nothing there.
 - The `appApi` contract's wording had to grow: the secret is now "a credential the
   provider's own sign-in validates", which for Home Assistant is a token it
   minted rather than the account password.

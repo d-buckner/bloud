@@ -1,4 +1,11 @@
-> Status: brainstorm
+> Status: shipped. PR 1 through PR 4 below are built, and so is PR 5's
+> rendering: an external provider draws as an `external` node in the developer
+> graph, and a remote catalog app gets a grid tile that opens its own URL. The
+> prose below is the plan as written and is kept for the reasoning; where it
+> says a change is needed, the code has it. Two things are genuinely still
+> open: open question 5, because `promotedSources` still scans installed apps
+> only and so an external provider can never fill a `SatisfiedBy` fallback, and
+> the `modelSource`-goes-multi follow-on.
 
 # Plan: external apps: launchers, remote installs, and off-host providers
 
@@ -60,6 +67,20 @@ That is the load-bearing claim of this whole feature: **a consumer configurator
 should need zero changes**, because the contract abstraction already hides
 "where the provider lives" behind `ProviderRef`.
 
+The pair that exercised it is not AFFiNE but Home Assistant. `apps/homeassistant`
+provides `appApi` (a long-lived access token: minted by the configurator for an
+install Bloud boots, minted by the operator on someone else's instance) and
+`apps/ha-mcp` consumes it with `requires: [password]` and no branch on provider
+kind. Registering a remote Home Assistant lands its endpoint and that token in
+the wrapper's env file with `apps/ha-mcp/configurator.go` untouched, which makes
+the claim above tested rather than asserted
+(`services/host-agent/internal/engine/orchestrator/external_app_homeassistant_seam_test.go`).
+Two things a remote provider has to say about itself that a local one never needs
+are metadata rather than code: `operatorValues` marks a static value as a fact
+about the install Bloud booted, so the form asks instead of prefilling a name
+nothing there owns, and `secretHelp` says where the credential is minted, because
+the contract's secret name never does. Both are axis B's mechanism.
+
 ## What the code already knows
 
 The pieces are all here; this feature is a generalization, not a new paradigm.
@@ -70,16 +91,17 @@ The pieces are all here; this feature is a generalization, not a new paradigm.
   the provider is external": one endpoint plus each secret plus each non-optional
   value.
 - **`ProviderRef` already has a non-container shape.**
-  `pkg/configurator/interface.go` defines `Kind` (`"app"` | `"instance"`), and
-  for the instance provider `Node`, `Port`, and `BaseURL` are deliberately empty
-  while a contract-specific `Endpoint` field carries the dialable value. External
-  apps are the same idea with a different `Kind` and with the *catalog ID*
-  retained (an instance is anonymous; an external app is still "AFFiNE").
-- **A non-app provider is already filtered out of the graph.** `source: instance`
-  (`internal/catalog/types.go`) produces no node and no edge;
-  `computeAppDeps` (`orchestrator/graph_build.go`) skips `declared.Source != ""`
-  so a setting never becomes a phantom container. External apps need the same
-  discipline, keyed differently.
+  `pkg/configurator/interface.go` defines `Kind`, and for the setting provider
+  `Node`, `Port`, and `BaseURL` are deliberately empty while a contract-specific
+  `Endpoint` field carries the dialable value. External apps are the same idea
+  with a different `Kind` and with the *catalog ID* retained (a setting is
+  anonymous; an external app is still "AFFiNE"). The enum carries all three
+  today: `app`, `setting`, `externalApp`.
+- **A non-app provider is already filtered out of the graph.** `source: setting`
+  (`SettingProviderSource`, `internal/catalog/types.go`) produces no node and no
+  edge; `computeAppDeps` (`orchestrator/graph_build.go`) skips
+  `declared.Source != ""` so a setting never becomes a phantom container. External
+  apps need the same discipline, keyed differently.
 - **The resolver already separates "address" from "payload".**
   `orchestrator/integrations.go` builds each binding from `providerRef` (the
   address) plus `offer` and `publishedSecret`/`contractValue` (the payload). The
@@ -91,11 +113,12 @@ The pieces are all here; this feature is a generalization, not a new paradigm.
   new kind of catalog entry. External apps are that source, generalized from one
   hardcoded Settings section to "any catalog app that provides a contract".
 
-  The instance is also already a *registry*, not a single value: `ai_upstreams`
-  stores a JSON list of N endpoints (`internal/inference/settings.go`), each
+  The instance was also already a *registry*, not a single value: `ai_upstreams`
+  stored a JSON list of N endpoints (`internal/inference/settings.go`), each
   entry carrying a stable `ID` so a rename does not read as remove-plus-add. The
-  operator-declared provider set is N-shaped before this plan touches it, which
-  is the fact the litellm shape below builds on.
+  operator-declared provider set was N-shaped before this plan touched it, which
+  is the fact the litellm shape below builds on, and PR 4 moved those entries
+  into `external_apps` rows with that ID kept.
 
 ## Core insight: external is an *instantiation*, not a new vocabulary
 
@@ -372,20 +395,19 @@ address my own process should dial", and for an `app` source that address is the
 operator's origin, so `BaseURL` is the right field and no new payload field is
 needed.
 
-`ProviderKindSetting` is not new; it is the existing `ProviderKindInstance`
-renamed. The old name said "the instance's own configuration", which was only
-true while there was exactly one such thing (the AI Settings). Once a `source:
+`ProviderKindSetting` is the `ProviderKindInstance` rename, landed. The old name
+said "the instance's own configuration", which was only true while there was
+exactly one such thing (the AI Settings). Once a `source:
 contract` can name any contract, the honest word is "setting": an
 operator-declared value with no catalog app behind it. It feeds
 `ModelSourceBinding.Endpoint` today exactly as `instanceInferenceSource` does,
 and a future `source: contract(pvr)` feeds `PVRBinding` with the operator's URL
 in `BaseURL` and no container node.
 
-The rename carries through the three places the old name lives: the
+The rename carried through the three places the old name lived: the
 `ProviderKind` value, the reserved `App` string, and the `source: instance`
-metadata value a consumer declares (`InstanceProviderSource`). Whether the
-metadata value stays `instance` for compatibility or becomes `source: setting`
-is a catalog-change question to settle alongside it.
+metadata value a consumer declares (`InstanceProviderSource` became
+`SettingProviderSource`, and the metadata value is `source: setting`).
 
 Resolver changes, all localized to `orchestrator/integrations.go`:
 
@@ -399,8 +421,8 @@ Resolver changes, all localized to `orchestrator/integrations.go`:
 The operator-supplied values must not collide with a local install of the same
 catalog ID, and must not leak into the app's own scope. The secrets manager
 already keys everything by app name (`GetAppSecret(appName, key)`). For an
-external row, use a distinct scope (`external/<name>` or a per-instance id) for
-both the secrets and the operator-supplied values.
+external row, use a distinct scope (`external/<id>`, keyed by the record's own
+id) for both the secrets and the operator-supplied values.
 
 The subtle case is `runtimeValues`. Locally, `username` and `workspaceId` are
 minted by the AFFiNE configurator at boot and published through
@@ -463,7 +485,8 @@ ask for. But not all of them *mean* something when pointed off-host:
 - **Already covered elsewhere:** `inference`/`modelSource` are the instance's
   Settings surface; they do not need the external-app mechanism. Making
   `modelSource` multi (the litellm shape above) is a separate prerequisite, not
-  part of this feature.
+  part of this feature. PR 4 moved where those Settings rows are *stored* into
+  `external_apps`, which is storage, not a new way to declare one.
 - **Deferred, probably never:** `proxy` (Traefik is Bloud's own), `database`
   (invariant 3 bundles per-app databases; BYO postgres is a different feature),
   and `sso` (pointing the identity provider at a remote Authentik is a
@@ -672,7 +695,7 @@ presentation and can move earlier if the developer graph is needed sooner.
    routed origin when it opens a tile.
 7. **Migration of `ai_upstreams`**: resolved by PR 4: the existing AI Settings
    rows migrate in place into `external_apps` records of `source:
-   contract(modelSource)`, and `settings_ai.go` reads through the new store.
+   contract:inference`, and `settings_ai.go` reads through the new store.
 
 ## Invariants to respect
 

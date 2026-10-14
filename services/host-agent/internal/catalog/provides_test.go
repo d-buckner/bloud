@@ -16,7 +16,9 @@ import (
 // contract names, an inference endpoint's path is concatenated onto an
 // address, and a contract name no consumer can use is a typo. Each has to fail
 // the load rather
-// than reach a consumer as a binding that is silently half-empty.
+// than reach a consumer as a binding that is silently half-empty. A credential
+// hint is the same kind of agreement: it has to name a credential the offer
+// actually publishes, and say something.
 func TestValidateApp_Provides(t *testing.T) {
 	const tmpl = `name: sso-app
 displayName: SSO App
@@ -174,6 +176,33 @@ containers:
 			port:     "8096",
 			provides: "  mediaServer:\n    secrets: [adminPassword]\n    values: {adminUsername: admin}\n    operatorValues: [adminUsername, adminUsername]",
 			wantErr:  "provides.mediaServer.operatorValues lists a name twice",
+		},
+		{
+			// The contract's word for the credential is `password`; the app knows it
+			// is a token its own UI mints, and the generated remote-install form can
+			// only say what the metadata says.
+			name: "a credential the offer explains",
+			port: "8123",
+			provides: "  appApi:\n    secrets: [password]\n    values: {username: svc}\n" +
+				"    secretHelp:\n      password: \"Mint a long-lived access token in the app's own UI; it is not the account password.\"",
+		},
+		{
+			// A hint on a credential this offer never publishes decorates a box the
+			// form does not render, so it changes nothing and goes stale on schedule.
+			name: "a credential hint for a secret this offer does not publish",
+			port: "8123",
+			provides: "  appApi:\n    secrets: [password]\n    values: {username: svc}\n" +
+				"    secretHelp:\n      accessToken: \"read it out of the app\"",
+			wantErr: `provides.appApi.secretHelp explains "accessToken", which this offer does not publish`,
+		},
+		{
+			// An empty hint renders an empty line under the one input that needed
+			// explaining.
+			name: "a credential hint that says nothing",
+			port: "8123",
+			provides: "  appApi:\n    secrets: [password]\n    values: {username: svc}\n" +
+				"    secretHelp:\n      password: \"   \"",
+			wantErr: "provides.appApi.secretHelp.password must say where the operator gets this value",
 		},
 		{
 			// The caldav contract carries no secret on purpose: the credential is

@@ -4,6 +4,8 @@ package orchestrator
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,6 +18,41 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
+
+// realCatalogDir points at the checked-in catalog. Tests using it load the real
+// app metadata rather than a fixture because the property they pin lives in an
+// app's metadata.yaml, not in this package: only the real files can say when
+// homeassistant's `provides.appApi` or ha-mcp's `integrations.appApi` stopped
+// fitting together.
+func realCatalogDir(t *testing.T) string {
+	t.Helper()
+	for _, p := range []string{"../../../../../apps", "../../../../apps", "apps"} {
+		if _, err := os.Stat(filepath.Join(p, "homeassistant", "metadata.yaml")); err == nil {
+			return p
+		}
+	}
+	// Fatal, not Skip: these tests exist to pin the resolver against the
+	// checked-in metadata, and a pass that loaded none of it would look identical
+	// to a real one while proving nothing.
+	t.Fatalf("real catalog not reachable from the test working directory")
+	return ""
+}
+
+func realCatalog(t *testing.T) map[string]*catalog.App {
+	t.Helper()
+	apps, err := catalog.NewLoader(realCatalogDir(t)).LoadAll()
+	require.NoError(t, err)
+	return apps
+}
+
+// realCatalogApp returns one checked-in app, and fails loudly if the catalog
+// ever stops carrying it.
+func realCatalogApp(t *testing.T, name string) *catalog.App {
+	t.Helper()
+	app, ok := realCatalog(t)[name]
+	require.True(t, ok, "%s must be in the checked-in catalog", name)
+	return app
+}
 
 // The load-bearing case of external apps: a remote install of a catalog app
 // satisfies a consumer's contract binding with the consumer's configurator
@@ -624,4 +661,66 @@ func TestLocalMediaServerPublishesItsBootstrapUsername(t *testing.T) {
 	require.Len(t, out.MediaServers, 1)
 	assert.Equal(t, "bloud-bootstrap-admin", out.MediaServers[0].AdminUsername)
 	assert.Equal(t, "local-bootstrap-pw", out.MediaServers[0].AdminPassword)
+}
+
+// TestExternalHomeAssistantFillsHaMCPBindingFromTheRealCatalog is the AFFiNE
+// case above with the fixture replaced by the catalog. Every field that decides
+// the outcome comes from a checked-in metadata.yaml: homeassistant's
+// `provides.appApi` (the secret name, the `username` value, and the
+// `operatorValues` claim that the account is the operator's to name) and
+// ha-mcp's `integrations.appApi` (which declares `password` under `requires`,
+// so the credential is handed over at all). A synthetic app cannot fail in the
+// way that matters here: the two real files drifting apart, which is what makes
+// a remote Home Assistant resolve to a binding with no token in it.
+func TestExternalHomeAssistantFillsHaMCPBindingFromTheRealCatalog(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	for _, app := range realCatalog(t) {
+		cache.AddApp(app)
+	}
+
+	appStore := NewFakeAppStore()
+	install(t, appStore, "ha-mcp", nil)
+
+	extStore := store.NewExternalAppStore(testdb.SetupTestDB(t))
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID:     "ext-ha",
+		Kind:   string(store.ExternalAppKindProvider),
+		Source: store.ExternalAppSourceForApp("homeassistant"),
+		Name:   "Garage Home Assistant",
+		URL:    "https://ha.example.net:8123",
+		Values: `{"appApi":{"username":"daniel"}}`,
+	}))
+
+	secrets := newFakeSecrets()
+	secrets.publish(store.ExternalSecretScope("ext-ha"), "appApi", "operator-long-lived-token")
+	// The credential a locally-installed Home Assistant would have minted. It is
+	// in the store to prove the external record never reads it.
+	secrets.publish("homeassistant", "password", "LOCAL-HA-TOKEN")
+
+	registry := new(MockConfiguratorRegistry)
+	registry.On("Get", mock.Anything).Return(nil).Maybe()
+
+	orch := NewOrchestrator(
+		graph.New(graph.NewMapRepository()), registry, cache, "/tmp/bloud-test", newTestLogger(),
+		OrchestratorConfig{Stores: StoresConfig{AppStore: appStore, Secrets: secrets, ExternalApps: extStore}},
+	)
+	orch.settings = newFakeSettings()
+
+	state := orch.buildAppState("ha-mcp")
+	require.Len(t, state.Integrations.AppAPIs, 1,
+		"one Home Assistant is declared, and the operator registered exactly one")
+	binding := state.Integrations.AppAPIs[0]
+
+	assert.Equal(t, configurator.ProviderKindExternalApp, binding.Kind)
+	assert.Equal(t, "homeassistant", binding.App)
+	assert.True(t, binding.Installed)
+	assert.Equal(t, "https://ha.example.net:8123", binding.BaseURL)
+	assert.Equal(t, "https://ha.example.net:8123", binding.LocalURL)
+	assert.Equal(t, "operator-long-lived-token", binding.Password)
+	assert.NotEqual(t, "LOCAL-HA-TOKEN", binding.Password,
+		"a remote record reads its own scope, never the token a local install published")
+	assert.Equal(t, "daniel", binding.Username,
+		"the account on someone else's Home Assistant is whoever that operator named")
+	assert.NotEqual(t, "bloud-bootstrap-admin", binding.Username,
+		"the name this instance would have minted authenticates against nothing out there")
 }

@@ -54,6 +54,17 @@ type ContractProvides struct {
 	// a consumer as the corresponding field of its binding. Names an app does not
 	// list here are never handed to another app, however they were stored.
 	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	// SecretHelp explains where one of those credentials comes from, keyed by the
+	// secret name it describes.
+	//
+	// A secret name is not a description. `password` is the wrong word for a token
+	// the provider's own UI issued, and the remote-install form is generated from
+	// this metadata, so the place the operator needs the hint is the place the app
+	// already knows it: Home Assistant's credential is a long-lived access token
+	// minted on a profile page, and nothing in the word "password" says so. An
+	// operator who types their account password instead saves cleanly and the
+	// consumer fails at sign-in, which is the failure this field exists to prevent.
+	SecretHelp map[string]string `yaml:"secretHelp,omitempty" json:"secretHelp,omitempty"`
 	// Values are the non-secret facts this contract carries, e.g. an endpoint
 	// path. They travel in the provider's metadata, so they need no publication
 	// step.

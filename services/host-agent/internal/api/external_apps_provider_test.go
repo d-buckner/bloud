@@ -4,10 +4,12 @@ package api
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -461,8 +463,11 @@ func remoteIdentityApp() *catalog.App {
 		Port:        8096,
 		Provides: catalog.Provides{
 			"mediaServer": catalog.ContractProvides{
-				Secrets:        []string{"adminPassword"},
-				Values:         map[string]string{"adminUsername": "bloud-bootstrap-admin"},
+				Secrets: []string{"adminPassword"},
+				Values:  map[string]string{"adminUsername": "bloud-bootstrap-admin"},
+				// The credential is whatever the remote server's own UI issues, and
+				// the contract's name for it does not say so.
+				SecretHelp:     map[string]string{"adminPassword": "Issue an API key in that server's own settings; Bloud cannot mint one for an install it did not boot."},
 				OperatorValues: []string{"adminUsername"},
 			},
 		},
@@ -552,12 +557,45 @@ func TestExternalAppsModule_OperatorOwnedValueSurvivesTheStaticMerge(t *testing.
 	assert.Equal(t, "daniel", add.Spec.Values["mediaServer"]["adminUsername"])
 }
 
-// TestRealCatalogRemoteInstallsAskForTheAccount pins the two catalog apps whose
-// static value is a name Bloud minted for the account it creates. It reads the
-// real catalog because the property is a fact about their `provides:` blocks: an
-// `operatorValues` entry dropped from either, or a third app that declares a
-// Bloud-minted account name statically, fails here rather than shipping a remote
-// record that logs in with a username that account never had.
+// TestExternalAppsModule_SecretHelpReachesTheForm follows a credential hint to
+// the response body. The dashboard renders `help` off the wire for secret inputs
+// the same way it does for values, and nothing type-checks that the offer's
+// sentence survives the derivation and the marshalling to get there.
+func TestExternalAppsModule_SecretHelpReachesTheForm(t *testing.T) {
+	mod, _ := operatorOwnedTestModule()
+
+	w := httptest.NewRecorder()
+	mod.ProvidersHandler()(w, httptest.NewRequest(http.MethodGet, "/api/external-apps/providers", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var out []externalProviderOption
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 1)
+	require.Len(t, out[0].Contracts, 1)
+
+	var secrets []externalProviderField
+	for _, f := range out[0].Contracts[0].Fields {
+		if f.Kind == "secret" {
+			secrets = append(secrets, f)
+		}
+	}
+	require.Len(t, secrets, 1)
+	assert.Equal(t, "adminPassword", secrets[0].Key)
+	assert.Equal(t,
+		"Issue an API key in that server's own settings; Bloud cannot mint one for an install it did not boot.",
+		secrets[0].Help, "the offer's sentence is the only thing that tells the operator where the value comes from")
+}
+
+// TestRealCatalogRemoteInstallsAskForTheAccount pins the catalog apps whose
+// static value is a name Bloud minted for the account it creates.
+//
+// The table is hand-maintained on purpose, and it is the smaller half of the
+// test. Nothing can recognize a minted account name mechanically: Radicale's is
+// `caldav-service` and Jellyfin's is `bloud-bootstrap-admin`, so the only record
+// of "this static value names the account Bloud created" is the app declaring it
+// under `operatorValues`. The table is that knowledge, reviewed in a diff, and it
+// fails if one of these three drops the declaration or starts prefilling the
+// local name as someone else's answer.
 func TestRealCatalogRemoteInstallsAskForTheAccount(t *testing.T) {
 	apps, err := catalog.NewLoader(realProviderCatalogDir(t)).LoadAll()
 	require.NoError(t, err)
@@ -565,27 +603,111 @@ func TestRealCatalogRemoteInstallsAskForTheAccount(t *testing.T) {
 	for _, tc := range []struct{ app, contract, key string }{
 		{"jellyfin", "mediaServer", "adminUsername"},
 		{"radicale", "appApi", "username"},
+		{"homeassistant", "appApi", "username"},
 	} {
 		t.Run(tc.app, func(t *testing.T) {
 			app, ok := apps[tc.app]
 			require.True(t, ok, "%s must be in the catalog", tc.app)
 
-			var found *externalProviderField
-			for _, contract := range providerContractFields(app) {
-				if contract.Name != tc.contract {
-					continue
-				}
-				for i, field := range contract.Fields {
-					if field.Key == tc.key {
-						found = &contract.Fields[i]
-					}
-				}
-			}
-			require.NotNil(t, found, "%s must offer a %s field for %s", tc.app, tc.contract, tc.key)
-			assert.True(t, found.Required,
+			want := derivedField(t, app, tc.contract, tc.key)
+			assert.True(t, want.Required,
 				"%s's %s is the account Bloud created, so a remote install has to name its own", tc.app, tc.key)
-			assert.Empty(t, found.Default,
+			assert.Empty(t, want.Default,
 				"%s must not offer %q as a prefilled answer for someone else's install", tc.app, tc.key)
 		})
 	}
+}
+
+// TestRealCatalogOperatorValuesReachTheForm is the catalog-wide half: whatever an
+// app declares under `operatorValues`, the generated form has to actually ask for
+// it. The table above names the apps that owe this; this is what catches the
+// mechanism failing for any of them or for the next one, including an offer whose
+// key is spelled one way in metadata and another in the contract registry.
+func TestRealCatalogOperatorValuesReachTheForm(t *testing.T) {
+	apps, err := catalog.NewLoader(realProviderCatalogDir(t)).LoadAll()
+	require.NoError(t, err)
+
+	checked := 0
+	for _, name := range slices.Sorted(maps.Keys(apps)) {
+		app := apps[name]
+		for _, contract := range providerContractFields(app) {
+			for _, field := range contract.Fields {
+				if !declaredOperatorValue(app, contract.Name, field.Key) {
+					continue
+				}
+				checked++
+				assert.True(t, field.Required,
+					"%s declares %s.%s as the operator's to supply, so the form must require it", name, contract.Name, field.Key)
+				assert.Empty(t, field.Default,
+					"%s declares %s.%s as the operator's to supply, so the local value must not prefill it",
+					name, contract.Name, field.Key)
+			}
+		}
+	}
+	assert.NotZero(t, checked, "the catalog must still declare at least one operator-owned value")
+}
+
+// declaredOperatorValue reports whether one app's offer names a key as the
+// operator's own for one contract.
+func declaredOperatorValue(app *catalog.App, contractName, key string) bool {
+	offer, ok := app.Provides[contractName]
+	if !ok {
+		return false
+	}
+	return slices.Contains(offer.OperatorValues, key)
+}
+
+// derivedField pulls one field out of the form a catalog entry generates.
+func derivedField(t *testing.T, app *catalog.App, contractName, key string) externalProviderField {
+	t.Helper()
+	for _, contract := range providerContractFields(app) {
+		if contract.Name != contractName {
+			continue
+		}
+		for _, field := range contract.Fields {
+			if field.Key == key {
+				return field
+			}
+		}
+	}
+	t.Fatalf("%s generates no %s field for %s", app.CatalogID, contractName, key)
+	return externalProviderField{}
+}
+
+// TestRealCatalogHomeAssistantExplainsItsToken pins the guidance a remote Home
+// Assistant install renders. The contract's name for the credential is
+// `password`, which is the shape the consumer sends and the wrong instruction to
+// give a person: Home Assistant authenticates a companion with a long-lived
+// access token minted in its own UI, and an operator who types their login
+// password saves cleanly and then watches the companion get refused on every
+// call. It reads the real catalog because the sentence is a fact about Home
+// Assistant's `provides:` block.
+func TestRealCatalogHomeAssistantExplainsItsToken(t *testing.T) {
+	apps, err := catalog.NewLoader(realProviderCatalogDir(t)).LoadAll()
+	require.NoError(t, err)
+	app, ok := apps["homeassistant"]
+	require.True(t, ok, "homeassistant must be in the catalog")
+
+	byKey := map[string]externalProviderField{}
+	for _, contract := range providerContractFields(app) {
+		if contract.Name != "appApi" {
+			continue
+		}
+		for _, field := range contract.Fields {
+			byKey[field.Key] = field
+		}
+	}
+	require.NotEmpty(t, byKey, "homeassistant must offer an appApi form")
+
+	token, ok := byKey["password"]
+	require.True(t, ok, "the appApi credential is the field a remote install fills")
+	assert.Contains(t, token.Help, "token",
+		"the label says password; only the catalog knows it is a token the app's own UI issues")
+	assert.Contains(t, strings.ToLower(token.Help), "not your account password",
+		"the hint has to rule out the one thing the label invites")
+
+	username, ok := byKey["username"]
+	require.True(t, ok, "the owner's name is on the form")
+	assert.True(t, username.Required, "a remote install has to name its own account")
+	assert.Empty(t, username.Default, "the account this instance created is no answer for someone else's")
 }

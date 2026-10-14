@@ -3,7 +3,7 @@
 **Status:** Shipped. Four providers today: `apps/affine-mcp`, `apps/dav-mcp`,
 `apps/arr-mcp`, and `apps/ha-mcp`, all consumed by Hermes. AFFiNE's own MCP server
 is deliberately not exposed.
-**Last updated:** 2026-10-12
+**Last updated:** 2026-10-13
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md),
 [plans/arr-mcp-provider.md](../plans/arr-mcp-provider.md) for a provider that
 fills several contracts at once,
@@ -296,6 +296,21 @@ c.secrets.SetAppSecret("affine", "password", ownerPassword)
 c.secrets.SetAppContractValue("affine", "appApi", "username", ownerEmail)
 c.secrets.SetAppContractValue("affine", "appApi", "workspaceId", sharedWorkspaceID)
 ```
+
+Nothing above says who published the credential, and that is the point of the
+contract. There is a second fill path: an operator who runs the target somewhere
+Bloud does not reach registers it as an external app
+([plans/external-apps.md](../plans/external-apps.md)), and the same fields arrive
+from the registration form instead of a configurator. `BaseURL` is the endpoint
+they typed, `password` is the credential they minted on that instance, and
+`username` is the account they named. Two pieces of provider metadata make the
+generated form ask for the right things. `operatorValues` marks a static value as
+a fact about the install Bloud would have booted, so a remote form asks for the
+account name rather than prefilling the one Bloud mints. `secretHelp` says where
+the credential comes from, because the secret is named `password` and Home
+Assistant's is a long-lived access token minted on a profile page. The consumer
+still has no branch to write: `ProviderRef.Kind` exists, and `pkg/configurator`
+says out loud that a consumer must not branch on it.
 
 ---
 

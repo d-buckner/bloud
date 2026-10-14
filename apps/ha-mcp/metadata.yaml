@@ -15,10 +15,14 @@ headless: true
 # talks to Home Assistant over its REST and WebSocket APIs with a long-lived
 # access token, so the target needs no plugin and no restart.
 #
-# The credential comes from Home Assistant's `appApi` offer: a long-lived token
-# Bloud minted for the owner account (see apps/homeassistant/INTEGRATION.md),
-# not the owner password. The wrapper is not a browser and cannot join the
-# identity provider, which is exactly the audience that contract exists for.
+# The credential comes from Home Assistant's `appApi` offer: a long-lived access
+# token (see apps/homeassistant/INTEGRATION.md), never the owner password. Who
+# mints it is the only part that depends on whose install this is: the
+# configurator mints one for the owner account when Bloud boots Home Assistant,
+# and the operator mints one on their own profile page when they registered an
+# instance Bloud does not run. The wrapper reads the same binding either way and
+# has no branch on it, because it is not a browser and cannot join the identity
+# provider, which is exactly the audience that contract exists for.
 integrations:
   proxy:
     required: true

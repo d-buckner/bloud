@@ -38,6 +38,21 @@ provides:
     secrets: [password]
     values:
       username: bloud-bootstrap-admin
+    #
+    # `username` is under operatorValues because that account is the one THIS
+    # instance created. A Home Assistant down the hall is signed in as whoever
+    # that operator named, so the remote-install form asks instead of inheriting
+    # `bloud-bootstrap-admin`, which would authenticate against nothing there.
+    operatorValues: [username]
+    # The contract calls the credential `password` because that is the shape the
+    # consumer sends; Home Assistant calls it a long-lived access token, and an
+    # operator who reads only the label types their login password and gets a
+    # companion that is refused on every call.
+    secretHelp:
+      password: >-
+        Mint a long-lived access token in Home Assistant itself: open your
+        profile (bottom of the sidebar), then Long-lived access tokens, then
+        Create. It is not your account password.
 
 containers:
   - name: apps-homeassistant
