@@ -9,9 +9,17 @@
 	interface Props {
 		open: boolean;
 		onclose: () => void;
+		/**
+		 * Notified after something was actually added, not on close.
+		 *
+		 * The dashboard needs it. This modal adds a tile and nothing else re-reads
+		 * the external-app records, so a modal that closed without saying so left
+		 * the new tile invisible until the next unrelated refresh.
+		 */
+		onsaved?: () => void;
 	}
 
-	let { open, onclose }: Props = $props();
+	let { open, onclose, onsaved }: Props = $props();
 
 	let saving = $state(false);
 	let error = $state('');
@@ -27,6 +35,15 @@
 	let url = $state('');
 	let icon = $state('');
 
+	// Added, so get out of the way. The modal only adds, and a dialog that clears
+	// its own fields and stays open reads as nothing having happened: the record
+	// is saved, the button said "Adding…", and the only evidence is a form that
+	// quietly emptied. Closing reveals the tile, which is the confirmation.
+	function handleAdded() {
+		onsaved?.();
+		onclose();
+	}
+
 	async function handleAdd() {
 		if (!name.trim() || !url.trim()) return;
 		saving = true;
@@ -36,6 +53,7 @@
 			name = '';
 			url = '';
 			icon = '';
+			handleAdded();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not add external app';
 		} finally {
@@ -133,7 +151,7 @@
 					</Button>
 				</form>
 			{:else}
-				<ExternalProviderForm />
+				<ExternalProviderForm onsaved={handleAdded} />
 			{/if}
 		</div>
 

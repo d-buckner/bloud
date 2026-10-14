@@ -20,6 +20,7 @@ import { join } from 'node:path';
 
 const SRC = new URL('../../..', import.meta.url).pathname;
 const source = readFileSync(join(SRC, 'lib/components/ExternalAppModal.svelte'), 'utf8');
+const page = readFileSync(join(SRC, 'routes/+page.svelte'), 'utf8');
 
 describe('ExternalAppModal: what it opens on', () => {
 	it('defaults to the remote app tab', () => {
@@ -58,5 +59,40 @@ describe('ExternalAppModal: the tab contract', () => {
 		expect(source).toMatch(/id="ext-tab-panel"/);
 		expect(source.match(/aria-controls="ext-tab-panel"/g)).toHaveLength(2);
 		expect(source).toMatch(/aria-labelledby=\{kind === 'provider'/);
+	});
+});
+
+/**
+ * Adding something has to end the dialog.
+ *
+ * Both tabs used to reset their own fields and stay open, so the only evidence a
+ * save had landed was a form that quietly emptied under a heading still asking
+ * for the next app. And closing alone is not enough: nothing else re-reads the
+ * external-app records, so a modal that closed without telling the page left the
+ * tile it had just created invisible until some unrelated refresh.
+ */
+describe('ExternalAppModal: what happens when something is added', () => {
+	it('reports an add once, through one path both tabs share', () => {
+		expect(source).toMatch(/function handleAdded\(\) \{\s*\n\s*onsaved\?\.\(\);\s*\n\s*onclose\(\);/);
+	});
+
+	it('closes after a launcher is added', () => {
+		expect(source).toMatch(/icon = '';\s*\n\s*handleAdded\(\);/);
+	});
+
+	it('closes after a remote app is added', () => {
+		expect(source).toMatch(/<ExternalProviderForm onsaved=\{handleAdded\} \/>/);
+	});
+
+	// Failure keeps the dialog open: the error renders inside it, and a modal that
+	// closed on a refused save would swallow the reason.
+	it('does not close when the add failed', () => {
+		const handler = source.slice(source.indexOf('async function handleAdd()'));
+		const catchBlock = handler.slice(handler.indexOf('} catch (e) {'), handler.indexOf('} finally {'));
+		expect(catchBlock).not.toMatch(/handleAdded|onclose/);
+	});
+
+	it('the page re-reads the records it just added to', () => {
+		expect(page).toMatch(/<ExternalAppModal[\s\S]*?onsaved=\{\(\) => void refreshExternalApps\(\)\}/);
 	});
 });

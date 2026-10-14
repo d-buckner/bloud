@@ -312,7 +312,11 @@
 	onremove={doRemoveExternalApp}
 />
 
-<ExternalAppModal open={showExternalAppModal} onclose={() => (showExternalAppModal = false)} />
+<ExternalAppModal
+	open={showExternalAppModal}
+	onclose={() => (showExternalAppModal = false)}
+	onsaved={() => void refreshExternalApps()}
+/>
 
 <style>
 	.page {
