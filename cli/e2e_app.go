@@ -40,6 +40,16 @@ func runAppE2E(root string, args []string) error {
 		return err
 	}
 
+	app := os.Getenv("BLOUD_E2E_APP")
+	if app == "" {
+		return fmt.Errorf("BLOUD_E2E_APP is required (any catalog app with a spec in e2e/tests/<app>.spec.ts)")
+	}
+	// The app's dev switches must be in the process environment before
+	// parseLifecycleConfig snapshots them into cfg.devEnv via devPassthrough.
+	if err := setAppE2EEnv(root, app); err != nil {
+		return err
+	}
+
 	cfg, help, err := parseLifecycleConfig(root, args, os.Getenv, name)
 	if err != nil {
 		return err
@@ -47,14 +57,6 @@ func runAppE2E(root string, args []string) error {
 	if help {
 		printAppE2EUsage(os.Stdout)
 		return nil
-	}
-
-	app := os.Getenv("BLOUD_E2E_APP")
-	if app == "" {
-		return fmt.Errorf("BLOUD_E2E_APP is required (any catalog app with a spec in e2e/tests/<app>.spec.ts)")
-	}
-	if err := setAppE2EEnv(root, app); err != nil {
-		return err
 	}
 
 	runner := &appE2ERunner{
