@@ -24,6 +24,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Dated review findings | [specs/review-2026-09-17.md](specs/review-2026-09-17.md) |
 | Latest architecture/code review (2026-09-19) | [specs/review-2026-09-19.md](specs/review-2026-09-19.md) |
 | Design & code review, APoSD lens (2026-10-03) | [specs/review-2026-10-03-aposd.md](specs/review-2026-10-03-aposd.md) |
+| App-extension surface review, APoSD lens (2026-10-12) | [specs/review-2026-10-12-aposd-appsurface.md](specs/review-2026-10-12-aposd-appsurface.md) |
 | CI flakiness: measured root causes and the fix order | [plans/ci-flakiness-reduction.md](plans/ci-flakiness-reduction.md) |
 | How catalog changes apply to running installs | [plans/catalog-update-reconciliation.md](plans/catalog-update-reconciliation.md) |
 | How Bloud ships and updates via apt | [plans/apt-repository.md](plans/apt-repository.md) |
@@ -35,6 +36,8 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Tools an agent asks Bloud itself, and where wrappers stop | [plans/native-mcp-endpoint.md](plans/native-mcp-endpoint.md) |
 | One MCP provider over Seerr and the arr stack, with many optional integrations | [plans/arr-mcp-provider.md](plans/arr-mcp-provider.md) |
 | A standalone MCP container for Home Assistant, and the token it has to mint | [plans/home-assistant-mcp.md](plans/home-assistant-mcp.md) |
+| Why adding an app touches 53% of its files outside `apps/`, and the six derivations that fix it | [plans/app-add-tax.md](plans/app-add-tax.md) |
+| A smaller, clearer app-SDK surface: group `Deps`, one `Secret` type, a binder table, then extract the SDK | [plans/configurator-sdk-surface.md](plans/configurator-sdk-surface.md) |
 | In-flight designs | [plans/](plans/) |
 
 ## Sections
