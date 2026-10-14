@@ -73,6 +73,16 @@ func TestPenpotServesTheConfigurationBloudGenerated(t *testing.T) {
 			}
 		}
 	}
+
+	// The half of the wiring a config file cannot prove. get-profile is the SPA's
+	// first call and it reaches every part of the install: nginx, the JVM, its
+	// database, and (because enable-admin-console is on) the admin console, since
+	// the RPC ends in with-nitrate-licence. When that last call fails Penpot
+	// answers 503 {:type :nitrate-unavailable} and the browser renders
+	// "temporarily unavailable" with no login page, on an install whose every
+	// container reports healthy. httpGet prints the body on a non-200, which is
+	// where Penpot names the failing dependency.
+	httpGet(t, penpotPublicURL()+"/api/main/methods/get-profile")
 }
 
 // TestPenpotBackendReachedItsIdentityProvider is the assertion that earns this
@@ -91,12 +101,49 @@ func TestPenpotBackendReachedItsIdentityProvider(t *testing.T) {
 
 	logs := runCmd(t, "podman", "logs", "apps-penpot-backend")
 	if strings.Contains(logs, "unable to initialize auth provider") {
-		t.Fatal("Penpot could not reach its OIDC issuer at startup; the login page would " +
-			"offer a provider that cannot authenticate anyone")
+		t.Fatalf("Penpot could not reach its OIDC issuer at startup; the login page would " +
+			"offer a provider that cannot authenticate anyone.\nBackend's own words:\n" +
+			logContext(logs, "unable to initialize auth provider"))
 	}
 	if !strings.Contains(logs, "provider initialized") {
-		t.Fatal("the backend never reported an initialized auth provider; SSO is not configured")
+		t.Fatalf("the backend never reported an initialized auth provider; SSO is not configured.\n" +
+			"Last lines of the backend log:\n" + tailLines(logs, 25))
 	}
+}
+
+// logContext returns the log lines that carry the marker plus their neighbours,
+// because Penpot writes the reason for a failed provider init next to the
+// warning, not in it. A failure that only quotes the warning is a failure the
+// reader has to go reproduce by hand.
+func logContext(logs, marker string) string {
+	lines := strings.Split(logs, "\n")
+	var out []string
+	for i, line := range lines {
+		if !strings.Contains(line, marker) {
+			continue
+		}
+		from, to := i-2, i+6
+		if from < 0 {
+			from = 0
+		}
+		if to > len(lines) {
+			to = len(lines)
+		}
+		out = append(out, lines[from:to]...)
+	}
+	if len(out) == 0 {
+		return tailLines(logs, 25)
+	}
+	return strings.Join(out, "\n")
+}
+
+// tailLines returns the last n lines of a log.
+func tailLines(logs string, n int) string {
+	lines := strings.Split(strings.TrimRight(logs, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // TestPenpotEnvFileStaysOnTheHost checks the delivery channel: the file is read
@@ -126,9 +173,11 @@ func TestPenpotEnvFileStaysOnTheHost(t *testing.T) {
 	if values["PENPOT_OIDC_BASE_URI"] == "" {
 		t.Error("PENPOT_OIDC_BASE_URI is empty; Penpot cannot discover the provider")
 	}
-	if want := penpotPublicURL() + "/api/auth/oidc/callback"; values["PENPOT_OIDC_REDIRECT_URI"] != want {
-		t.Errorf("PENPOT_OIDC_REDIRECT_URI = %q, want %q", values["PENPOT_OIDC_REDIRECT_URI"], want)
-	}
+	// There is no PENPOT_OIDC_REDIRECT_URI to check: Penpot has no such config
+	// key. backend/src/app/auth/oidc.clj builds the redirect URI as
+	// PENPOT_PUBLIC_URI with the path replaced by /api/auth/oidc/callback, so
+	// the assertion that matters is the one below on PENPOT_PUBLIC_URI, and the
+	// callback path is the one metadata.yaml declares to Authentik.
 	if want := penpotPublicURL(); values["PENPOT_PUBLIC_URI"] != want {
 		t.Errorf("PENPOT_PUBLIC_URI = %q, want %q", values["PENPOT_PUBLIC_URI"], want)
 	}

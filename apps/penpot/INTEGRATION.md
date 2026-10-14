@@ -213,6 +213,27 @@ replaced; the ports (6060 backend, 6061 exporter, 4401 MCP stream, 4402 MCP
 websocket, 3000 admin console, 8080 frontend) come from the same entrypoint
 defaults.
 
+## The admin console is a dependency of every page, not an optional extra
+
+`enable-admin-console` is not a menu item that can be missing harmlessly. With the
+flag on, `get-profile` (the RPC the SPA issues first, and `::rpc/auth false`, so
+anonymous visitors hit it) ends in `(with-nitrate-licence profile cfg)`, a call
+from the backend to the service at `PENPOT_ADMIN_CONSOLE_URI`. When that call
+fails, `backend/src/app/http/errors.clj` answers
+`503 {:type :nitrate-unavailable}` and the frontend renders "Penpot is
+temporarily unavailable due to a system issue" in place of the login page.
+
+So an install where every container reports healthy can have no way to sign in.
+That is what the first CI boot actually hit: the frontend's nginx was serving,
+`/js/config.js` was exactly right, and the browser got the unavailable page
+because the admin console had not finished booting when the SPA asked.
+
+The routed node's `PostStart` therefore polls `GET /api/main/methods/get-profile`
+until it answers 200. It is the only outside-visible check that reaches nginx,
+the JVM, PostgreSQL, and the admin console at once, and it is the request the
+browser is about to make, so the node stops being "running" in the same terms the
+user will experience.
+
 ## Health checks
 
 The three Penpot-authored images are Docker Hardened Images, and the `-dev`

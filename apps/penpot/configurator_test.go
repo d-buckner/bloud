@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/stretchr/testify/assert"
@@ -225,15 +226,49 @@ func TestBothNodesAgreeOnTheFile(t *testing.T) {
 	assert.Contains(t, string(after), "PENPOT_OIDC_CLIENT_ID=penpot-client")
 }
 
-// configJSServer serves the file the frontend image renders at start.
+// configJSServer serves the file the frontend image renders at start, plus the
+// boot-critical RPC the routed node's PostStart waits on.
 func configJSServer(flags string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != configJSPath {
+		switch r.URL.Path {
+		case configJSPath:
+			_, _ = fmt.Fprintf(w, "var penpotFlags = %q;\n", flags)
+		case bootProbePath:
+			_, _ = w.Write([]byte(`["~:id","~u00000000-0000-0000-0000-000000000000"]`))
+		default:
 			http.NotFound(w, r)
+		}
+	}))
+}
+
+func TestPostStartWaitsForTheBackendToServe(t *testing.T) {
+	// The failure the first CI boot actually produced: nginx serving a correct
+	// config.js, and get-profile answering 503 because the admin console is not
+	// answering yet. The browser gets "temporarily unavailable"; PostStart has to
+	// say so instead of promoting the node.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == configJSPath {
+			_, _ = fmt.Fprintf(w, "var penpotFlags = %q;\n",
+				"disable-registration enable-mcp enable-admin-console "+
+					"enable-login-with-oidc enable-oidc-registration")
 			return
 		}
-		_, _ = fmt.Fprintf(w, "var penpotFlags = %q;\n", flags)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"type":"nitrate-unavailable"}`))
 	}))
+	defer server.Close()
+
+	c := newFrontendConfigurator(configurator.Deps{})
+	c.baseURL = server.URL
+
+	// Bounded so the test proves the gate rejects without sitting out the wait
+	// budget; the deadline expiring is the same code path as the budget doing so.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := c.PostStart(ctx, oidcState())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), bootProbePath)
 }
 
 func TestPostStartVerifiesServedFlags(t *testing.T) {

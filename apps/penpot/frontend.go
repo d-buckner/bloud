@@ -82,6 +82,15 @@ func (c *frontendConfigurator) PostStart(ctx context.Context, state *configurato
 			strings.Join(missing, ", "), servedFlags(flags))
 	}
 
+	// The config file proves the frontend is serving what Bloud wrote. It does
+	// not prove the app works: get-profile is the SPA's first call and it fails
+	// with 503 while the backend's own dependencies are not answering, which
+	// leaves a healthy-looking install showing "temporarily unavailable". See
+	// bootProbePath.
+	if err := c.api.waitServing(ctx); err != nil {
+		return fmt.Errorf("penpot is serving but %s is not answering: %w", bootProbePath, err)
+	}
+
 	c.mcp.sync(ctx)
 	return nil
 }
