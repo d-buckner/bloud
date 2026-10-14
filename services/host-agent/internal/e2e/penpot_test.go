@@ -5,8 +5,10 @@
 package e2e
 
 import (
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,7 +105,9 @@ func TestPenpotBackendReachedItsIdentityProvider(t *testing.T) {
 	if strings.Contains(logs, "unable to initialize auth provider") {
 		t.Fatal("Penpot could not reach its OIDC issuer at startup; the login page would " +
 			"offer a provider that cannot authenticate anyone.\nBackend's own words:\n" +
-			logContext(logs, "unable to initialize auth provider"))
+			logContext(logs, "unable to initialize auth provider") +
+			"\nWhat the container can actually see:\n" +
+			oidcDiagnosis(envFile(t, filepath.Join(appDataDir("penpot"), "config", "penpot.env"))["PENPOT_OIDC_BASE_URI"]))
 	}
 	if !strings.Contains(logs, "provider initialized") {
 		t.Fatal("the backend never reported an initialized auth provider; SSO is not configured.\n" +
@@ -115,6 +119,57 @@ func TestPenpotBackendReachedItsIdentityProvider(t *testing.T) {
 // because Penpot writes the reason for a failed provider init next to the
 // warning, not in it. A failure that only quotes the warning is a failure the
 // reader has to go reproduce by hand.
+// softRun runs a diagnostic. Unlike runCmd it never fails the test: a probe that
+// could not run is itself an answer, and the point of these is to be printed
+// next to a failure that already happened.
+func softRun(name string, args ...string) string {
+	out, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		return strings.TrimSpace(fmt.Sprintf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out))
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// oidcDiagnosis answers the question Penpot's log cannot. "unable to discover
+// OIDC configuration" wraps at least three different faults (the SSRF guard
+// refusing the address, the issuer name not resolving inside the container, the
+// proxy answering something other than 200) and they need three different
+// fixes, so the test reports what the container sees instead of guessing: the
+// two variables that decide the guard, whether the name resolves, and the status
+// line of the actual discovery request made from inside the container.
+func oidcDiagnosis(baseURI string) string {
+	var b strings.Builder
+
+	env := softRun("podman", "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", "apps-penpot-backend")
+	for _, line := range strings.Split(env, "\n") {
+		if strings.HasPrefix(line, "PENPOT_SSRF_ALLOWED_HOSTS=") || strings.HasPrefix(line, "PENPOT_OIDC_BASE_URI=") {
+			b.WriteString("  container env: " + line + "\n")
+		}
+	}
+
+	parsed, err := url.Parse(baseURI)
+	if err != nil || parsed.Hostname() == "" {
+		return b.String() + "  could not parse PENPOT_OIDC_BASE_URI: " + baseURI + "\n"
+	}
+
+	host, port := parsed.Hostname(), parsed.Port()
+	if port == "" {
+		port = "80"
+	}
+	b.WriteString("  resolves to: " + softRun("podman", "exec", "apps-penpot-backend", "getent", "hosts", host) + "\n")
+
+	// The image has no curl and no wget; bash is installed (it is the image's own
+	// entrypoint) and its /dev/tcp pseudo-file makes the request the container
+	// would make, from inside the container.
+	path := strings.TrimSuffix(parsed.Path, "/") + "/.well-known/openid-configuration"
+	script := fmt.Sprintf(
+		"exec 3<>/dev/tcp/%s/%s || { echo 'connect failed'; exit 0; }; "+
+			"printf 'GET %s HTTP/1.0\r\nHost: %s\r\n\r\n' >&3; head -n 1 <&3", host, port, path, host)
+	b.WriteString("  " + baseURI + ".well-known/openid-configuration from inside: " +
+		softRun("podman", "exec", "apps-penpot-backend", "bash", "-c", script) + "\n")
+	return b.String()
+}
+
 func logContext(logs, marker string) string {
 	lines := strings.Split(logs, "\n")
 	var out []string
