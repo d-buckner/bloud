@@ -104,6 +104,11 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 // Name returns the graph node this configurator owns.
 func (c *Configurator) Name() string { return nodeName }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *Configurator) Port() int { return c.port }
+
 // PreStart writes the env file the container spec declares as its envFile. It
 // carries the three values `environment:` cannot render: the Home Assistant
 // address from the `appApi` binding, the long-lived token from that binding's

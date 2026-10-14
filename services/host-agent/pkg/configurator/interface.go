@@ -182,6 +182,21 @@ type Remover interface {
 	Remove(ctx context.Context, state *AppState, clearData bool) error
 }
 
+// PortReporter is implemented by a configurator that carries the app's port.
+// It is optional and separate from NodeLifecycle: a node that writes config for
+// a container it does not own has no port to report, and says so by not
+// implementing this interface.
+//
+// The value is the port the constructor resolved, which is the catalog's
+// `port:` when registration passed 0. The conformance harness compares it
+// against `metadata.yaml`, because the same number is written in both places
+// and only one of them routes traffic. A configurator that reports a different
+// port builds URLs that connect somewhere else.
+type PortReporter interface {
+	// Port returns the port this node's app is reached on.
+	Port() int
+}
+
 // Configurator is an alias for NodeLifecycle for backward compatibility.
 type Configurator = NodeLifecycle
 

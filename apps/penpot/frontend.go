@@ -54,6 +54,11 @@ func newFrontendConfigurator(deps configurator.Deps) *frontendConfigurator {
 
 func (c *frontendConfigurator) Name() string { return frontendNode }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *frontendConfigurator) Port() int { return defaultPort }
+
 // PreStart guarantees the shared env file exists before this node's container is
 // created, and reports a recreate when this node's container was created from
 // other bytes. See writeEnvFile for why both writers are correct rather than one.

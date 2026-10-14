@@ -98,6 +98,11 @@ func (c *Configurator) Name() string {
 	return nodeName
 }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *Configurator) Port() int { return c.port }
+
 // PreStart writes the image's saved config so the container comes up already
 // authenticated to AFFiNE and already accepting Bloud's MCP bearer.
 //

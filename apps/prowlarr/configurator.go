@@ -152,6 +152,11 @@ func (c *Configurator) Name() string {
 	return nodeName
 }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *Configurator) Port() int { return c.port }
+
 // configPath returns the host path of the instance's config.xml.
 func (c *Configurator) configPath(state *configurator.AppState) string {
 	return filepath.Join(state.DataPath, "config", configFileName)

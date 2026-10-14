@@ -19,9 +19,6 @@ type appSpec struct {
 	Dir string
 	// Node is the graph node its configurator registers under.
 	Node string
-	// DefaultPort is the constructor's fallback port, checked against the
-	// port the catalog publishes.
-	DefaultPort int
 	// WithSSO says whether to hand the configurator SSO enabled with an OIDC
 	// output. Apps whose PreStart requires OIDC need this to reach the code
 	// path that writes their config.
@@ -53,36 +50,36 @@ type appSpec struct {
 // to NodeNames() without adding it here fails TestConformanceTableIsComplete,
 // so coverage cannot silently shrink.
 var conformanceTable = []appSpec{
-	{Dir: "affine", Node: "apps-affine", DefaultPort: 3010, WithSSO: true},
-	{Dir: "affine-mcp", Node: "apps-affine-mcp", DefaultPort: 9222},
-	{Dir: "arr-mcp", Node: "apps-arr-mcp", DefaultPort: 6060},
-	{Dir: "calino", Node: "apps-calino", DefaultPort: 8180},
-	{Dir: "dav-mcp", Node: "apps-dav-mcp", DefaultPort: 9333},
-	{Dir: "hermes", Node: "apps-hermes", DefaultPort: 9119, WithSSO: true},
-	{Dir: "hermes-webui", Node: "apps-hermes-webui", DefaultPort: 8787, WithSSO: true, WithAgent: true},
-	{Dir: "homeassistant", Node: "apps-homeassistant", DefaultPort: 8123, WithSSO: true, OwnsTeardown: true, Preseed: preseedHAComponent},
-	{Dir: "ha-mcp", Node: "apps-ha-mcp", DefaultPort: 8086, WithAppAPI: true},
-	{Dir: "ha-mcp", Node: "apps-ha-mcp-gate", DefaultPort: 8086, WithAppAPI: true},
-	{Dir: "immich", Node: "apps-immich-server", DefaultPort: 2283, WithSSO: true},
-	{Dir: "jellyfin", Node: "apps-jellyfin", DefaultPort: 8096},
-	{Dir: "navidrome", Node: "apps-navidrome", DefaultPort: 4533},
-	{Dir: "paperless-ngx", Node: "apps-paperless-ngx", DefaultPort: 8000, WithSSO: true},
+	{Dir: "affine", Node: "apps-affine", WithSSO: true},
+	{Dir: "affine-mcp", Node: "apps-affine-mcp"},
+	{Dir: "arr-mcp", Node: "apps-arr-mcp"},
+	{Dir: "calino", Node: "apps-calino"},
+	{Dir: "dav-mcp", Node: "apps-dav-mcp"},
+	{Dir: "hermes", Node: "apps-hermes", WithSSO: true},
+	{Dir: "hermes-webui", Node: "apps-hermes-webui", WithSSO: true, WithAgent: true},
+	{Dir: "homeassistant", Node: "apps-homeassistant", WithSSO: true, OwnsTeardown: true, Preseed: preseedHAComponent},
+	{Dir: "ha-mcp", Node: "apps-ha-mcp", WithAppAPI: true},
+	{Dir: "ha-mcp", Node: "apps-ha-mcp-gate", WithAppAPI: true},
+	{Dir: "immich", Node: "apps-immich-server", WithSSO: true},
+	{Dir: "jellyfin", Node: "apps-jellyfin"},
+	{Dir: "navidrome", Node: "apps-navidrome"},
+	{Dir: "paperless-ngx", Node: "apps-paperless-ngx", WithSSO: true},
 	// The env file is written by the backend node and read by the frontend node,
-	// so both are held to the same idempotency rule; the app's port belongs to
-	// the frontend, so only it declares a default port.
+	// so both are held to the same idempotency rule. The frontend publishes the
+	// app port, so only its configurator reports one.
 	{Dir: "penpot", Node: "apps-penpot-backend", WithSSO: true},
-	{Dir: "penpot", Node: "apps-penpot-frontend", DefaultPort: 9002, WithSSO: true},
-	{Dir: "podly", Node: "apps-podly", DefaultPort: 5001},
-	{Dir: "prowlarr", Node: "apps-prowlarr", DefaultPort: 9696},
-	{Dir: "qbittorrent", Node: "apps-qbittorrent", DefaultPort: 8081},
-	{Dir: "radarr", Node: "apps-radarr", DefaultPort: 7878},
-	{Dir: "radicale", Node: "apps-radicale", DefaultPort: 5232, WithSSO: true, WithLDAP: true},
-	// The feed-sync sidecar shares the radicale directory and the app's port
-	// belongs to the server, so it declares no default port of its own.
+	{Dir: "penpot", Node: "apps-penpot-frontend", WithSSO: true},
+	{Dir: "podly", Node: "apps-podly"},
+	{Dir: "prowlarr", Node: "apps-prowlarr"},
+	{Dir: "qbittorrent", Node: "apps-qbittorrent"},
+	{Dir: "radarr", Node: "apps-radarr"},
+	{Dir: "radicale", Node: "apps-radicale", WithSSO: true, WithLDAP: true},
+	// The feed-sync sidecar shares the radicale directory, and the server
+	// publishes the app port, so only the server reports one.
 	{Dir: "radicale", Node: "apps-radicale-pimsync"},
-	{Dir: "seerr", Node: "apps-seerr", DefaultPort: 5055},
-	{Dir: "sonarr", Node: "apps-sonarr", DefaultPort: 8989},
-	{Dir: "vaultwarden", Node: "apps-vaultwarden", DefaultPort: 8222, WithSSO: true},
+	{Dir: "seerr", Node: "apps-seerr"},
+	{Dir: "sonarr", Node: "apps-sonarr"},
+	{Dir: "vaultwarden", Node: "apps-vaultwarden", WithSSO: true},
 }
 
 // TestConformanceTableIsComplete pins the table against the registry, so a new
@@ -124,7 +121,6 @@ func TestConformance(t *testing.T) {
 			tc := configtest.Case{
 				Node:         spec.Node,
 				Metadata:     md,
-				DefaultPort:  spec.DefaultPort,
 				State:        stateForSpec(spec),
 				Preseed:      spec.Preseed,
 				AllowRemover: spec.OwnsTeardown,
