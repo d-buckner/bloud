@@ -33,7 +33,7 @@ func inferenceState(dir string, b configurator.InferenceBinding) *configurator.A
 }
 
 func bindingFor(endpoint, model, key string) configurator.InferenceBinding {
-	return configurator.InferenceBinding{Endpoint: endpoint, DefaultModel: model, APIKey: key}
+	return configurator.InferenceBinding{Endpoint: endpoint, DefaultModel: model, APIKey: configurator.Secret(key)}
 }
 
 // The first pass registers Bloud's endpoint as a workspace BYOK profile: the

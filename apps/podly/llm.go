@@ -60,7 +60,7 @@ func (c *Configurator) reconcileInference(ctx context.Context, state *configurat
 	desired := llmSection{
 		Model:   litellmModel(binding.DefaultModel),
 		BaseURL: binding.Endpoint,
-		APIKey:  orPlaceholder(binding.APIKey),
+		APIKey:  orPlaceholder(binding.APIKey.String()),
 	}
 	if inferenceApplied(state, desired) {
 		return nil

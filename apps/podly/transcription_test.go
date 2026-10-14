@@ -27,7 +27,7 @@ func transcriptionState(t *testing.T, endpoint, apiKey, model string) *configura
 				Installed: true,
 			},
 			Endpoint: endpoint,
-			APIKey:   apiKey,
+			APIKey:   configurator.Secret(apiKey),
 			Model:    model,
 		}},
 	}

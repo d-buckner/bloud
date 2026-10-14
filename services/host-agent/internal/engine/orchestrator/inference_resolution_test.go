@@ -81,7 +81,7 @@ func TestResolveInference_InstanceServesAsProvider(t *testing.T) {
 	assert.Equal(t, configurator.ProviderKindSetting, b.Kind)
 	assert.True(t, b.Installed, "the setting being populated is the instance analogue of an installed provider")
 	assert.Equal(t, "https://api.example.com/v1", b.Endpoint)
-	assert.Equal(t, "operator-key", b.APIKey)
+	assert.Equal(t, "operator-key", b.APIKey.String())
 	assert.Equal(t, "gpt-4o-mini", b.DefaultModel)
 	assert.False(t, b.ViaGateway, "this is the raw upstream, not a gateway")
 	assert.Empty(t, b.Node, "an instance provider has no container and no node")

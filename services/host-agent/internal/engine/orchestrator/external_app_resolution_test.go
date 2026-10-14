@@ -168,7 +168,7 @@ func TestExternalAppResolvesAppAPIBinding(t *testing.T) {
 	assert.Equal(t, "https://affine.example.com", binding.LocalURL)
 	assert.Equal(t, "op@example.com", binding.Username)
 	assert.Equal(t, "ws-42", binding.WorkspaceID)
-	assert.Equal(t, "the-remote-password", binding.Password)
+	assert.Equal(t, "the-remote-password", binding.Password.String())
 }
 
 // TestExternalAppBindingWithoutLocalInstallStillResolves pins that the external
@@ -183,7 +183,7 @@ func TestExternalAppBindingWithoutLocalInstallStillResolves(t *testing.T) {
 
 	binding := orch.buildAppState("affine-mcp").Integrations.AppAPIs[0]
 	assert.Equal(t, "http://192.168.1.40:3010", binding.BaseURL)
-	assert.Equal(t, "lan-password", binding.Password)
+	assert.Equal(t, "lan-password", binding.Password.String())
 }
 
 // TestExternalAppSecretRespectsRequires is invariant 15 unchanged: a consumer
@@ -340,7 +340,7 @@ func TestExternalAppDoesNotAffectLocalResolution(t *testing.T) {
 	assert.Equal(t, configurator.ProviderKindApp, binding.Kind)
 	assert.Equal(t, "http://apps-affine:3010", binding.BaseURL)
 	assert.Equal(t, "boot@example.com", binding.Username)
-	assert.Equal(t, "local-password", binding.Password)
+	assert.Equal(t, "local-password", binding.Password.String())
 }
 
 // TestInstallConsumerDoesNotInstallARemoteProviderLocally is the install side
@@ -456,7 +456,7 @@ func TestUpdateExternalAppPreservesValuesAndCredential(t *testing.T) {
 	assert.Equal(t, "http://new.example.com:3010", binding.BaseURL, "the new endpoint lands")
 	assert.Equal(t, "op@example.com", binding.Username, "the payload the update did not name is preserved")
 	assert.Equal(t, "ws-42", binding.WorkspaceID)
-	assert.Equal(t, "remote-password", binding.Password, "the credential is not disturbed by an edit that never mentions it")
+	assert.Equal(t, "remote-password", binding.Password.String(), "the credential is not disturbed by an edit that never mentions it")
 
 	stored, err := extStore.Get("ext-affine")
 	require.NoError(t, err)
@@ -537,7 +537,7 @@ func TestExternalContractProviderResolvesForASettingConsumer(t *testing.T) {
 	assert.Equal(t, configurator.ProviderKindSetting, binding.Kind)
 	assert.True(t, binding.Installed)
 	assert.Equal(t, "https://radarr.example.com", binding.BaseURL)
-	assert.Equal(t, "off-host-key", binding.APIKey)
+	assert.Equal(t, "off-host-key", binding.APIKey.String())
 }
 
 // A record declared for one contract must not satisfy a consumer of another.
@@ -624,7 +624,7 @@ func TestRemoteMediaServerSuppliesItsOwnAdminLoginAndAddress(t *testing.T) {
 	require.Len(t, out.MediaServers, 1)
 	got := out.MediaServers[0]
 	assert.Equal(t, "daniel", got.AdminUsername, "the operator's account name, not the local constant")
-	assert.Equal(t, "the-remote-password", got.AdminPassword)
+	assert.Equal(t, "the-remote-password", got.AdminPassword.String())
 	assert.Equal(t, "https://jellyfin.example.com", got.BaseURL)
 }
 
@@ -660,7 +660,7 @@ func TestLocalMediaServerPublishesItsBootstrapUsername(t *testing.T) {
 	out := orch.buildIntegrations("seerr", consumer)
 	require.Len(t, out.MediaServers, 1)
 	assert.Equal(t, "bloud-bootstrap-admin", out.MediaServers[0].AdminUsername)
-	assert.Equal(t, "local-bootstrap-pw", out.MediaServers[0].AdminPassword)
+	assert.Equal(t, "local-bootstrap-pw", out.MediaServers[0].AdminPassword.String())
 }
 
 // TestExternalHomeAssistantFillsHaMCPBindingFromTheRealCatalog is the AFFiNE
@@ -716,7 +716,7 @@ func TestExternalHomeAssistantFillsHaMCPBindingFromTheRealCatalog(t *testing.T) 
 	assert.True(t, binding.Installed)
 	assert.Equal(t, "https://ha.example.net:8123", binding.BaseURL)
 	assert.Equal(t, "https://ha.example.net:8123", binding.LocalURL)
-	assert.Equal(t, "operator-long-lived-token", binding.Password)
+	assert.Equal(t, "operator-long-lived-token", binding.Password.String())
 	assert.NotEqual(t, "LOCAL-HA-TOKEN", binding.Password,
 		"a remote record reads its own scope, never the token a local install published")
 	assert.Equal(t, "daniel", binding.Username,

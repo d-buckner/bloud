@@ -291,9 +291,9 @@ type ModelSourceBinding struct {
 	// external origin. Unlike ProviderRef.BaseURL it is not derived from a
 	// container address, because the upstream may not be on any Bloud network.
 	Endpoint string
-	// APIKey is the credential to send upstream. Empty when the source needs
-	// none (a local runtime on a trusted network).
-	APIKey string
+	// APIKey is the credential to send upstream. A local runtime on a trusted
+	// network needs none, so this one may legitimately stay unpublished.
+	APIKey Secret
 	// Models is the discovered model list, empty when discovery has not run or
 	// the upstream does not offer /models.
 	Models []string
@@ -314,8 +314,9 @@ type InferenceBinding struct {
 	// container-network fact (http://<Node>:<Port>) and is empty for an
 	// instance provider, which has no container at all.
 	Endpoint string
-	// APIKey is the credential to send. Empty when the provider needs none.
-	APIKey string
+	// APIKey is the credential to send. A provider that needs none leaves it
+	// unpublished.
+	APIKey Secret
 	// DefaultModel is the model to use where the app has picked none. It is a
 	// concrete model id, never a tier or alias, because it has to resolve on a
 	// server that has no Bloud-side name translation in front of it.
@@ -344,8 +345,9 @@ type TranscriptionBinding struct {
 	// is the field that always carries something dialable; ProviderRef.BaseURL
 	// is a container-network fact and is empty for an instance provider.
 	Endpoint string
-	// APIKey is the bearer to send. Empty when the endpoint needs none.
-	APIKey string
+	// APIKey is the bearer to send. An endpoint that needs none leaves it
+	// unpublished.
+	APIKey Secret
 	// Model is the model id to request, empty when the operator expressed no
 	// preference and the endpoint's own default stands. It is a concrete id
 	// rather than a tier for the same reason inference's DefaultModel is: the
@@ -360,10 +362,8 @@ type TranscriptionBinding struct {
 type PVRBinding struct {
 	ProviderRef
 	// APIKey is the key the provider's API authenticates with, published by the
-	// provider under its `pvr` contract. Empty while the provider has not
-	// published it yet (treat that as "not ready", never as an empty
-	// credential).
-	APIKey string
+	// provider under its `pvr` contract.
+	APIKey Secret
 }
 
 // RequestManagerBinding is the app an agent asks to take requests on the
@@ -379,10 +379,8 @@ type RequestManagerBinding struct {
 	// operator typed in.
 	Username string
 	// Password is the credential paired with Username, published under the
-	// provider's `requestManager` contract. Empty while the provider has not
-	// published it yet (treat that as "not ready", never as an empty
-	// credential).
-	Password string
+	// provider's `requestManager` contract.
+	Password Secret
 }
 
 // MediaServerBinding is an app that serves media and owns the accounts a
@@ -396,9 +394,8 @@ type MediaServerBinding struct {
 	// typed in, because that is the only way anyone downstream can learn it.
 	AdminUsername string
 	// AdminPassword is the bootstrap admin password the host generated for the
-	// provider, published under its `mediaServer` contract. Empty while it has
-	// not been generated yet.
-	AdminPassword string
+	// provider, published under its `mediaServer` contract.
+	AdminPassword Secret
 }
 
 // DownloadClientBinding is an app that fetches releases: the consumer stores its
@@ -413,8 +410,8 @@ type DownloadClientBinding struct {
 type SSOBinding struct {
 	ProviderRef
 	// APIToken is the token the provider generated for the host and published
-	// under its `sso` contract. Empty while it has not been published yet.
-	APIToken string
+	// under its `sso` contract.
+	APIToken Secret
 }
 
 // MCPBinding is a streamable-HTTP MCP server a harness registers as a tool
@@ -432,10 +429,8 @@ type MCPBinding struct {
 	ServerName string
 	// Token is the bearer the provider's MCP listener expects, published under
 	// the provider's `mcp` contract. It is scoped to MCP: revoking it revokes
-	// tool access and nothing else. Empty while the provider has not published it
-	// yet, which a harness must treat as "not ready" and write no entry, never
-	// as an empty bearer.
-	Token string
+	// tool access and nothing else.
+	Token Secret
 	// Path is the endpoint path to append to whichever address the consumer
 	// chose. Absolute, so composition is plain concatenation.
 	Path string
@@ -447,18 +442,15 @@ type MCPBinding struct {
 // It is the consumer-side half of the `appApi` contract: the target app mints
 // the account credential and publishes it, and a wrapper consumes it. The
 // binding carries the two fields a sign-in needs and nothing else. Both must be
-// present before the consumer writes anything: an empty password means "not
-// published yet", never an empty credential (the rule MCPBinding.Token follows
-// for the same reason).
+// present before the consumer writes anything.
 type AppAPIBinding struct {
 	ProviderRef
 	// Username is the account the credential belongs to, published as a
 	// non-secret contract value. Empty until the provider publishes it.
 	Username string
-	// Password is the account password, published under the provider's `appApi`
-	// contract. Empty while the provider has not published it, which a consumer
-	// must treat as "not ready" and write no credential, never as an empty one.
-	Password string
+	// Password is the account password, published under the provider's
+	// `appApi` contract.
+	Password Secret
 	// WorkspaceID is the scope the provider wants a companion to address by
 	// default, published as a runtime value. AFFiNE's is the shared workspace
 	// Bloud provisions. Empty when the provider has no scope or has not
@@ -491,10 +483,8 @@ type AgentAPIBinding struct {
 	// treat as "not ready" and write nothing.
 	Endpoint string
 	// APIKey is the bearer the provider's agent listener expects, published
-	// under the provider's `agentApi` contract. Empty while the provider has
-	// not published it, which a consumer must treat as "not ready" and write
-	// no credential, never as an empty one.
-	APIKey string
+	// under the provider's `agentApi` contract.
+	APIKey Secret
 	// ModelName is the model id the provider wants a consumer to request.
 	// An agent answers to a name of its own choosing rather than a model id
 	// the operator picked, so this is what a consumer sends where an OpenAI
@@ -537,10 +527,8 @@ type CalDAVBinding struct {
 type ICSFeedBinding struct {
 	ProviderRef
 	// APIKey is the credential the provider's feed endpoint authenticates
-	// with, published under the `icsFeed` contract. Empty while the provider
-	// has not published it yet, which a consumer must treat as "not ready" and
-	// write no sync job for, never as an empty key.
-	APIKey string
+	// with, published under the `icsFeed` contract.
+	APIKey Secret
 	// Path is the feed path on the provider's address. Absolute, so the feed
 	// URL is ProviderRef.BaseURL + Path with the key as a query parameter.
 	Path string

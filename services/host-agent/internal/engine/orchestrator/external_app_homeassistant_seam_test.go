@@ -179,7 +179,7 @@ func TestExternalHomeAssistantReachesTheRealHaMCPConfigurator(t *testing.T) {
 	state := seam.orch.buildAppState(haMCPServerNode)
 	require.Len(t, state.Integrations.AppAPIs, 1, "the resolver handed the consumer its provider")
 	require.Equal(t, seamHAURL, state.Integrations.AppAPIs[0].BaseURL)
-	require.Equal(t, seamHAToken, state.Integrations.AppAPIs[0].Password)
+	require.Equal(t, seamHAToken, state.Integrations.AppAPIs[0].Password.String())
 
 	server := hamcp.NewConfigurator(0, configurator.Deps{Secrets: seam.secrets, Logger: newTestLogger()})
 	result, err := server.PreStart(context.Background(), state)

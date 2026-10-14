@@ -110,7 +110,7 @@ func pvrBinding(t *testing.T, appID string, installed bool, apiKey string) confi
 		},
 		// The binding carries the key as a field, empty when the PVR has not
 		// published one yet: no consumer names the secret.
-		APIKey: apiKey,
+		APIKey: configurator.Secret(apiKey),
 	}
 }
 

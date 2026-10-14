@@ -228,7 +228,7 @@ func caldavCredential(state *configurator.AppState) (configurator.AppAPIBinding,
 		return configurator.AppAPIBinding{}, false
 	}
 	for _, b := range state.Integrations.AppAPIs {
-		if !b.Installed || b.Username == "" || b.Password == "" {
+		if !b.Installed || b.Username == "" || !b.Password.Published() {
 			continue
 		}
 		return b, true
@@ -258,7 +258,7 @@ func renderEnvFile(baseURL string, hasAddress bool, cred configurator.AppAPIBind
 	}
 	if hasCred {
 		settings = append(settings, [2]string{envUsernameKey, cred.Username})
-		settings = append(settings, [2]string{envPasswordKey, cred.Password})
+		settings = append(settings, [2]string{envPasswordKey, cred.Password.String()})
 	}
 	if token != "" {
 		settings = append(settings, [2]string{envBearerKey, token})

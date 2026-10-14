@@ -296,7 +296,7 @@ func (c *Configurator) reconcilePvrApplication(
 	}
 
 	siblingKey := target.binding.APIKey
-	if siblingKey == "" {
+	if !siblingKey.Published() {
 		// The PVR is installed but has not published its key yet (its PreStart
 		// has not run, or it is still converging): wire nothing. Writing an
 		// entry with an empty key would only have to be corrected later, and
@@ -304,7 +304,7 @@ func (c *Configurator) reconcilePvrApplication(
 		c.logger.Warn("PVR has not published its API key yet; skipping its Prowlarr application", "pvr", target.binding.App)
 		return nil
 	}
-	desired := c.desiredApplication(target, siblingKey)
+	desired := c.desiredApplication(target, siblingKey.String())
 
 	if found && applicationMatches(current, desired) {
 		// The stored key reads back masked, so matching fields cannot prove the

@@ -26,7 +26,7 @@ func inferenceState(t *testing.T, endpoint, apiKey, model string) *configurator.
 				Installed: true,
 			},
 			Endpoint:     endpoint,
-			APIKey:       apiKey,
+			APIKey:       configurator.Secret(apiKey),
 			DefaultModel: model,
 		}},
 	}

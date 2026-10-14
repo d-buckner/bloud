@@ -540,7 +540,7 @@ func (o *Orchestrator) providerPublicURL(src providerSource) string {
 // two are the same empty field on purpose: a consumer has to tell "not ready"
 // from an empty credential, and "I did not ask for it" is a metadata mistake it
 // can see in its own `requires`.
-func (o *Orchestrator) publishedSecret(src providerSource, contract string, offer catalog.ContractProvides, requires []string) string {
+func (o *Orchestrator) publishedSecret(src providerSource, contract string, offer catalog.ContractProvides, requires []string) configurator.Secret {
 	spec, ok := catalog.ContractFor(contract)
 	if !ok || len(spec.Secrets) != 1 {
 		return ""
@@ -555,12 +555,12 @@ func (o *Orchestrator) publishedSecret(src providerSource, contract string, offe
 		return ""
 	}
 	if src.isExternal() {
-		return o.secrets.GetAppSecret(store.ExternalSecretScope(src.external.ID), contract)
+		return configurator.Secret(o.secrets.GetAppSecret(store.ExternalSecretScope(src.external.ID), contract))
 	}
 	if len(offer.Secrets) == 0 {
 		return ""
 	}
-	return o.secrets.GetAppSecret(src.id, spec.Secrets[0])
+	return configurator.Secret(o.secrets.GetAppSecret(src.id, spec.Secrets[0]))
 }
 
 // contractValue resolves one non-secret contract value: the runtime-published one

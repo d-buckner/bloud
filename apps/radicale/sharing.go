@@ -115,7 +115,7 @@ func sortedRecipients(recipients []string) []string {
 // so a binding without one names nothing and must render no share rather than
 // one pointing at an empty path.
 func feedComplete(feed configurator.ICSFeedBinding) bool {
-	return feed.Installed && feed.APIKey != "" && feed.Path != "" && feed.BaseURL != "" && feed.CalendarName != ""
+	return feed.Installed && feed.APIKey.Published() && feed.Path != "" && feed.BaseURL != "" && feed.CalendarName != ""
 }
 
 // calendarRecipients lists the active users on the instance, with the human
@@ -143,7 +143,7 @@ func (c *Configurator) calendarRecipients(ctx context.Context, state *configurat
 	// LocalURL, not BaseURL: this call is made by the host-agent process, which
 	// is not on the app's container network, while the provider's port is
 	// published to the host.
-	ak := authentik.NewClient(idp.LocalURL, idp.APIToken)
+	ak := authentik.NewClient(idp.LocalURL, idp.APIToken.String())
 	users, err := ak.ListUsers(ctx)
 	if err != nil {
 		c.logger.Warn("radicale sharing: could not read the identity provider's users",
@@ -199,7 +199,7 @@ func identityProvider(state *configurator.AppState) (configurator.SSOBinding, bo
 		return configurator.SSOBinding{}, false
 	}
 	for _, s := range state.Integrations.SSO {
-		if s.APIToken != "" {
+		if s.APIToken.Published() {
 			return s, true
 		}
 	}

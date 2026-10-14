@@ -275,7 +275,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		// reconcileJellyfinCoupling).
 		if jellyfin, ok := mediaServerBinding(state); ok {
 			c.reconcileJellyfinCoupling(ctx, settingsPath, c.providerClient(jellyfin.ProviderRef), jellyfin)
-			if err := c.publishRequestManagerCredentials(jellyfin.AdminUsername, jellyfin.AdminPassword); err != nil {
+			if err := c.publishRequestManagerCredentials(jellyfin.AdminUsername, jellyfin.AdminPassword.String()); err != nil {
 				return err
 			}
 		}
@@ -304,7 +304,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // and that URL is the one thing correct for a container on Bloud's network and
 // for a server it only points at.
 func (c *Configurator) jellyfinOnboardingLogin(jellyfin configurator.MediaServerBinding) (jellyfinLogin, bool) {
-	if jellyfin.AdminPassword == "" {
+	if !jellyfin.AdminPassword.Published() {
 		c.logger.Warn("the media server has not published its bootstrap admin password yet; Seerr onboarding is deferred",
 			"mediaServer", jellyfin.App)
 		return jellyfinLogin{}, false
@@ -322,7 +322,7 @@ func (c *Configurator) jellyfinOnboardingLogin(jellyfin configurator.MediaServer
 	}
 	return jellyfinLogin{
 		Username:   jellyfin.AdminUsername,
-		Password:   jellyfin.AdminPassword,
+		Password:   jellyfin.AdminPassword.String(),
 		Hostname:   ep.host,
 		Port:       ep.port,
 		UseSSL:     ep.useSSL,
@@ -355,7 +355,7 @@ func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.App
 	if err != nil {
 		return err
 	}
-	if err := c.publishRequestManagerCredentials(jellyfin.AdminUsername, jellyfin.AdminPassword); err != nil {
+	if err := c.publishRequestManagerCredentials(jellyfin.AdminUsername, jellyfin.AdminPassword.String()); err != nil {
 		return err
 	}
 
@@ -498,7 +498,7 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey
 	}
 
 	key := pvr.binding.APIKey
-	if key == "" {
+	if !key.Published() {
 		// The PVR is installed but has not published its key yet (its PreStart
 		// has not run, or it is still converging): wire nothing. Writing an
 		// entry with an empty key would only have to be corrected later, and
@@ -507,7 +507,7 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey
 		return nil
 	}
 
-	profile, err := c.pvrQualityProfile(ctx, pvr, key)
+	profile, err := c.pvrQualityProfile(ctx, pvr, key.String())
 	if err != nil {
 		// A key the PVR rejects is a real misconfiguration (the key the PVR
 		// published is the source of truth for it) and is surfaced with the
@@ -528,7 +528,7 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey
 		return fmt.Errorf("wiring Seerr to %s: reading Seerr's %s settings: %w", pvrID, pvr.service, err)
 	}
 
-	return c.applyDvrEntry(ctx, pvr, seerrKey, existing, dvrSettingsFor(pvr, key, profile, ep), ep.host)
+	return c.applyDvrEntry(ctx, pvr, seerrKey, existing, dvrSettingsFor(pvr, key.String(), profile, ep), ep.host)
 }
 
 // applyDvrEntry makes one Seerr DVR entry match what Bloud wants the PVR to

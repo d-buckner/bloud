@@ -146,8 +146,8 @@ func authentikToken(state *configurator.AppState) (string, error) {
 		if binding.App != authentikAppName {
 			continue
 		}
-		if binding.APIToken != "" {
-			return binding.APIToken, nil
+		if binding.APIToken.Published() {
+			return binding.APIToken.String(), nil
 		}
 		return "", fmt.Errorf("%s has not published its API token yet", authentikAppName)
 	}

@@ -180,7 +180,7 @@ func TestBuildIntegrations_ResolvesContractPayloads(t *testing.T) {
 	assert.Equal(t, 8989, sonarr.Port)
 	assert.Equal(t, "http://apps-sonarr:8989", sonarr.BaseURL, "containers reach the provider on the app network")
 	assert.Equal(t, "http://localhost:8989", sonarr.LocalURL, "the configurator reaches it from the host")
-	assert.Equal(t, "sonarr-key", sonarr.APIKey, "the key the provider published for this contract")
+	assert.Equal(t, "sonarr-key", sonarr.APIKey.String(), "the key the provider published for this contract")
 
 	assert.Equal(t, "radarr", radarr.App)
 	assert.False(t, radarr.Installed)
@@ -300,7 +300,7 @@ func TestBuildAppState_CarriesIntegrationBindings(t *testing.T) {
 
 	state := orch.buildAppState("seerr")
 	require.Len(t, state.Integrations.PVRs, 1)
-	assert.Equal(t, "radarr-key", state.Integrations.PVRs[0].APIKey)
+	assert.Equal(t, "radarr-key", state.Integrations.PVRs[0].APIKey.String())
 }
 
 // A consumer is handed only the credentials it declared it reads: integrating
@@ -324,7 +324,7 @@ func TestBuildIntegrations_ResolvesOnlyRequiredSecrets(t *testing.T) {
 
 	navidrome := orch.buildIntegrations("navidrome", consumerApp("navidrome", "sso", catalog.Integration{Requires: requires("apiToken")}, "authentik"))
 	require.Len(t, navidrome.SSO, 1)
-	assert.Equal(t, "admin-token", navidrome.SSO[0].APIToken, "the app that declared the requirement is handed the token")
+	assert.Equal(t, "admin-token", navidrome.SSO[0].APIToken.String(), "the app that declared the requirement is handed the token")
 
 	affine := orch.buildIntegrations("affine", consumerApp("affine", "sso", catalog.Integration{}, "authentik"))
 	require.Len(t, affine.SSO, 1)
@@ -355,7 +355,7 @@ func TestBuildIntegrations_MCPStaticValues(t *testing.T) {
 	binding := out.MCPServers[0]
 	assert.Equal(t, "simple", binding.ServerName)
 	assert.Equal(t, "/mcp", binding.Path)
-	assert.Equal(t, "bearer-1", binding.Token)
+	assert.Equal(t, "bearer-1", binding.Token.String())
 	assert.Equal(t, "http://apps-simple-mcp:3011", binding.BaseURL)
 	assert.Equal(t, "http://localhost:3011", binding.LocalURL)
 }
@@ -386,7 +386,7 @@ func TestBuildIntegrations_MCPRuntimePublishedValue(t *testing.T) {
 	binding := out.MCPServers[0]
 	assert.Equal(t, "/api/workspaces/ws-42/mcp", binding.Path, "the runtime-published path is what the consumer gets")
 	assert.Equal(t, "affine", binding.ServerName, "a value the provider did declare statically still resolves")
-	assert.Equal(t, "aff_mcp_v1.cred.secret", binding.Token)
+	assert.Equal(t, "aff_mcp_v1.cred.secret", binding.Token.String())
 }
 
 // A runtime value the provider has not published yet reads as empty, which the
@@ -461,7 +461,7 @@ func TestBuildIntegrations_AppAPIUsernameValueAndPasswordSecret(t *testing.T) {
 	require.Len(t, out.AppAPIs, 1)
 	binding := out.AppAPIs[0]
 	assert.Equal(t, "admin@affine.localhost", binding.Username, "the username is a value, not a credential")
-	assert.Equal(t, "owner-password", binding.Password)
+	assert.Equal(t, "owner-password", binding.Password.String())
 	assert.Equal(t, "ws-shared-1", binding.WorkspaceID, "the provider's default scope travels with the credential")
 	assert.Equal(t, "http://apps-affine:3010", binding.BaseURL)
 }
@@ -602,7 +602,7 @@ func TestBuildIntegrations_ICSFeedCarriesTheKeyAndFeedFacts(t *testing.T) {
 	assert.Equal(t, "http://apps-radarr:7878", feed.BaseURL, "the plugin fetches from the app network")
 	assert.Equal(t, "/feed/v3/calendar/Radarr.ics", feed.Path)
 	assert.Equal(t, "Movies", feed.CalendarName)
-	assert.Equal(t, "radarr-key", feed.APIKey, "the consumer declared it requires the key")
+	assert.Equal(t, "radarr-key", feed.APIKey.String(), "the consumer declared it requires the key")
 }
 
 // Least privilege: a consumer that did not list apiKey under `requires` gets an

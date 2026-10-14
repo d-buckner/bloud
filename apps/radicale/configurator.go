@@ -259,7 +259,7 @@ func feedURL(feed configurator.ICSFeedBinding) string {
 	if strings.Contains(u, "?") {
 		sep = "&"
 	}
-	return u + sep + "apikey=" + url.QueryEscape(feed.APIKey)
+	return u + sep + "apikey=" + url.QueryEscape(feed.APIKey.String())
 }
 
 // resyncGeneratedConfig re-renders the sharing database against the live

@@ -53,7 +53,7 @@ func sharedIdentity(state *configurator.AppState) (configurator.SSOBinding, bool
 		return configurator.SSOBinding{}, false
 	}
 	for _, s := range state.Integrations.SSO {
-		if s.APIToken != "" {
+		if s.APIToken.Published() {
 			return s, true
 		}
 	}
@@ -140,7 +140,7 @@ func (c *Configurator) wantedMemberEmails(ctx context.Context, idp configurator.
 	// LocalURL, not BaseURL: this call is made by the host-agent process, which
 	// is not on the app's container network, while the identity provider's
 	// port is published to the host.
-	ak := authentik.NewClient(idp.LocalURL, idp.APIToken)
+	ak := authentik.NewClient(idp.LocalURL, idp.APIToken.String())
 	managed, err := ak.ListUsers(ctx)
 	if err != nil {
 		c.logger.Warn("affine shared workspace: could not read the identity provider's users",
