@@ -219,7 +219,7 @@ func (c *Configurator) buildConfig(ctx context.Context, state *configurator.AppS
 		cfg.Services.Seerr = &serviceConfig{URL: rm.BaseURL, APIKey: key, DefaultUser: rm.Username, Permissions: writableService()}
 	}
 	for _, pvr := range pvrBindings(state) {
-		svc := &serviceConfig{URL: pvr.BaseURL, APIKey: pvr.APIKey, Permissions: writableService()}
+		svc := &serviceConfig{URL: pvr.BaseURL, APIKey: pvr.APIKey.String(), Permissions: writableService()}
 		switch pvr.App {
 		case radarrAppName:
 			cfg.Services.Radarr = svc
@@ -276,7 +276,7 @@ func (c *Configurator) ensureJellyfinAPIKey(ctx context.Context, server configur
 	if stored := c.secrets.GetAppSecret(appName, jellyfinAPIKeyKey); stored != "" {
 		return stored, nil
 	}
-	key, err := jellyfin.EnsureAPIKey(ctx, c.clients, func() string { return server.LocalURL }, server.AdminUsername, server.AdminPassword, jellyfinKeyName)
+	key, err := jellyfin.EnsureAPIKey(ctx, c.clients, func() string { return server.LocalURL }, server.AdminUsername, server.AdminPassword.String(), jellyfinKeyName)
 	if err != nil {
 		return "", err
 	}
@@ -303,7 +303,7 @@ func (c *Configurator) ensureSeerrAPIKey(ctx context.Context, rm configurator.Re
 	if stored := c.secrets.GetAppSecret(appName, seerrAPIKeyKey); stored != "" {
 		return stored, nil
 	}
-	key, err := seerr.DeriveAPIKey(ctx, c.clients, func() string { return rm.LocalURL }, rm.Username, rm.Password)
+	key, err := seerr.DeriveAPIKey(ctx, c.clients, func() string { return rm.LocalURL }, rm.Username, rm.Password.String())
 	if err != nil {
 		return "", err
 	}
@@ -331,7 +331,7 @@ func requestManagerBinding(state *configurator.AppState) (configurator.RequestMa
 		return configurator.RequestManagerBinding{}, false
 	}
 	for _, b := range state.Integrations.RequestManagers {
-		if b.App == seerrAppName && b.Installed && b.Password != "" {
+		if b.App == seerrAppName && b.Installed && b.Password.Published() {
 			return b, true
 		}
 	}
@@ -345,7 +345,7 @@ func pvrBindings(state *configurator.AppState) []configurator.PVRBinding {
 	}
 	var out []configurator.PVRBinding
 	for _, b := range state.Integrations.PVRs {
-		if b.Installed && b.APIKey != "" {
+		if b.Installed && b.APIKey.Published() {
 			out = append(out, b)
 		}
 	}
@@ -359,7 +359,7 @@ func mediaServerBinding(state *configurator.AppState) (configurator.MediaServerB
 		return configurator.MediaServerBinding{}, false
 	}
 	for _, b := range state.Integrations.MediaServers {
-		if b.App == jellyfinAppName && b.Installed && b.AdminPassword != "" {
+		if b.App == jellyfinAppName && b.Installed && b.AdminPassword.Published() {
 			return b, true
 		}
 	}

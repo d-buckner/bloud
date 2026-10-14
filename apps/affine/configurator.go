@@ -658,8 +658,8 @@ const byokKeylessCredential = "bloud"
 // byokCredential is the credential Bloud stores in AFFiNE for this binding: the
 // instance's real key when there is one, otherwise the keyless placeholder.
 func byokCredential(b configurator.InferenceBinding) string {
-	if b.APIKey != "" {
-		return b.APIKey
+	if b.APIKey.Published() {
+		return b.APIKey.String()
 	}
 	return byokKeylessCredential
 }

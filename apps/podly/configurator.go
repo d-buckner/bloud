@@ -307,7 +307,7 @@ func (c *Configurator) reconcileTranscription(ctx context.Context, state *config
 	desired := whisperSection{
 		WhisperType: "remote",
 		BaseURL:     binding.Endpoint,
-		APIKey:      orPlaceholder(binding.APIKey),
+		APIKey:      orPlaceholder(binding.APIKey.String()),
 		Model:       binding.Model,
 	}
 	if transcriptionApplied(state, desired) {

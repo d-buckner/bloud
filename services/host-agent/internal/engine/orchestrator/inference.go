@@ -160,7 +160,7 @@ func (o *Orchestrator) settingInferenceSource(requires []string, external extern
 		ViaGateway: false,
 	}
 	if secretAllowed(requires, "apiKey") && o.secrets != nil {
-		binding.APIKey = o.secrets.GetAppSecret(store.ExternalSecretScope(upstream.ID), inference.ContractName)
+		binding.APIKey = configurator.Secret(o.secrets.GetAppSecret(store.ExternalSecretScope(upstream.ID), inference.ContractName))
 	}
 	return binding, true
 }

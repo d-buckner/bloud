@@ -237,10 +237,10 @@ func homeAssistantToken(state *configurator.AppState) (string, bool) {
 		return "", false
 	}
 	for _, b := range state.Integrations.AppAPIs {
-		if !b.Installed || b.Password == "" {
+		if !b.Installed || !b.Password.Published() {
 			continue
 		}
-		return b.Password, true
+		return b.Password.String(), true
 	}
 	return "", false
 }

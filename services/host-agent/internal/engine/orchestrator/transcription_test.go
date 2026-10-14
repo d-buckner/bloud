@@ -54,7 +54,7 @@ func TestBuildIntegrations_TranscriptionFromTheInstanceSetting(t *testing.T) {
 	bindings := orch.buildIntegrations("podly", consumer).Transcription
 	require.Len(t, bindings, 1)
 	assert.Equal(t, "https://api.example.com/v1", bindings[0].Endpoint)
-	assert.Equal(t, "sk-instance", bindings[0].APIKey)
+	assert.Equal(t, "sk-instance", bindings[0].APIKey.String())
 	assert.Equal(t, "whisper-1", bindings[0].Model)
 	assert.True(t, bindings[0].Installed, "the operator filled the role, which is the setting analogue of a graph edge")
 	assert.Equal(t, transcription.DefaultID, bindings[0].App,

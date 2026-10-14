@@ -249,7 +249,7 @@ func (c *Configurator) reconcileJellyfinCoupling(
 	c.logger.Info("Seerr's Jellyfin API key is no longer accepted (the media server was reinstalled or its data was purged); issuing a new one")
 
 	password := binding.AdminPassword
-	if password == "" {
+	if !password.Published() {
 		c.logger.Warn("cannot repair the Jellyfin connection: the media server has not published its bootstrap admin password")
 		return
 	}
@@ -257,7 +257,7 @@ func (c *Configurator) reconcileJellyfinCoupling(
 		c.logger.Warn("cannot repair the Jellyfin connection: the media server has not published its bootstrap admin username")
 		return
 	}
-	adminToken, err := c.jellyfinAdminToken(ctx, jellyfin, binding.AdminUsername, password)
+	adminToken, err := c.jellyfinAdminToken(ctx, jellyfin, binding.AdminUsername, password.String())
 	if err != nil {
 		c.logger.Warn("cannot repair the Jellyfin connection", "error", err)
 		return

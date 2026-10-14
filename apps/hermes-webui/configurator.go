@@ -313,11 +313,11 @@ type agentConfig struct {
 // broken app rather than as a provider that has not published its credential.
 func (c *Configurator) resolveAgent(state *configurator.AppState) (agentConfig, error) {
 	for _, binding := range state.Integrations.AgentAPIs {
-		if binding.Endpoint != "" && binding.APIKey != "" {
+		if binding.Endpoint != "" && binding.APIKey.Published() {
 			return agentConfig{
 				Endpoint:       binding.Endpoint,
 				GatewayBaseURL: gatewayRoot(binding.Endpoint),
-				APIKey:         binding.APIKey,
+				APIKey:         binding.APIKey.String(),
 				DefaultModel:   binding.ModelName,
 			}, nil
 		}

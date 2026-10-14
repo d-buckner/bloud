@@ -564,7 +564,7 @@ func jellyfinBinding(localURL, password string) configurator.MediaServerBinding 
 			LocalURL:  localURL,
 		},
 		AdminUsername: jellyfinAdminUser,
-		AdminPassword: password,
+		AdminPassword: configurator.Secret(password),
 	}
 }
 
@@ -582,7 +582,7 @@ func radarrBinding(localURL, apiKey string) configurator.PVRBinding {
 			BaseURL:   "http://apps-radarr:7878",
 			LocalURL:  localURL,
 		},
-		APIKey: apiKey,
+		APIKey: configurator.Secret(apiKey),
 	}
 }
 
@@ -596,7 +596,7 @@ func sonarrBinding(localURL, apiKey string) configurator.PVRBinding {
 			BaseURL:   "http://apps-sonarr:8989",
 			LocalURL:  localURL,
 		},
-		APIKey: apiKey,
+		APIKey: configurator.Secret(apiKey),
 	}
 }
 

@@ -488,7 +488,7 @@ func mcpServerKey(b configurator.MCPBinding) string {
 // host loopback is the address both sides agree on, and it is the same one
 // Traefik uses to reach every app.
 func mcpServerEntry(b configurator.MCPBinding) (map[string]any, bool) {
-	if !b.Installed || b.Token == "" || b.Path == "" {
+	if !b.Installed || !b.Token.Published() || b.Path == "" {
 		return nil, false
 	}
 	base := b.LocalURL
@@ -742,8 +742,8 @@ func applyInference(doc map[string]any, b configurator.InferenceBinding) {
 	p["name"] = "Bloud"
 	p["api_mode"] = inferenceAPIMode
 	p["base_url"] = b.Endpoint
-	if b.APIKey != "" {
-		p["api_key"] = b.APIKey
+	if b.APIKey.Published() {
+		p["api_key"] = b.APIKey.String()
 	} else {
 		delete(p, "api_key")
 	}

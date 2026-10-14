@@ -218,7 +218,7 @@ func TestCaldavCredentialRequiresTheWholeCredential(t *testing.T) {
 	})
 	require.True(t, ok)
 	assert.Equal(t, "caldav-service", cred.Username)
-	assert.Equal(t, "secret-password", cred.Password)
+	assert.Equal(t, "secret-password", cred.Password.String())
 
 	noPassword := credential()
 	noPassword.Password = ""

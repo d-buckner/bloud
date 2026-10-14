@@ -212,7 +212,7 @@ func affineBinding(state *configurator.AppState) (configurator.AppAPIBinding, bo
 		return configurator.AppAPIBinding{}, false
 	}
 	for _, b := range state.Integrations.AppAPIs {
-		if !b.Installed || b.BaseURL == "" || b.Username == "" || b.Password == "" {
+		if !b.Installed || b.BaseURL == "" || b.Username == "" || !b.Password.Published() {
 			continue
 		}
 		return b, true
@@ -239,7 +239,7 @@ func renderConfig(binding configurator.AppAPIBinding, hasBinding bool, token str
 		settings = append(settings,
 			[2]string{"AFFINE_BASE_URL", binding.BaseURL},
 			[2]string{"AFFINE_EMAIL", binding.Username},
-			[2]string{"AFFINE_PASSWORD", binding.Password},
+			[2]string{"AFFINE_PASSWORD", binding.Password.String()},
 		)
 		// Pin the workspace Bloud provisions. Every workspace-scoped tool in the
 		// wrapper resolves `args.workspaceId || AFFINE_WORKSPACE_ID`, so without
