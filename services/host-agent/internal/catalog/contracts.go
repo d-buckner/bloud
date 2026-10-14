@@ -382,3 +382,13 @@ func ContractNames() []string {
 	}
 	return names
 }
+
+// AllContracts returns every known contract, in registry order. It exists so a
+// test can prove the orchestrator's binder table covers every payload-bearing
+// contract: the vocabulary and its consumers are held together rather than
+// drifting apart silently.
+func AllContracts() []Contract {
+	out := make([]Contract, len(contracts))
+	copy(out, contracts)
+	return out
+}

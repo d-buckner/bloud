@@ -274,10 +274,16 @@ func (o *Orchestrator) usableInferenceProvider(contract string, src providerSour
 	return ref, offer, true
 }
 
-// bindContract appends one provider's binding for one contract. The payload it
-// builds is the only contract-specific code in the resolver: a provider of an
-// existing contract is pure metadata, and adding a contract means adding an arm
-// here plus its payload type and its registry entry.
+// contractBinder appends one provider's binding for one contract to out. It is
+// the only contract-specific code in the resolver: a provider of an existing
+// contract is pure metadata, and adding a contract means adding a registry
+// entry, a payload type, and (for a genuinely new wire shape) one entry below.
+type contractBinder func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string)
+
+// contractBinders is the one place a consumer-facing contract is wired to its
+// typed binding. The keys are data, so TestContractBindersComplete can prove
+// every payload-bearing contract has a binder and every binder names a declared
+// contract: a forgotten arm becomes a build failure instead of a WARN.
 //
 // Required secret names come from the registry rather than being repeated here,
 // so the name a provider publishes and the name the payload reads cannot drift,
@@ -285,26 +291,28 @@ func (o *Orchestrator) usableInferenceProvider(contract string, src providerSour
 // `integrations.<contract>.requires`. That is what keeps the payload least
 // privilege: an app that integrates with the identity provider for SSO is not
 // handed the provider's API token unless it says it reads it.
-func (o *Orchestrator) bindContract(
-	out *configurator.Integrations,
-	contract string,
-	ref configurator.ProviderRef,
-	offer catalog.ContractProvides,
-	src providerSource,
-	requires []string,
-) {
-	switch contract {
-	case "pvr":
-		out.PVRs = append(out.PVRs, configurator.PVRBinding{ProviderRef: ref, APIKey: o.publishedSecret(src, contract, offer, requires)})
-	case "requestManager":
-		out.RequestManagers = append(out.RequestManagers, o.requestManagerBinding(ref, contract, offer, src, requires))
-	case "mediaServer":
-		out.MediaServers = append(out.MediaServers, o.mediaServerBinding(ref, contract, offer, src, requires))
-	case "sso":
-		out.SSO = append(out.SSO, configurator.SSOBinding{ProviderRef: ref, APIToken: o.publishedSecret(src, contract, offer, requires)})
-	case "downloadClient":
+//
+// `inference` is absent on purpose: it is resolved by resolveInference, because
+// it is the one contract that can be served by a provider the consumer never
+// named. `proxy` and `database` are absent because they are address-only: no
+// payload means nothing to bind.
+var contractBinders = map[string]contractBinder{
+	"pvr": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.PVRs = append(out.PVRs, configurator.PVRBinding{ProviderRef: ref, APIKey: o.publishedSecret(src, "pvr", offer, requires)})
+	},
+	"requestManager": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.RequestManagers = append(out.RequestManagers, o.requestManagerBinding(ref, "requestManager", offer, src, requires))
+	},
+	"mediaServer": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.MediaServers = append(out.MediaServers, o.mediaServerBinding(ref, "mediaServer", offer, src, requires))
+	},
+	"sso": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.SSO = append(out.SSO, configurator.SSOBinding{ProviderRef: ref, APIToken: o.publishedSecret(src, "sso", offer, requires)})
+	},
+	"downloadClient": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		out.DownloadClients = append(out.DownloadClients, configurator.DownloadClientBinding{ProviderRef: ref})
-	case "modelSource":
+	},
+	"modelSource": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// An app provider of modelSource (Ollama) is keyless by contract: the
 		// credential a gateway needs for the operator's external server comes
 		// from the instance scope, not from this provider.
@@ -312,17 +320,19 @@ func (o *Orchestrator) bindContract(
 			ProviderRef: ref,
 			Endpoint:    ref.BaseURL + offer.Values["path"],
 		})
-	case "mcp":
+	},
+	"mcp": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// The path may be one the provider minted at runtime (an endpoint under
 		// an id the app generated on first boot), so it resolves through the
 		// published-value channel with the static metadata as the fallback.
 		out.MCPServers = append(out.MCPServers, configurator.MCPBinding{
 			ProviderRef: ref,
-			ServerName:  o.contractValue(src, contract, offer, "serverName"),
-			Path:        o.contractValue(src, contract, offer, "path"),
-			Token:       o.publishedSecret(src, contract, offer, requires),
+			ServerName:  o.contractValue(src, "mcp", offer, "serverName"),
+			Path:        o.contractValue(src, "mcp", offer, "path"),
+			Token:       o.publishedSecret(src, "mcp", offer, requires),
 		})
-	case "appApi":
+	},
+	"appApi": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// The username is a non-secret value the provider mints at runtime (the
 		// account it bootstrapped), so it resolves through the published-value
 		// channel; the password is the ordinary single-secret payload. A consumer
@@ -333,15 +343,18 @@ func (o *Orchestrator) bindContract(
 		// configurator cannot tell the two apart, and does not need to.
 		out.AppAPIs = append(out.AppAPIs, configurator.AppAPIBinding{
 			ProviderRef: ref,
-			Username:    o.contractValue(src, contract, offer, "username"),
-			Password:    o.publishedSecret(src, contract, offer, requires),
-			WorkspaceID: o.contractValue(src, contract, offer, "workspaceId"),
+			Username:    o.contractValue(src, "appApi", offer, "username"),
+			Password:    o.publishedSecret(src, "appApi", offer, requires),
+			WorkspaceID: o.contractValue(src, "appApi", offer, "workspaceId"),
 		})
-	case "agentApi":
-		out.AgentAPIs = append(out.AgentAPIs, o.agentAPIBinding(ref, contract, offer, src, requires))
-	case "transcription":
-		out.Transcription = append(out.Transcription, o.transcriptionBinding(ref, contract, offer, src, requires))
-	case "caldav":
+	},
+	"agentApi": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.AgentAPIs = append(out.AgentAPIs, o.agentAPIBinding(ref, "agentApi", offer, src, requires))
+	},
+	"transcription": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.Transcription = append(out.Transcription, o.transcriptionBinding(ref, "transcription", offer, src, requires))
+	},
+	"caldav": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// No secret arm: the `caldav` contract publishes none, because the
 		// credential is the person's own password and it never crosses an app
 		// boundary. The address is the whole payload, and the browser-facing
@@ -351,22 +364,38 @@ func (o *Orchestrator) bindContract(
 			PublicURL:   o.providerPublicURL(src),
 			Path:        offer.Values["path"],
 		})
-	case "icsFeed":
+	},
+	"icsFeed": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// The consumer (Radicale's ics-sync storage) composes the feed URL from
 		// the provider's address, the declared path, and the key as a query
 		// parameter. The Servarr feed endpoint accepts no header auth, which is
 		// the whole reason the key travels in the URL.
 		out.ICSFeeds = append(out.ICSFeeds, configurator.ICSFeedBinding{
 			ProviderRef:  ref,
-			APIKey:       o.publishedSecret(src, contract, offer, requires),
+			APIKey:       o.publishedSecret(src, "icsFeed", offer, requires),
 			Path:         offer.Values["path"],
 			CalendarName: offer.Values["calendarName"],
 		})
-	default:
-		// A contract that carries a payload and lands here is a bug: silence
-		// would look like "the provider published nothing", so say so.
-		o.warnUnboundPayload(contract, src)
+	},
+}
+
+// bindContract appends one provider's binding for one contract by looking up
+// the contract's binder. A contract with no binder is either address-only
+// (proxy, database) or an error (a payload-bearing contract whose binder was
+// forgotten), and warnUnboundPayload says which.
+func (o *Orchestrator) bindContract(
+	out *configurator.Integrations,
+	contract string,
+	ref configurator.ProviderRef,
+	offer catalog.ContractProvides,
+	src providerSource,
+	requires []string,
+) {
+	if b, ok := contractBinders[contract]; ok {
+		b(o, out, ref, offer, src, requires)
+		return
 	}
+	o.warnUnboundPayload(contract, src)
 }
 
 // warnUnboundPayload logs when a contract that carries a payload reaches the
