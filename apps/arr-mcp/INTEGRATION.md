@@ -104,3 +104,9 @@ so no tile is drawn. Add the upstream logo before this stops being true.
 - There is deliberately no opt-in dev switch: the one thing worth switching
   (plain-http access to a service) is not a constraint here, because the
   providers are reached on the container network.
+
+## Validation strategy
+
+`sso.strategy` is `none`: a harness authenticates to the MCP endpoint with a
+bearer Bloud generates, so there is no browser journey to gate. The regression
+gates are the conformance harness and the configurator tests.

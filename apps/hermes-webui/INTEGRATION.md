@@ -250,3 +250,9 @@ rather than invented.
 - Catalog/conformance: `cd apps && go test ./...` covers the app through the
   shared harness (`WithAgent: true`)
 - Reveal/rotate/revoke API: `cd services/host-agent && go test ./internal/api/...`
+
+## Validation strategy
+
+`sso.strategy` is `native-oidc` for browser sign-in; the mobile client path is
+a Bloud-minted password, which is not an SSO strategy the app joins. The
+browser gate is the ingress strategy the browser sees.

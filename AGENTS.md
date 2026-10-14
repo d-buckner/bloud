@@ -26,7 +26,7 @@ relationships working.
 | `apps/` | Go module: the app catalog. One dir per app: `metadata.yaml` + `configurator.go` (+ assets). |
 | `e2e/` | Playwright (TS) browser tests of the user-visible lifecycle. |
 | `dev/` | VM configs (`lima.yaml`, `qemu.yaml`). |
-| `validation.yaml` | Manifest for `./bloud validate`: tier commands + path→command inference + app registry. |
+| `validation.yaml` | Manifest for `./bloud validate`: tier commands + path→command inference. The app registry is derived from `apps/*/metadata.yaml`, not hand-edited. |
 | `docs/` | All documentation. Index and "read for..." table: [`docs/README.md`](docs/README.md). Contains `specs/` (release plan, reconciler spec, app spec, dated review), `architecture/`, `guides/`, `features/`, `operations/` (tech-debt ledger), `plans/`. |
 | root `package.json` | npm workspaces + turbo; husky `pre-commit` runs staged-file hygiene, `pre-push` runs lint + tests (see "Validation & testing"). |
 
@@ -478,7 +478,7 @@ cache, so `go run gotest.tools/gotestsum` works offline.
   backend) adds `BLOUD_E2E_APP` (required) and `BLOUD_E2E_PLAYWRIGHT_FILTER`.
 - CI sizes the e2e runs to the change. The reusable
   `.github/workflows/e2e-affected.yml` runs `./bloud e2e affected`, whose logic
-  reuses the `apps:` file globs and `e2e-project` in `validation.yaml`: an
+  reuses the app registry derived from the catalog (file globs and `e2e-project`): an
   `apps/<name>/`-only change runs just that app's spec, a markdown-only change
   runs none, and any other change runs every app (and the Jellyfin lifecycle
   run). On a pull request the change set is the whole PR (`--base origin/main`,
@@ -993,9 +993,7 @@ combined with instance/SSH-target env vars). Instance overrides:
    `services/host-agent/internal/e2e/e2e_test.go` (build tag `integration`);
    user-journey spec in `e2e/tests/`. **Test behavioral outcomes** (verify via
    the app's own API), not config values.
-5. Add the app to `validation.yaml` (`apps:` block: auth strategy,
-   validation-level, file globs, optional `e2e-project`).
-6. Reference patterns: `apps/jellyfin` (LDAP, setup wizard, plugins),
+5. Reference patterns: `apps/jellyfin` (LDAP, setup wizard, plugins),
    `apps/authentik` (multi-container, LDAP infra), `apps/immich` (own
    postgres+redis, native-oidc), `apps/affine` (own postgres+redis, OIDC
    config file, first-run owner bootstrap), `apps/navidrome` (forward-auth),
@@ -1069,8 +1067,10 @@ wires the catalog graph). Highlights:
   is fallible with no static fallback (env > `secrets.json` > error). Still open:
   one literal fallback survives in `sso.DeriveSecret`, and loopback requests are
   granted admin, and that rule is forgeable from any client (see above).
-- Keep the `apps:` registry in `validation.yaml` in sync with `apps/` when apps
-  are added/removed (the changed tier infers affected apps from it).
+- ~~Keep the `apps:` registry in `validation.yaml` in sync with `apps/`~~ **Fixed
+  2026-10-14**: the registry is now derived from `apps/*/metadata.yaml` at
+  runtime (`deriveApps` in `cli/inference.go`), so there is nothing to keep in
+  sync.
 
 ## Environment conventions (by design)
 

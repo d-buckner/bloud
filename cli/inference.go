@@ -16,7 +16,10 @@ import (
 type validationManifest struct {
 	Tiers     map[string]manifestTier `yaml:"tiers"`
 	Inference manifestInference       `yaml:"inference"`
-	Apps      map[string]manifestApp  `yaml:"apps"`
+	// Apps is derived from the catalog by deriveApps, not parsed from
+	// validation.yaml: one decision ("this app exists") has one source, the
+	// metadata.yaml next to the app. See deriveApps for the rules.
+	Apps map[string]manifestApp
 }
 
 type manifestTier struct {
@@ -44,11 +47,12 @@ type manifestPath struct {
 	RiskAreas []string `yaml:"riskAreas"`
 }
 
+// manifestApp is what the validation inference and e2e-affected logic need to
+// know about one user app. It is derived, never hand-edited: a new app is
+// picked up the moment its metadata.yaml lands, with no validation.yaml edit.
 type manifestApp struct {
-	Auth            string   `yaml:"auth"`
-	ValidationLevel string   `yaml:"validation-level"`
-	Files           []string `yaml:"files"`
-	E2EProject      string   `yaml:"e2e-project"`
+	Files      []string
+	E2EProject string
 }
 
 func loadManifest(root string) (*validationManifest, error) {
@@ -60,7 +64,39 @@ func loadManifest(root string) (*validationManifest, error) {
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, err
 	}
+	apps, err := deriveApps(root)
+	if err != nil {
+		return nil, err
+	}
+	m.Apps = apps
 	return &m, nil
+}
+
+// deriveApps builds the app registry the validation inference and e2e-affected
+// logic read, from the catalog itself rather than from a hand-edited block in
+// validation.yaml. One decision ("this app exists") then has one source:
+// apps/*/metadata.yaml. The rules:
+//
+//   - the app set is every apps/*/metadata.yaml without isSystem: true
+//   - files is apps/<name>/**
+//   - e2e-project is the app name, exactly when e2e/tests/<name>.spec.ts exists
+func deriveApps(root string) (map[string]manifestApp, error) {
+	apps, err := loadAppMetadata(filepath.Join(root, "apps"))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]manifestApp, len(apps))
+	for name, app := range apps {
+		if app.IsSystem {
+			continue
+		}
+		derived := manifestApp{Files: []string{filepath.Join("apps", name, "**")}}
+		if _, err := os.Stat(filepath.Join(root, "e2e", "tests", name+".spec.ts")); err == nil {
+			derived.E2EProject = name
+		}
+		out[name] = derived
+	}
+	return out, nil
 }
 
 // --- Fast tier ---
