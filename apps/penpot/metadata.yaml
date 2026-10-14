@@ -155,13 +155,19 @@ containers:
     dependsOn:
       - apps-penpot-backend
     healthCheck:
-      # Node 24 is the runtime and it has fetch; any HTTP answer proves the
-      # listener is up (the MCP endpoint itself answers 4xx to a bare GET).
+      # CMD, not CMD-SHELL, and that is the whole point: this is the one Penpot
+      # image built from a non-`-dev` Docker Hardened Image base (`dhi.io/node`,
+      # where the backend and frontend use `*-dev`), and it ships no /bin/sh and
+      # no coreutils at all. A CMD-SHELL probe cannot ever pass here: podman exec
+      # fails with "executable file /bin/sh not found" before node is reached.
+      # So the probe is exec'd directly, and it opens the port itself instead of
+      # speaking the protocol: a bare GET /mcp is a session request, which the
+      # server logs and allocates a transport for, every ten seconds, forever.
       test:
-        - CMD-SHELL
-        - >-
-          node -e 'fetch("http://127.0.0.1:4401/mcp").then(() =>
-          process.exit(0)).catch(() => process.exit(1))'
+        - CMD
+        - node
+        - -e
+        - const s=require("net").connect(4401,"127.0.0.1");s.setTimeout(3e3,()=>process.exit(1));s.on("connect",()=>process.exit(0));s.on("error",()=>process.exit(1));
       interval: 10
       timeout: 10
       retries: 30

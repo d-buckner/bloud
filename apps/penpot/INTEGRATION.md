@@ -1,6 +1,6 @@
 # Penpot Integration
 
-## Status: implemented, verified against the image's own entrypoint and source, not yet run
+## Status: implemented, verified against the image's own entrypoint and source; booted once in CI, which is where the MCP probe was caught
 
 `penpot` is [Penpot](https://penpot.app): an open-source design platform for
 interfaces, design systems, and prototypes. It is the first catalog app that
@@ -215,12 +215,29 @@ defaults.
 
 ## Health checks
 
-The backend probe is a TCP connect (`/dev/tcp`), not an HTTP path: the JVM opens
-its listener only after migrations and startup tasks, and "something is listening
-on 6060" is the readiness signal this image can be checked against without
-depending on a management path that is not part of its documented surface. The
-frontend probe is the same trick on 8080, because the image ships nginx without
-curl or wget but does ship bash.
+The three Penpot-authored images are Docker Hardened Images, and the `-dev`
+suffix on the base tag is the difference between a probe that can run and one
+that cannot:
+
+| Image | Base | `/bin/sh`? |
+| --- | --- | --- |
+| `penpotapp/backend` | `dhi.io/debian-base:trixie-debian13-dev` | yes; its own `CMD` is `["/bin/bash", "run.sh"]` |
+| `penpotapp/frontend` | `dhi.io/nginx:1.31.1-debian13-dev` | yes, plus bash; no curl, no wget |
+| `penpotapp/mcp` | `dhi.io/node:24.20.0-debian13` | **no**, and no coreutils either |
+
+So the backend and frontend probes are TCP connects through bash's `/dev/tcp`
+pseudo-file. The backend uses a TCP connect rather than an HTTP path because the
+JVM opens its listener only after migrations and startup tasks, and "something is
+listening on 6060" is the readiness signal the image can be checked against
+without depending on a management path that is not part of its documented
+surface.
+
+The MCP image takes none of that. With no shell, a `CMD-SHELL` probe fails before
+`node` is reached: `crun: executable file /bin/sh not found`. Verified by running
+the image and exec'ing both forms. The probe is therefore `CMD` (exec'd directly,
+no shell in the path) and it opens the port itself instead of speaking the
+protocol, because a bare `GET /mcp` is a session request: the server logs it and
+allocates a transport for it, every ten seconds, forever.
 
 The stronger checks are in `PostStart`, which is where the config round trip is
 verified. The health check only has to say "the listener is up"; the difference
