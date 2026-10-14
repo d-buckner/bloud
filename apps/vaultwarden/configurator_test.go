@@ -110,8 +110,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func testConfigurator(t *testing.T, app http.Handler) (*Configurator, string) {
 	t.Helper()
 	c := NewConfigurator(0, configurator.Deps{
-		PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
-		Logger:         quietLogger(),
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
+		},
 	})
 	if app != nil {
 		server := httptest.NewServer(app)
@@ -243,7 +245,12 @@ func TestPreStart_UnchangedConfigDoesNotRestart(t *testing.T) {
 
 func TestPreStart_FollowsSSOAndHostChanges(t *testing.T) {
 	base := "http://localhost:8080"
-	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: func() string { return base }, Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return base },
+		},
+	})
 	dir := t.TempDir()
 	ctx := context.Background()
 
@@ -445,8 +452,10 @@ func TestMetadata_ContainerMatchesTheGeneratedFileLocation(t *testing.T) {
 func switchedConfigurator(t *testing.T, switchValue, baseURL string) *Configurator {
 	t.Helper()
 	c := NewConfigurator(0, configurator.Deps{
-		PrimaryBaseURL: staticBaseURL(baseURL),
-		Logger:         quietLogger(),
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL(baseURL),
+		},
 	})
 	c.getenv = func(key string) string {
 		if key == devSwitchEnv {

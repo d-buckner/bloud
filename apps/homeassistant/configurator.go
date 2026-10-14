@@ -147,7 +147,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		componentSHA:       oidcComponentSHA256,
 		pollInterval:       2 * time.Second,
 		assets:             deps.Assets,
-		restartContainerFn: deps.RestartContainer,
+		restartContainerFn: deps.Runtime.RestartContainer,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURLOverride != "" {

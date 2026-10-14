@@ -58,7 +58,7 @@ type Configurator struct {
 }
 
 // NewConfigurator creates a Vaultwarden configurator from the host Deps.
-// deps.PrimaryBaseURL supplies the current Bloud base URL (e.g.
+// deps.Address.PrimaryBaseURL supplies the current Bloud base URL (e.g.
 // "http://localhost:8080"); the app's public URL is derived from it the same
 // way routes and OIDC redirect URIs are (vaultwarden.<host>). It is a function
 // so host changes made in the UI take effect without re-registering.
@@ -72,7 +72,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	}
 	c := &Configurator{
 		port:       port,
-		ssoBaseURL: deps.PrimaryBaseURL,
+		ssoBaseURL: deps.Address.PrimaryBaseURL,
 		logger:     logger.With("app", appName),
 		getenv:     os.Getenv,
 	}

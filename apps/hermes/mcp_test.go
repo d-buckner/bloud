@@ -48,8 +48,10 @@ func readConfigDoc(t *testing.T, dir string) map[string]any {
 
 func mcpHermes() *Configurator {
 	return NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 }
 

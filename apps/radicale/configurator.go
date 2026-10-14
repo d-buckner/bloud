@@ -97,7 +97,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		port:               port,
 		logger:             logger.With("app", appName),
 		secrets:            deps.Secrets,
-		restartContainerFn: deps.RestartContainer,
+		restartContainerFn: deps.Runtime.RestartContainer,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {

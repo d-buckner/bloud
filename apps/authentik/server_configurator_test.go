@@ -61,9 +61,11 @@ func TestServerConfigurator_RunDjangoShell_UsesDepsExec(t *testing.T) {
 	var gotEnv map[string]string
 	var gotCmd []string
 	deps := configurator.Deps{
-		Exec: func(_ context.Context, name string, env map[string]string, cmd []string) ([]byte, error) {
-			gotName, gotEnv, gotCmd = name, env, cmd
-			return []byte("OK"), nil
+		Runtime: configurator.RuntimeDeps{
+			Exec: func(_ context.Context, name string, env map[string]string, cmd []string) ([]byte, error) {
+				gotName, gotEnv, gotCmd = name, env, cmd
+				return []byte("OK"), nil
+			},
 		},
 	}
 	c := NewServerConfigurator(deps, Params{})
@@ -83,9 +85,11 @@ func TestServerConfigurator_EnsureAPIToken_NoShellWhenTheTokenWorks(t *testing.T
 	execs := 0
 	srv := stubTokenServer(t, `[{"identifier":"bloud-api-token","user_obj":{"pk":2,"is_superuser":true}}]`, "the-key")
 	c := NewServerConfigurator(configurator.Deps{
-		Exec: func(context.Context, string, map[string]string, []string) ([]byte, error) {
-			execs++
-			return []byte("OK"), nil
+		Runtime: configurator.RuntimeDeps{
+			Exec: func(context.Context, string, map[string]string, []string) ([]byte, error) {
+				execs++
+				return []byte("OK"), nil
+			},
 		},
 	}, Params{Port: serverPort(t, srv), TokenKey: "the-key"})
 
@@ -104,9 +108,11 @@ func TestServerConfigurator_EnsureAPIToken_FallsBackToTheShell(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := NewServerConfigurator(configurator.Deps{
-		Exec: func(_ context.Context, _ string, _ map[string]string, cmd []string) ([]byte, error) {
-			scripts = append(scripts, cmd[len(cmd)-1])
-			return []byte("OK"), nil
+		Runtime: configurator.RuntimeDeps{
+			Exec: func(_ context.Context, _ string, _ map[string]string, cmd []string) ([]byte, error) {
+				scripts = append(scripts, cmd[len(cmd)-1])
+				return []byte("OK"), nil
+			},
 		},
 	}, Params{Port: serverPort(t, srv), TokenKey: "the-key"})
 
@@ -153,8 +159,10 @@ func TestServerConfigurator_RunDjangoShell_NoRuntimeErrors(t *testing.T) {
 
 func TestServerConfigurator_RunDjangoShell_FailsWithoutOK(t *testing.T) {
 	deps := configurator.Deps{
-		Exec: func(context.Context, string, map[string]string, []string) ([]byte, error) {
-			return []byte("ERROR: boom"), nil
+		Runtime: configurator.RuntimeDeps{
+			Exec: func(context.Context, string, map[string]string, []string) ([]byte, error) {
+				return []byte("ERROR: boom"), nil
+			},
 		},
 	}
 	c := NewServerConfigurator(deps, Params{})

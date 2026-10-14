@@ -103,15 +103,21 @@ func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, rest
 	// policy for the whole runtime.
 	transport := appclient.DefaultTransport()
 	return configurator.Deps{
-		Logger:           logger,
-		Secrets:          cfg.Secrets,
-		OperatorEmail:    cfg.AuthentikAdminEmail,
-		OperatorUsername: operatorUsername,
-		PrimaryBaseURL:   primaryBaseURL,
-		TraefikPort:      cfg.TraefikPort,
-		RestartContainer: restartContainer,
-		Exec:             exec,
-		ContainerRunning: containerRunning,
+		Logger:  logger,
+		Secrets: cfg.Secrets,
+		Identity: configurator.IdentityDeps{
+			OperatorEmail:    cfg.AuthentikAdminEmail,
+			OperatorUsername: operatorUsername,
+		},
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: primaryBaseURL,
+			TraefikPort:    cfg.TraefikPort,
+		},
+		Runtime: configurator.RuntimeDeps{
+			RestartContainer: restartContainer,
+			Exec:             exec,
+			ContainerRunning: containerRunning,
+		},
 		HTTP: configurator.ClientFactory{
 			Transport: transport,
 			Retry:     appclient.DefaultRetry,

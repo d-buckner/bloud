@@ -42,8 +42,10 @@ func TestDefaultPort(t *testing.T) {
 
 func TestAppExternalURL(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 	if got := c.appExternalURL(); got != "http://hermes.localhost:8080" {
 		t.Fatalf("appExternalURL() = %q, want http://hermes.localhost:8080", got)
@@ -62,8 +64,10 @@ func TestAppExternalURLEmptyFallsBack(t *testing.T) {
 func TestPreStartWritesOIDCConfig(t *testing.T) {
 	dir := t.TempDir()
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
 		ClientID:  "hermes-client",
@@ -110,8 +114,10 @@ func TestPreStartWritesOIDCConfig(t *testing.T) {
 func TestPreStartIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
 		ClientID:  "hermes-client",
@@ -354,8 +360,10 @@ func inferenceState(dir string, b configurator.InferenceBinding) *configurator.A
 func TestPreStartWritesInferenceProvider(t *testing.T) {
 	dir := t.TempDir()
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 	state := inferenceState(dir, configurator.InferenceBinding{
 		Endpoint:     "https://api.example.com/v1",
@@ -434,8 +442,10 @@ func TestPreStartAdoptUnlessOverridden(t *testing.T) {
 	}
 
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 	state := inferenceState(dir, configurator.InferenceBinding{
 		Endpoint:     "https://api.example.com/v1",
@@ -464,8 +474,10 @@ func TestPreStartAdoptUnlessOverridden(t *testing.T) {
 func TestPreStartInferenceIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 	state := inferenceState(dir, configurator.InferenceBinding{
 		Endpoint:     "https://api.example.com/v1",
@@ -495,8 +507,10 @@ func TestPreStartStripsInferenceWhenNoBinding(t *testing.T) {
 	}
 
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 
 	changed, err := c.PreStart(context.Background(), inferenceState(dir, configurator.InferenceBinding{}))
@@ -544,8 +558,10 @@ func TestStripInferenceKeepsOperatorModel(t *testing.T) {
 func TestPreStartNoAPIKeyWritesNoCredential(t *testing.T) {
 	dir := t.TempDir()
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 	state := inferenceState(dir, configurator.InferenceBinding{
 		Endpoint:     "http://127.0.0.1:8899/v1",
@@ -695,8 +711,10 @@ func TestPreStart_UnwritableDataDirReportsTheContract(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(dataDir, 0o755) })
 
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
 		ClientID:  "hermes-client",
@@ -767,7 +785,12 @@ func TestReadConfig_FallsBackToTheContainerWhenTheHostCannotRead(t *testing.T) {
 	unreadableByHost(t, cfgPath)
 
 	fx := &recordingExec{out: b64("operator: kept\nmodel:\n  default: from-container\n") + "\n"}
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Exec: fx.fn})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Runtime: configurator.RuntimeDeps{
+			Exec: fx.fn,
+		},
+	})
 
 	raw, err := c.readConfig(context.Background(), cfgPath)
 	if err != nil {
@@ -794,7 +817,12 @@ func TestReadConfig_UsesTheHostReadWhenItIsPermitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	fx := &recordingExec{out: b64("from-container: wrong\n")}
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Exec: fx.fn})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Runtime: configurator.RuntimeDeps{
+			Exec: fx.fn,
+		},
+	})
 
 	raw, err := c.readConfig(context.Background(), cfgPath)
 	if err != nil {
@@ -814,7 +842,12 @@ func TestReadConfig_UsesTheHostReadWhenItIsPermitted(t *testing.T) {
 // overwritten by whatever the exec returned.
 func TestReadConfig_MissingFileIsNotAFallback(t *testing.T) {
 	fx := &recordingExec{out: b64("should: not\n")}
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Exec: fx.fn})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Runtime: configurator.RuntimeDeps{
+			Exec: fx.fn,
+		},
+	})
 
 	_, err := c.readConfig(context.Background(), filepath.Join(t.TempDir(), "absent.yaml"))
 	if !os.IsNotExist(err) {
@@ -838,7 +871,12 @@ func TestReadConfig_ContaminatedStreamIsAnError(t *testing.T) {
 	unreadableByHost(t, cfgPath)
 
 	fx := &recordingExec{out: "time=... level=warning msg=podman complained\n" + b64("real: content\n")}
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Exec: fx.fn})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Runtime: configurator.RuntimeDeps{
+			Exec: fx.fn,
+		},
+	})
 
 	if _, err := c.readConfig(context.Background(), cfgPath); err == nil {
 		t.Fatal("expected a decode error for a stream with non-base64 noise in it")
@@ -886,9 +924,13 @@ func TestPreStart_MergesOverAConfigOnlyTheContainerCanRead(t *testing.T) {
 
 	fx := &recordingExec{out: b64(operatorCfg) + "\n"}
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
-		Exec:           fx.fn,
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
+		Runtime: configurator.RuntimeDeps{
+			Exec: fx.fn,
+		},
 	})
 	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
 		ClientID:  "hermes-client",
@@ -944,8 +986,10 @@ func TestPreStart_NoChurnWhenTheContainerCopyAlreadyMatches(t *testing.T) {
 		IssuerURL: "http://sso.localhost:8080/application/o/hermes/",
 	}}
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
 	})
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("seed PreStart: %v", err)
@@ -958,9 +1002,13 @@ func TestPreStart_NoChurnWhenTheContainerCopyAlreadyMatches(t *testing.T) {
 
 	fx := &recordingExec{out: b64(string(current)) + "\n"}
 	c2 := NewConfigurator(0, configurator.Deps{
-		Logger:         quietLogger(),
-		PrimaryBaseURL: func() string { return "http://localhost:8080" },
-		Exec:           fx.fn,
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
+		Runtime: configurator.RuntimeDeps{
+			Exec: fx.fn,
+		},
 	})
 	changed, err := c2.PreStart(context.Background(), state)
 	if err != nil {
@@ -999,9 +1047,11 @@ func TestReadConfig_StoppedContainerIsSkippable(t *testing.T) {
 
 	fx := &recordingExec{err: errors.New("can only create exec sessions on running containers: container state improper")}
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:           quietLogger(),
-		Exec:             fx.fn,
-		ContainerRunning: runningProbe{running: false}.fn,
+		Logger: quietLogger(),
+		Runtime: configurator.RuntimeDeps{
+			Exec:             fx.fn,
+			ContainerRunning: runningProbe{running: false}.fn,
+		},
 	})
 
 	_, err := c.readConfig(context.Background(), cfgPath)
@@ -1027,9 +1077,11 @@ func TestReadConfig_RunningContainerExecFailureIsHard(t *testing.T) {
 
 	fx := &recordingExec{err: errors.New("base64: not found")}
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:           quietLogger(),
-		Exec:             fx.fn,
-		ContainerRunning: runningProbe{running: true}.fn,
+		Logger: quietLogger(),
+		Runtime: configurator.RuntimeDeps{
+			Exec:             fx.fn,
+			ContainerRunning: runningProbe{running: true}.fn,
+		},
 	})
 
 	_, err := c.readConfig(context.Background(), cfgPath)
@@ -1059,10 +1111,14 @@ func TestPreStart_SkipsMergeWhenContainerStopped(t *testing.T) {
 
 	fx := &recordingExec{err: errors.New("can only create exec sessions on running containers: container state improper")}
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:           quietLogger(),
-		PrimaryBaseURL:   func() string { return "http://localhost:8080" },
-		Exec:             fx.fn,
-		ContainerRunning: runningProbe{running: false}.fn,
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
+		Runtime: configurator.RuntimeDeps{
+			Exec:             fx.fn,
+			ContainerRunning: runningProbe{running: false}.fn,
+		},
 	})
 	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
 		ClientID:  "hermes-client",
@@ -1095,10 +1151,14 @@ func TestPreStart_WritesWhenTheConfigIsMissingEvenIfContainerStopped(t *testing.
 	dir := t.TempDir()
 	fx := &recordingExec{out: b64("should: not be read\n")}
 	c := NewConfigurator(0, configurator.Deps{
-		Logger:           quietLogger(),
-		PrimaryBaseURL:   func() string { return "http://localhost:8080" },
-		Exec:             fx.fn,
-		ContainerRunning: runningProbe{running: false}.fn,
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		},
+		Runtime: configurator.RuntimeDeps{
+			Exec:             fx.fn,
+			ContainerRunning: runningProbe{running: false}.fn,
+		},
 	})
 	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
 		ClientID:  "hermes-client",

@@ -127,7 +127,7 @@ type Configurator struct {
 }
 
 // NewConfigurator creates a new Hermes configurator from the host Deps.
-// deps.PrimaryBaseURL supplies the current Bloud base URL (e.g.
+// deps.Address.PrimaryBaseURL supplies the current Bloud base URL (e.g.
 // "http://localhost:8080"); the dashboard's public URL is derived from it
 // the same way routes and OIDC redirect URIs are (hermes.<host>). It is a
 // function so host changes made in the UI take effect on the next pass.
@@ -141,10 +141,10 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	}
 	c := &Configurator{
 		port:             port,
-		ssoBaseURL:       deps.PrimaryBaseURL,
+		ssoBaseURL:       deps.Address.PrimaryBaseURL,
 		logger:           logger.With("app", "hermes"),
-		exec:             deps.Exec,
-		containerRunning: deps.ContainerRunning,
+		exec:             deps.Runtime.Exec,
+		containerRunning: deps.Runtime.ContainerRunning,
 		secrets:          deps.Secrets,
 	}
 	c.api = newAPI(deps.HTTP, func() string {

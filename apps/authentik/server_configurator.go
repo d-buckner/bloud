@@ -248,10 +248,10 @@ func (c *ServerConfigurator) ensureAPIToken(ctx context.Context, client *authent
 // the host runtime owns the call, and the environment variables travel as exec
 // env rather than on the command line. The script must print "OK" on success.
 func (c *ServerConfigurator) runDjangoShell(ctx context.Context, env map[string]string, script string) error {
-	if c.deps.Exec == nil {
+	if c.deps.Runtime.Exec == nil {
 		return fmt.Errorf("no container exec available (no host runtime wired)")
 	}
-	out, err := c.deps.Exec(ctx, c.Name(), env, []string{"ak", "shell", "-c", script})
+	out, err := c.deps.Runtime.Exec(ctx, c.Name(), env, []string{"ak", "shell", "-c", script})
 	if err != nil {
 		return fmt.Errorf("django shell failed: %w (output: %s)", err, strings.TrimSpace(string(out)))
 	}
@@ -264,10 +264,10 @@ func (c *ServerConfigurator) runDjangoShell(ctx context.Context, env map[string]
 // ensureEmbeddedOutpostHost points the embedded outpost at the instance's
 // public base URL. It is a no-op when no base URL is available.
 func (c *ServerConfigurator) ensureEmbeddedOutpostHost(ctx context.Context, client *authentikClient.Client) error {
-	if c.deps.PrimaryBaseURL == nil {
+	if c.deps.Address.PrimaryBaseURL == nil {
 		return nil
 	}
-	baseURL := c.deps.PrimaryBaseURL()
+	baseURL := c.deps.Address.PrimaryBaseURL()
 	if baseURL == "" {
 		return nil
 	}
