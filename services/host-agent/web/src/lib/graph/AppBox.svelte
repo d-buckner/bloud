@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 	import { Handle, Position } from '@xyflow/svelte';
 	import { statusColor } from '$lib/utils/statusColor';
-	import { phaseWord, isFailure, isUnprobed, isWorking, showsPhase } from './phase';
+	import { phaseWord, isFailure, isWorking, showsPhase } from './phase';
 
 	interface NodeData {
 		displayName: string;
@@ -22,7 +22,6 @@
 	const phase = $derived(phaseWord(data.phase, data.status));
 	const failed = $derived(isFailure(phase));
 	const working = $derived(isWorking(data.inFlight, phase));
-	const unprobed = $derived(isUnprobed(data.phase));
 	const resync = $derived(data.resyncRestarts ?? 0);
 
 	const label = $derived(
@@ -61,11 +60,7 @@
 		{#if data.isSystem}
 			<span class="system-tag">system</span>
 		{/if}
-		<span
-			class="status-dot"
-			class:unprobed
-			style:background={unprobed ? 'transparent' : statusColor(phase)}
-		></span>
+		<span class="status-dot" style:background={statusColor(phase)}></span>
 		{#if showsPhase(phase)}
 			<span class="status-text" class:failed>{phase}</span>
 		{/if}
@@ -130,12 +125,6 @@
 		height: 7px;
 		border-radius: 50%;
 		flex: 0 0 auto;
-	}
-
-	/* Nothing reconciles this app: an outline, not a reading. */
-	.status-dot.unprobed {
-		box-sizing: border-box;
-		border: 1.5px solid var(--color-text-secondary, #57534e);
 	}
 
 	.status-text {

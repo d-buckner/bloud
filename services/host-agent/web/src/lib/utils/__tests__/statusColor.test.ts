@@ -38,14 +38,13 @@ describe('statusColor', () => {
 		expect(statusColor('installing')).toBe('var(--color-text-secondary)');
 	});
 
-	// The AI Model node reads "external" and must not read as alive. Keeping
-	// it out of the color table on purpose is what makes the dot the same
-	// neutral gray as every other unprobed status, so pin it: adding
-	// "external" to STATUS_COLORS would silently turn the node green or blue
-	// and imply a liveness nothing verifies.
-	it('keeps external and catalog on the neutral gray', () => {
-		expect(statusColor('external')).toBe('var(--color-text-secondary)');
-		expect(statusColor('catalog')).toBe('var(--color-text-secondary)');
+	// The AI Model node reads "external" and an app the catalog knows but has
+	// never installed reads "catalog". Nothing reconciles either one, so neither
+	// sends a phase, and both read as settled: the same green a running node gets.
+	// The hollow ring they used to draw read as a state that went missing.
+	it('maps external and catalog to the success token', () => {
+		expect(statusColor('external')).toBe('var(--color-success)');
+		expect(statusColor('catalog')).toBe('var(--color-success)');
 	});
 
 	it('falls back to gray for unknown and empty statuses', () => {
