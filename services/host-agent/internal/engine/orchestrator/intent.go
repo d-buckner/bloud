@@ -144,6 +144,38 @@ func NewSetInferenceIntent(upstreamsJSON, defaultModel string, apiKey *string) S
 	}
 }
 
+// SetTranscriptionIntent requests changing the instance's speech-to-text
+// endpoint: the address, the model to request from it, and optionally its
+// credential. An empty BaseURL means the operator removed the provider.
+//
+// It carries one endpoint rather than a list because that is what the Settings
+// surface manages and what every consumer dials. Growing to several is a change
+// to this intent and to the resolver's pick, not to every consumer.
+//
+// APIKey is a *string for the same reason inference's is: the API distinguishes
+// "leave the stored credential alone" (nil) from "clear it" (a pointer to ""),
+// and it travels here rather than being written by the handler so the secrets
+// manager is only ever touched by the orchestrator (invariant 1).
+type SetTranscriptionIntent struct {
+	intentBase
+	BaseURL string
+	Name    string
+	Model   string
+	APIKey  *string
+}
+
+func (SetTranscriptionIntent) intentMarker() {}
+
+func NewSetTranscriptionIntent(baseURL, name, model string, apiKey *string) SetTranscriptionIntent {
+	return SetTranscriptionIntent{
+		intentBase: newIntentBase(),
+		BaseURL:    baseURL,
+		Name:       name,
+		Model:      model,
+		APIKey:     apiKey,
+	}
+}
+
 // ReconcileIntent requests a self-healing convergence pass. It carries no
 // request of its own: the value is the pass that runs after the drain, not
 // anything this intent mutates. It exists so the periodic pass enters the
@@ -241,6 +273,7 @@ var (
 	_ Intent = ClearAppDataIntent{}
 	_ Intent = SetPublicURLIntent{}
 	_ Intent = SetInferenceIntent{}
+	_ Intent = SetTranscriptionIntent{}
 	_ Intent = ReconcileIntent{}
 	_ Intent = AddExternalAppIntent{}
 	_ Intent = UpdateExternalAppIntent{}

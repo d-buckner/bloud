@@ -27,10 +27,10 @@ import { appUrlPattern } from '../lib/origin';
 describeApp('podly', (app) => {
   test('converges to running', async () => {
     // Infrastructure rung: fresh-VM image pull plus first-run convergence. The
-    // pull is the long part: the pinned image carries local Whisper and its CPU
-    // torch, 4.73 GB compressed, and the container cannot answer its health
-    // check until it has landed.
-    test.setTimeout(20 * 60_000);
+    // lite image is a small pull, but first boot runs a long Alembic migration
+    // chain before the listener opens, and the pass then reconciles two
+    // accounts over the app's own API.
+    test.setTimeout(360_000);
     await ensureInstalled('podly');
   });
 

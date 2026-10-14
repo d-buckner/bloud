@@ -227,7 +227,7 @@ func (o *Orchestrator) applySetInferenceIntent(intent SetInferenceIntent) {
 		"upstreams", len(settings.Upstreams),
 		"defaultModel", settings.DefaultModel)
 
-	o.resetInferenceConsumers()
+	o.resetContractConsumers("inference")
 }
 
 // syncInferenceUpstreams makes the `contract:inference` records match the
@@ -287,11 +287,15 @@ func (o *Orchestrator) storeInferenceAPIKey(upstreams []inference.Upstream, apiK
 	}
 }
 
-// resetInferenceConsumers drops every installed inference consumer out of
-// RUNNING so its PreStart re-runs and rewrites whatever it manages from the new
-// binding. This is the propagation mechanism: a settings change reaches an app
-// by re-running that app's own configurator, never by pushing into it.
-func (o *Orchestrator) resetInferenceConsumers() {
+// resetContractConsumers drops every installed consumer of the named contract
+// out of RUNNING so its PreStart re-runs and rewrites whatever it manages from
+// the new binding. This is the propagation mechanism: a settings change reaches
+// an app by re-running that app's own configurator, never by pushing into it.
+//
+// It is parameterized by contract rather than duplicated per contract because
+// the rule is identical for every instance-provided contract, and a second
+// copy would be a second place to forget a case.
+func (o *Orchestrator) resetContractConsumers(contract string) {
 	if o.graph == nil || o.appStore == nil || o.catalog == nil {
 		return
 	}
@@ -307,7 +311,7 @@ func (o *Orchestrator) resetInferenceConsumers() {
 		if err != nil || catalogApp == nil {
 			continue
 		}
-		if _, declares := catalogApp.Integrations["inference"]; !declares {
+		if _, declares := catalogApp.Integrations[contract]; !declares {
 			continue
 		}
 		for _, container := range catalogApp.Containers {
@@ -320,13 +324,15 @@ func (o *Orchestrator) resetInferenceConsumers() {
 				// runs, so a skipped consumer has to be visible somewhere or
 				// the response reads as a promise nothing keeps. The pass that
 				// owns this case is the periodic self-heal pass, not the save.
-				o.logger.Info("inference consumer not reset, not running",
+				o.logger.Info("contract consumer not reset, not running",
+					"contract", contract,
 					"node", container.Name,
 					"status", node.ActualStatus,
 					"note", "picked up by the next self-healing pass once it is healthy")
 				continue
 			}
-			o.logger.Info("resetting inference consumer for settings change", "node", container.Name)
+			o.logger.Info("resetting contract consumer for settings change",
+				"contract", contract, "node", container.Name)
 			_ = o.graph.SetActualStatus(container.Name, graph.StatusInitializing, "")
 		}
 	}

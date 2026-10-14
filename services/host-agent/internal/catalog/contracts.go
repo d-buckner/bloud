@@ -205,6 +205,41 @@ var contracts = []Contract{
 		},
 	},
 
+	// A speech-to-text endpoint: an OpenAI-compatible
+	// `/v1/audio/transcriptions` that a consumer can POST audio to and get
+	// timed segments back. Provided by the instance (Settings -> AI ->
+	// transcription) for an upstream the operator runs or rents; nothing in the
+	// catalog provides it today.
+	//
+	// This is a separate contract from `inference` for the same reason
+	// `agentApi` is: what a consumer is agreeing to when it dials. `inference`
+	// promises completions, and an upstream can satisfy that perfectly while
+	// having no transcription route at all. A local runtime is the ordinary
+	// case: llama.cpp and Ollama answer `/v1/chat/completions` and 404 on
+	// `/v1/audio/transcriptions`. Promoting `inference` into this slot, or
+	// adding a transcription model to the inference binding, would have Bloud
+	// hand a consumer a capability it never verified and cannot detect the
+	// absence of, and the failure would surface as an app silently never
+	// transcribing.
+	//
+	// There is no `SatisfiedBy` and no promotion, so the only way this contract
+	// is filled is the operator saying "this endpoint transcribes". When the
+	// chat upstream and the transcription upstream are the same server (OpenAI,
+	// Groq) the operator says so twice, and the Settings surface offers that as
+	// a one-click convenience. Saying it twice is cheaper than Bloud guessing
+	// wrong.
+	//
+	// `apiKey` is the bearer for the endpoint, held by the instance rather than
+	// by any app, because it is the operator's own credential. `model` is
+	// optional: an endpoint has its own default (`whisper-1` on OpenAI) and a
+	// consumer that omits the model asks for that default rather than inventing
+	// one.
+	{
+		Name:    "transcription",
+		Secrets: []string{"apiKey"},
+		Values:  []ValueSpec{{Key: "model", Optional: true}},
+	},
+
 	// A CalDAV/CardDAV server: the endpoint a calendar or contacts client
 	// speaks DAV to. Provided by the DAV server itself (Radicale), consumed
 	// by anything that wants to show the user the calendars Bloud already

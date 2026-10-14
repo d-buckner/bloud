@@ -53,6 +53,9 @@ const (
 	// stateFileName records what PostStart last applied to the app, so a
 	// steady-state resync makes no request at all.
 	stateFileName = "accounts.state"
+	// whisperStateFileName is the same idea for the transcription endpoint: the
+	// digest of the last settings Bloud delivered through the app's config API.
+	whisperStateFileName = "whisper.state"
 )
 
 const (
@@ -219,7 +222,11 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	if password == "" {
 		return nil
 	}
-	return c.reconcileAccount(ctx, state, password)
+	signedIn, err := c.reconcileAccount(ctx, state, password)
+	if err != nil || !signedIn {
+		return err
+	}
+	return c.reconcileTranscription(ctx, state)
 }
 
 // reconcileAccount makes the app's copy of the sign-in password the host's copy.
@@ -228,19 +235,23 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // state only the operator can change, reached from inside the app. Failing the
 // node for either would take the app's feeds down over something Bloud cannot
 // fix by retrying.
-func (c *Configurator) reconcileAccount(ctx context.Context, state *configurator.AppState, password string) error {
+//
+// It reports whether the session is usable, because the caller has more work
+// that needs the same admin cookie and must not attempt it after a warning path
+// that never signed in.
+func (c *Configurator) reconcileAccount(ctx context.Context, state *configurator.AppState, password string) (bool, error) {
 	servicePassword, err := c.servicePassword()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if servicePassword == "" {
 		c.logger.Warn("no service password; cannot reconcile the sign-in account")
-		return nil
+		return false, nil
 	}
 
 	signedIn, err := c.api.login(ctx, serviceUser, servicePassword)
 	if err != nil {
-		return fmt.Errorf("%s: signing in as %s: %w", appName, serviceUser, err)
+		return false, fmt.Errorf("%s: signing in as %s: %w", appName, serviceUser, err)
 	}
 	if !signedIn {
 		// The app's stored password for the service account no longer matches
@@ -250,25 +261,84 @@ func (c *Configurator) reconcileAccount(ctx context.Context, state *configurator
 		// leave the node running.
 		c.logger.Warn("the app no longer accepts the service account password; " +
 			"it was changed inside the app, and Bloud cannot reconcile accounts without it")
-		return nil
+		return false, nil
 	}
 
 	exists, err := c.humanUserExists(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if exists && passwordApplied(state, password) {
-		return nil
+		return true, nil
 	}
 	if err := c.writePassword(ctx, password, exists); err != nil {
-		return err
+		return false, err
 	}
 	if err := recordAppliedPassword(state, password); err != nil {
-		return err
+		return false, err
 	}
 
 	c.logger.Info("reconciled the sign-in account", "account", humanUser, "created", !exists)
+	return true, nil
+}
+
+// reconcileTranscription points the app's speech-to-text at the endpoint the
+// instance declares, when it declares one.
+//
+// With no binding the app is left alone rather than reset: an operator who set a
+// key in the app's own UI before Bloud ever had an opinion keeps it, and a pass
+// that cleared it would be a pass that broke a working install because nothing
+// happened to be wired in Bloud.
+//
+// The write is gated on a digest of what Bloud applied, not on a read of what
+// the app holds, and that is forced rather than convenient: the config API masks
+// the credential it returns, so the app cannot answer "is the key you are about
+// to send me the key I have?". The digest answers the only question that matters
+// (has this exact value been delivered), and it is what keeps a steady-state pass
+// from rewriting the app's config every minute.
+func (c *Configurator) reconcileTranscription(ctx context.Context, state *configurator.AppState) error {
+	binding, ok := pickTranscription(state)
+	if !ok {
+		return nil
+	}
+	desired := whisperSection{
+		WhisperType: "remote",
+		BaseURL:     binding.Endpoint,
+		APIKey:      binding.APIKey,
+		Model:       binding.Model,
+	}
+	if transcriptionApplied(state, desired) {
+		return nil
+	}
+	if _, err := c.api.setWhisper(ctx, desired); err != nil {
+		return fmt.Errorf("%s: setting the transcription endpoint: %w", appName, err)
+	}
+	if err := recordTranscriptionApplied(state, desired); err != nil {
+		return err
+	}
+
+	c.logger.Info("configured the app's transcription endpoint",
+		"endpoint", desired.BaseURL, "model", orEndpointDefault(desired.Model))
 	return nil
+}
+
+// pickTranscription returns the endpoint to dial. The first installed one wins:
+// the contract is single-provider by construction, so a second is a registry
+// someone edited by hand rather than a choice this app gets to make.
+func pickTranscription(state *configurator.AppState) (configurator.TranscriptionBinding, bool) {
+	for _, b := range state.Integrations.Transcription {
+		if b.Installed && strings.TrimSpace(b.Endpoint) != "" {
+			return b, true
+		}
+	}
+	return configurator.TranscriptionBinding{}, false
+}
+
+func orEndpointDefault(model string) string {
+	if model == "" {
+		return "(endpoint default)"
+	}
+	return model
 }
 
 // writePassword sends the password to the app: create when the account is
@@ -456,6 +526,41 @@ func recordAppliedPassword(state *configurator.AppState, password string) error 
 func passwordDigest(password string) string {
 	sum := sha256.Sum256([]byte(password))
 	return hex.EncodeToString(sum[:])
+}
+
+// transcriptionApplied reports whether this exact endpoint, key and model were
+// already delivered. The digest covers all three because a change to any of them
+// is a change the app has to be told about: the key is what the endpoint
+// authenticates with, and the model is what it charges for.
+func transcriptionApplied(state *configurator.AppState, want whisperSection) bool {
+	raw, err := os.ReadFile(filepath.Join(state.DataPath, configDir, whisperStateFileName))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(raw)) == whisperDigest(want)
+}
+
+// recordTranscriptionApplied writes the state file after the app has accepted
+// the settings, never before: a pass that applied nothing must not claim it did.
+func recordTranscriptionApplied(state *configurator.AppState, want whisperSection) error {
+	path := filepath.Join(state.DataPath, configDir, whisperStateFileName)
+	_, err := managedfile.Write(path, []byte(whisperDigest(want)+"\n"), managedfile.ModeHostOnly)
+	if err != nil {
+		return fmt.Errorf("%s: write %s: %w", appName, whisperStateFileName, err)
+	}
+	return nil
+}
+
+// whisperDigest hashes the three fields with separators, so an endpoint and a
+// model that could be confused by concatenation (a model named after the tail of
+// a URL) still digest apart.
+func whisperDigest(w whisperSection) string {
+	h := sha256.New()
+	for _, part := range []string{w.WhisperType, w.BaseURL, w.APIKey, w.Model} {
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // randomToken returns n bytes of cryptographic randomness as unpadded

@@ -846,7 +846,7 @@ combined with instance/SSH-target env vars). Instance overrides:
     credential by default. The orchestrator resolves each declared contract into
     `AppState.Integrations`, **one typed slice per contract** (`PVRs`,
     `MediaServers`, `DownloadClients`, `SSO`, `ModelSources`, `Inference`,
-    `AgentAPIs`),
+    `AgentAPIs`, `Transcription`),
     each binding embedding `ProviderRef` (`App`, `Installed`, `Node`, `Port`,
     `BaseURL`, `LocalURL` where `BaseURL` is what the app stores and
     `LocalURL` what the configurator calls) plus that contract's payload.
@@ -864,6 +864,18 @@ combined with instance/SSH-target env vars). Instance overrides:
     so keying a prune off it deletes wiring that is still wanted. The bindings
     for a contract mirror `computeAppDeps`, so they never describe a provider
     the graph does not order.
+
+    **A contract can be served by a setting instead of an app.** `inference` and
+    `transcription` accept `compatible: [{source: setting}]`: the provider is a
+    row the operator fills in under Settings, with no container, no node, and no
+    graph edge. `Installed` then means "the operator filled the role", and
+    `ProviderRef.App` carries the record id rather than a catalog id. The edge's
+    job is done by a reset: saving the setting submits an intent that requeues
+    every consumer of that contract, which is what makes a credential rotation
+    reach an app instead of sitting in a table. A consumer must treat "no
+    binding" as "write nothing", never as "clear what the app holds": an
+    operator who configured the app directly before Bloud had an opinion keeps
+    it. See [`docs/features/transcription.md`](docs/features/transcription.md).
 
     **A contract is served on a named port, not always the UI port.** `port:` in
     metadata is the UI: the dashboard opens it and Traefik routes the app's root
@@ -1085,6 +1097,7 @@ to the right doc. When a doc moves, update it in both places.
 |MCP servers as catalog apps (shipped: `apps/affine-mcp` providers, Hermes consumes)|[features/mcp.md](docs/features/mcp.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
 | Agent API + multi-port apps (`extraPorts`, `agentApi` contract) | [features/agent-api.md](docs/features/agent-api.md) |
+| Speech-to-text endpoint the instance declares (`transcription` contract) | [features/transcription.md](docs/features/transcription.md) |
 | Dated review findings|[specs/review-2026-09-17.md](docs/specs/review-2026-09-17.md)|
 | Latest architecture/code review (2026-09-19)|[specs/review-2026-09-19.md](docs/specs/review-2026-09-19.md)|
 | In-flight designs | [plans/](docs/plans/) |

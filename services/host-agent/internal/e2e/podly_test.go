@@ -5,6 +5,7 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,13 +35,14 @@ func podlyPublicURL() string {
 
 // TestPodlyInstallViaAPI installs Podly through the API.
 //
-// The deadline is longer than any other app's, and it is still a fraction of the
-// tier's 30-minute budget: the pinned image carries local Whisper and its CPU
-// torch, 4.73 GB of compressed layers, and the pull happens before the container
-// can answer the health check that promotes the node.
+// The deadline is a little generous for a 0.45 GB pull, and the reason is what
+// happens after the pull: first boot runs a long Alembic migration chain before
+// the listener opens, and PostStart then signs in and reconciles two accounts
+// over the app's own HTTP API. The health check's own retries cover the first;
+// this covers the whole path.
 func TestPodlyInstallViaAPI(t *testing.T) {
 	postJSON(t, hostAgentURL+"/api/apps/podly/install", `{}`, http.StatusAccepted)
-	waitAppRunning(t, "podly", 12*time.Minute)
+	waitAppRunning(t, "podly", 5*time.Minute)
 	waitHTTPOrFatal(t, 60*time.Second, podlyURL+"/")
 	waitRoutedApp(t, podlyPublicURL()+"/", 2*time.Minute)
 }
@@ -204,6 +206,100 @@ func TestPodlyClientCredentialLifecycle(t *testing.T) {
 }
 
 // --- helpers ---
+
+// agentPut sends a PUT to the host-agent API and asserts the status.
+func agentPut(t *testing.T, url, body string, wantStatus int) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("building PUT %s: %v", url, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := agentClient(t).Do(req)
+	if err != nil {
+		t.Fatalf("PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != wantStatus {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("PUT %s: status %d (want %d): %s", url, resp.StatusCode, wantStatus, data)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+}
+
+// podlyWhisperSection reads the app's own whisper settings back through its
+// config API, as an admin. The credential comes back masked, which is the app's
+// behaviour and the reason the assertion below checks the endpoint and the model
+// rather than the key.
+func podlyWhisperSection(t *testing.T, session *http.Cookie) map[string]any {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, podlyURL+"/api/config", nil)
+	if err != nil {
+		t.Fatalf("building GET /api/config: %v", err)
+	}
+	req.AddCookie(session)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s/api/config: %v", podlyURL, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s/api/config: status %d, want 200: %s", podlyURL, resp.StatusCode, body)
+	}
+	var out struct {
+		Config struct {
+			Whisper map[string]any `json:"whisper"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decoding the app's config: %v", err)
+	}
+	return out.Config.Whisper
+}
+
+// TestPodlyTakesItsTranscriptionEndpointFromSettings is the contract end to end:
+// a value typed into Settings reaches the app's own config store through the
+// orchestrator, and nobody types anything into the app.
+//
+// The assertion polls the app rather than the settings API. Reading the API back
+// would only prove the record was written; the claim worth a test is that the
+// save reset the consumer and the consumer's pass delivered it.
+func TestPodlyTakesItsTranscriptionEndpointFromSettings(t *testing.T) {
+	waitAppRunning(t, "podly", 2*time.Minute)
+
+	const (
+		endpoint = "https://transcribe.invalid.test/v1"
+		model    = "whisper-e2e"
+	)
+	body := fmt.Sprintf(`{"baseUrl":%q,"name":"Integration","model":%q,"apiKey":"sk-e2e-transcription"}`, endpoint, model)
+	agentPut(t, hostAgentURL+"/api/settings/transcription", body, http.StatusAccepted)
+
+	servicePassword := readSecrets(t).AppSecrets["podly"].AdminPassword
+	if servicePassword == "" {
+		t.Fatal("the host holds no service password; nothing can read the app's config back")
+	}
+	session := podlySession(t, podlyServiceUser, servicePassword)
+
+	deadline := time.Now().Add(6 * time.Minute)
+	for {
+		whisper := podlyWhisperSection(t, session)
+		if whisper["base_url"] == endpoint && whisper["model"] == model {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the settings never reached the app's config store; the app holds %v", whisper)
+		}
+		time.Sleep(5 * time.Second)
+	}
+
+	// The state file is what keeps the next hundred passes from rewriting this.
+	// Without it the periodic resync would PUT the config every minute forever.
+	statePath := filepath.Join(appDataDir("podly"), "config", "whisper.state")
+	if info, err := os.Stat(statePath); err != nil || info.Size() == 0 {
+		t.Errorf("%s is missing or empty; a steady-state pass would rewrite the app's config: %v", statePath, err)
+	}
+}
 
 func podlyCredentialURL(action string) string {
 	return fmt.Sprintf("%s/api/apps/podly/client-credentials/%s/%s", hostAgentURL, podlySecretName, action)

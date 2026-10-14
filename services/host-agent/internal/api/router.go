@@ -214,8 +214,12 @@ type routerModules struct {
 	events   *eventsModule
 	settings *settingsModule
 	ai       *aiSettingsModule
-	external *externalAppsModule
-	system   *systemModule
+	// transcription owns the speech-to-text endpoint the instance declares. It
+	// is a separate module from `ai` because it is a separate contract: the
+	// credential, the shape, and the apps that consume it are all different.
+	transcription *transcriptionSettingsModule
+	external      *externalAppsModule
+	system        *systemModule
 	// clientCreds serves the reveal surface for credentials a provider
 	// declares under `clientAccess`. It is its own module rather than a route
 	// on settings because its dependency set is the catalog plus the secret
@@ -307,8 +311,9 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 			logger:        logger,
 			externalApps:  deps.externalApps,
 		},
-		external: newExternalAppsModule(deps, logger),
-		system:   systemMod,
+		external:      newExternalAppsModule(deps, logger),
+		system:        systemMod,
+		transcription: newTranscriptionSettingsModule(deps, logger),
 		clientCreds: NewClientCredentialsModule(deps.catalogCache, deps.secrets,
 			cfg.Settings, cfg.Hosts, deps.orchCaller, logger),
 		realOrch:       deps.realOrch,
@@ -434,6 +439,7 @@ func (m *routerModules) registerRoutes(r chi.Router) {
 		admin.Get("/system/rebuild/stream", rebuildStreamHandler())
 		NewSettingsRouter(m.settings, admin)
 		RegisterAIRoutes(m.ai, admin)
+		RegisterTranscriptionRoutes(m.transcription, admin)
 		m.external.Register(admin)
 
 		// Client credentials: reveal and rotate for credentials a provider

@@ -4,16 +4,20 @@ displayName: Podly
 description: Removes ads from podcasts and serves the ad-free versions as RSS feeds
 category: media
 port: 5001
-# The `latest` image variant bundles local Whisper and its CPU torch: 4.73 GB of
-# compressed layers, summed from the manifest of 2.7.5-latest (amd64), one layer
-# of which is 4.38 GB of Python packages. Unpacked is an estimate rather than a
-# measurement, because a registry publishes no uncompressed layer sizes: gzip on
-# Python packages and shared libraries runs about 2x, so about 9.5 GB, and that
-# is the image alone, before the app has downloaded an episode.
+# The `lite` image variant: 0.45 GB of compressed layers (summed from the manifest
+# of 2.7.5-lite, amd64) and 1.23 GB unpacked, measured after pulling it. The
+# estimate this line carried before the pull was about 1.1 GB, which is close
+# enough to keep as the rule of thumb: a registry publishes no uncompressed layer
+# sizes, so a manifest can only ever be summed, not read. This is the image alone,
+# before the app has downloaded an episode.
 #
-# The `lite` variant of the same release is 0.45 GB compressed and cannot
-# transcribe without a hosted Whisper.
-estimatedSizeMB: 9500
+# The `latest` variant of the same release is 4.73 GB compressed (one layer of it
+# is 4.38 GB of Python packages, mostly local Whisper and its CPU torch) and
+# about 9.5 GB unpacked. Bloud ships `lite` because a podcast feed should not
+# cost more than ten times its own runtime to start, and because transcription is
+# a capability Bloud can wire to an endpoint rather than a model to cache on
+# every install. See INTEGRATION.md.
+estimatedSizeMB: 1100
 
 integrations:
   proxy:
@@ -22,6 +26,23 @@ integrations:
     compatible:
       - app: traefik
         default: true
+  # The app's ad-removal works on the transcript, so transcription is the one
+  # capability it cannot do without. `required: false` is the honest bit: with no
+  # endpoint declared the app still installs, still strips nothing it cannot
+  # find, and says so in its own UI, rather than being held in ERROR waiting on
+  # a credential only the operator can supply.
+  #
+  # `transcription` rather than `inference` because the app dials
+  # `/v1/audio/transcriptions`, and an OpenAI-compatible server can answer
+  # completions and 404 on that route. The operator says which endpoint
+  # transcribes; nothing here guesses.
+  transcription:
+    required: false
+    multi: false
+    requires:
+      - apiKey
+    compatible:
+      - source: setting
 
 # Podly cannot delegate authentication, and this is not a gap in its
 # configuration: the only credential paths the app has are its own session
@@ -69,7 +90,7 @@ containers:
   # web app. Both are in one container by upstream's design, so there is nothing
   # for the graph to order here.
   - name: apps-podly
-    image: ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.5-latest
+    image: ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.5-lite
     network: apps-net
     restartPolicy: always
     environment:

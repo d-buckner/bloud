@@ -73,13 +73,13 @@ jobs:
             test-run: 'TestCalendarAggregation'
           - group: vaultwarden
             test-run: 'TestVaultwarden'
-          # Podly gets its own leg because of its image: 4.73 GB of compressed
-          # layers, which is the slowest pull in the catalog by an order of
-          # magnitude. Sharing a runner with another group would make that pull
-          # the thing that group's deadline has to survive.
+          # Podly's image is small now (0.45 GB compressed), but its first boot
+          # runs a long Alembic migration chain and its configurator then
+          # reconciles two accounts over the app's HTTP API, so its wall clock
+          # has more variance than a container-only app's. Its own leg keeps that
+          # variance off every other group's deadline.
           - group: podly
-            test-run: 'TestPodly'
-          - group: media-stack
+            test-run: 'TestPodly'          - group: media-stack
             test-run: 'TestMediaStack'
           - group: catalog
             test-run: 'TestCatalogUpdate'

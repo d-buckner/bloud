@@ -19,6 +19,7 @@ const (
 	authStatusPath = "/api/auth/status"
 	loginPath      = "/api/auth/login"
 	usersPath      = "/api/auth/users"
+	configPath     = "/api/config"
 )
 
 // authStatus is the reply to GET /api/auth/status, one of the app's public
@@ -138,6 +139,38 @@ func (a *podlyAPI) createUser(ctx context.Context, username, password, role stri
 func (a *podlyAPI) setPassword(ctx context.Context, username, password string) (bool, error) {
 	return a.sess.PATCH(usersPath + "/" + username).
 		JSON(map[string]string{"password": password}).
+		OK(http.StatusOK).
+		Ensure(ctx)
+}
+
+// whisperSection is the `whisper` section of the app's combined config, as far
+// as Bloud writes it.
+//
+// The app's writer merges only the keys present in the payload, so the fields
+// Bloud has no opinion about (language, timeout, chunk size) are left alone
+// rather than reset to the image's defaults. `whisper_type` is written in the
+// same payload because the writer switches on it before it maps any field: the
+// key named `model` lands in the remote model column only once the section is
+// already a remote one.
+type whisperSection struct {
+	WhisperType string `json:"whisper_type"`
+	BaseURL     string `json:"base_url,omitempty"`
+	APIKey      string `json:"api_key,omitempty"`
+	Model       string `json:"model,omitempty"`
+}
+
+// setWhisper writes the transcription settings through the app's own config
+// API rather than through the environment.
+//
+// That choice is forced. The app treats its environment as authoritative over
+// its database: an env-provided value is re-applied on every config hydration,
+// and the config API refuses to overwrite a field an env var set. So a whisper
+// endpoint delivered as env would be one the operator could never change again
+// from the app's own Settings screen. Delivered through the API it lands where a
+// human edit lands, and a later edit by that human simply wins.
+func (a *podlyAPI) setWhisper(ctx context.Context, w whisperSection) (bool, error) {
+	return a.sess.PUT(configPath).
+		JSON(map[string]any{"whisper": w}).
 		OK(http.StatusOK).
 		Ensure(ctx)
 }

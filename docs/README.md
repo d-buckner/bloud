@@ -21,6 +21,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | How MCP servers work in Bloud (design, not yet built) | [features/mcp.md](features/mcp.md) |
 | Dashboard layout + widgets | [features/dashboard.md](features/dashboard.md) |
 | Agent API + multi-port apps (`extraPorts`, the `agentApi` contract) | [features/agent-api.md](features/agent-api.md) |
+| Speech-to-text: the instance's transcription endpoint and the `transcription` contract | [features/transcription.md](features/transcription.md) |
 | Dated review findings | [specs/review-2026-09-17.md](specs/review-2026-09-17.md) |
 | Latest architecture/code review (2026-09-19) | [specs/review-2026-09-19.md](specs/review-2026-09-19.md) |
 | Design & code review, APoSD lens (2026-10-03) | [specs/review-2026-10-03-aposd.md](specs/review-2026-10-03-aposd.md) |

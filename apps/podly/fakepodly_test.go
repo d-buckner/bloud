@@ -31,7 +31,25 @@ type fakePodly struct {
 	// sessions maps an issued cookie value to the username it authenticates.
 	sessions map[string]string
 
+	// whisper is the app's combined-config whisper section, as the config API
+	// stores it. The real row carries language, timeout and chunk size too; they
+	// are here so a test can prove Bloud leaves them alone rather than resetting
+	// them to the image's defaults.
+	whisper fakeWhisper
+	// configWrites counts PUT /api/config, so a test can assert a steady-state
+	// pass touches nothing.
+	configWrites int
+
 	requests []string
+}
+
+// fakeWhisper is the whisper section of the app's config store.
+type fakeWhisper struct {
+	whisperType string
+	baseURL     string
+	apiKey      string
+	model       string
+	language    string
 }
 
 // sessionCookieName is the name the app actually sets: Flask's default, renamed
@@ -66,6 +84,10 @@ func (f *fakePodly) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.createUser(w, r)
 	case strings.HasPrefix(r.URL.Path, usersPath+"/") && r.Method == http.MethodPatch:
 		f.patchUser(w, r, strings.TrimPrefix(r.URL.Path, usersPath+"/"))
+	case r.URL.Path == configPath && r.Method == http.MethodPut:
+		f.putConfig(w, r)
+	case r.URL.Path == configPath && r.Method == http.MethodGet:
+		f.getConfig(w, r)
 	default:
 		writeFakeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
@@ -144,6 +166,84 @@ func (f *fakePodly) patchUser(w http.ResponseWriter, r *http.Request, username s
 		f.users[username] = body.Password
 	}
 	writeFakeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// putConfig models PUT /api/config. The real route merges only the keys the
+// payload carries (a partial whisper section leaves language, timeout and chunk
+// size as they were), refuses to write a field an environment variable owns, and
+// answers 400 on anything it cannot apply. The env-authority case is out of
+// scope for the fake because Bloud never sets a whisper variable; what the fake
+// has to keep true is the merge and the admin gate.
+func (f *fakePodly) putConfig(w http.ResponseWriter, r *http.Request) {
+	if !f.requireAdmin(w, r) {
+		return
+	}
+	var body struct {
+		Whisper map[string]any `json:"whisper"`
+	}
+	decodeFakeBody(r, &body)
+	if body.Whisper == nil {
+		writeFakeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid configuration"})
+		return
+	}
+	if t, ok := body.Whisper["whisper_type"].(string); ok {
+		f.whisper.whisperType = t
+	}
+	// The real writer switches on the section type before it maps any field, so
+	// `model` lands in the remote model column only once the type is remote.
+	if f.whisper.whisperType == "remote" {
+		for key, dst := range map[string]*string{
+			"base_url": &f.whisper.baseURL,
+			"api_key":  &f.whisper.apiKey,
+			"model":    &f.whisper.model,
+			"language": &f.whisper.language,
+		} {
+			if v, ok := body.Whisper[key].(string); ok && v != "" {
+				*dst = v
+			}
+		}
+	}
+	f.configWrites++
+	writeFakeJSON(w, http.StatusOK, f.configForClient())
+}
+
+// getConfig models GET /api/config, including the part that forces the
+// configurator's design: the credential is returned masked, so a caller cannot
+// compare the key it holds against the key the app holds.
+func (f *fakePodly) getConfig(w http.ResponseWriter, r *http.Request) {
+	if !f.requireAdmin(w, r) {
+		return
+	}
+	writeFakeJSON(w, http.StatusOK, f.configForClient())
+}
+
+func (f *fakePodly) configForClient() map[string]any {
+	whisper := map[string]any{
+		"whisper_type": f.whisper.whisperType,
+		"base_url":     f.whisper.baseURL,
+		"model":        f.whisper.model,
+		"language":     f.whisper.language,
+	}
+	if f.whisper.apiKey != "" {
+		whisper["api_key_preview"] = "**********"
+	}
+	return map[string]any{"config": map[string]any{"whisper": whisper}}
+}
+
+// whisperState reads what the fake's config store holds, so a test can assert on
+// the delivered values rather than on the request that carried them.
+func (f *fakePodly) whisperState() fakeWhisper {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.whisper
+}
+
+// setWhisper seeds the app's own whisper settings, standing in for an operator
+// who configured transcription in the app's UI before Bloud had an opinion.
+func (f *fakePodly) setWhisper(w fakeWhisper) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.whisper = w
 }
 
 // requireAdmin enforces the gate every user route carries: no session is a 401,

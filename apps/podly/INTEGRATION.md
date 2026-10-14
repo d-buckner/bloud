@@ -1,6 +1,6 @@
 # Podly Integration
 
-## Status: implemented, not exercised against the real image
+## Status: implemented, smoke-tested against the lite image
 
 `podly` is [Podly Pure Podcasts](https://github.com/podly-pure-podcasts/podly_pure_podcasts):
 it downloads a podcast episode, transcribes it, finds the ad segments, silences
@@ -8,20 +8,33 @@ them, and republishes the result as an RSS feed a podcast player can subscribe
 to. It is the first catalog app whose job is to rewrite media rather than serve
 it.
 
-- Image: `ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.5-latest` (pinned)
+- Image: `ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.5-lite` (pinned)
 - SSO strategy: `none`. The human credential is a `clientPassword`
   (`reveal: once`, `rotate: bloud`)
 - Port: `5001`, published to the host and routed by Traefik
 - State: `{{appDataDir}}/instance` mounted at `/app/src/instance`
 - Config: `{{appDataDir}}/config/env`, declared as the container's `envFile`
+- Integration: `transcription`, optional, served by Settings rather than by an app
 
-The image has never been run on the machine this integration was written on. The
-`latest` variant is 4.73 GB of compressed layers (read from the manifest of
-`2.7.5-latest`, not pulled), and the checkout's disk could not hold it. What is
-verified is the catalog contract, the configurator against a fake that models
-the app's auth routes route by route, and the shared conformance harness. The
-install and reconcile journey is the open item, and the integration tier is where
-it closes; see "How to verify" below.
+The `2.7.5-lite` image was run by hand (throwaway container, its own volume, no
+Bloud runtime involved) with the env file this configurator writes, and every
+behaviour the integration depends on was checked against it:
+
+| Claim | What the real image did |
+| --- | --- |
+| The env file bootstraps the service admin | `bloud-service` existed and signed in: `200`, `role: admin` |
+| Auth is on with `REQUIRE_AUTH=true` | `GET /api/auth/status` returned `{"require_auth":true}` |
+| The health probe answers without a session | `urllib.request.urlopen("http://127.0.0.1:5001/")` succeeded inside the container |
+| Accounts can be created and re-pointed after first boot | `POST /api/auth/users` `201`, duplicate `409`, `PATCH /api/auth/users/bloud` `200`; the old password then `401` and the new one `200` |
+| The config API will not show the stored key | `GET /api/config` returns `api_key_preview: "sk-s...ey-1"`, first four and last four characters |
+| A remote transcription endpoint can be configured | `PUT /api/config` `200`, and `base_url`, `model`, `whisper_type` round-tripped |
+| The app's config survives a restart | the whisper section and both accounts were still there after a restart, so a digest-gated write does not have to re-deliver |
+| A stable `PODLY_SECRET_KEY` keeps sessions across a restart | a cookie issued before the restart still authenticated: `200` |
+| Rotating it ends every session | the same cookie returned `401` after the key changed, and signing in again worked |
+
+What that does not cover is the orchestrator's own path: the install through the
+API, the graph, and the dashboard. That is the integration tier's job, and it is
+now a 0.45 GB pull rather than a 4.73 GB one.
 
 ## Why `none` is the honest strategy
 
@@ -131,10 +144,6 @@ the control claims.
 
 ## What Bloud leaves alone
 
-- **Transcription providers.** Podly can use local Whisper (bundled in the
-  `latest` image variant) or a hosted provider, configured in its own Config
-  page. The API keys for the hosted options (`GROQ_API_KEY`, `LLM_API_KEY`, and
-  friends) are operator choices with billing attached; Bloud does not set them.
 - **Feed tokens.** The app mints and displays them. Bloud neither reads nor
   proxies them.
 - **`PODLY_TRUSTED_PROXY`.** Unset, on purpose. It exists so the app's HTTP
@@ -150,16 +159,63 @@ the control claims.
   work. It is not a Bloud setting, and it is one of the things a real TLS story
   has to revisit.
 
-## The image, and the `lite` variant
+## The image, and why `lite` is the default
 
-The pinned tag is `2.7.5-latest`. The same release publishes `2.7.5-lite`, which
-is 0.45 GB compressed instead of 4.73 GB, and drops local Whisper: transcription
-then requires a hosted provider. The full variant is the default because it is
-the one that works with no third-party account, which is the point of a home
-server. `estimatedSizeMB` in the metadata reflects the full variant.
+The same release publishes two variants. `latest` is 4.73 GB of compressed
+layers, one of which is 4.38 GB of Python packages: local Whisper and its CPU
+torch. `lite` is 0.45 GB compressed, 1.23 GB unpacked, and has no local model: it
+calls an OpenAI-compatible `/v1/audio/transcriptions` endpoint instead.
 
-The container runs two processes: the writer service (which owns every database
-write, including user mutations, and is reached over an IPC socket on
+Bloud ships `lite`. The full variant's size is not a podcast feed's size: it is a
+machine-learning runtime, and paying about nine gigabytes per install to cache a
+model that a home server then runs on a CPU is the wrong trade for the thing the
+app is for. Transcription is also the kind of capability an instance can point at
+a shared endpoint, which is what the [`transcription`
+contract](../../docs/features/transcription.md) is for: the operator declares one
+endpoint in Settings, and every app that transcribes gets it.
+
+The honest cost of the choice: with no endpoint configured, `lite` cannot
+transcribe, so it cannot find ads. The contract is `required: false` because that
+is a degraded app rather than a broken install, and the app says so in its own
+UI. An operator who wants local transcription can pin the `latest` tag in their
+own metadata; nothing in Bloud prevents it, and the full image needs none of this
+wiring.
+
+## Transcription: the endpoint comes from Settings
+
+The app's config store holds a whisper section, and `PUT /api/config` writes it.
+Bloud fills three fields when the instance declares an endpoint:
+
+```json
+{"whisper": {"whisper_type": "remote", "base_url": "<endpoint>", "api_key": "<key>", "model": "<id>"}}
+```
+
+`whisper_type` has to travel with the rest: the app's writer switches on the
+section type before it maps any field, so a payload of bare `base_url` and
+`api_key` lands in the local-whisper columns and does nothing.
+
+Two properties of that API shaped the implementation:
+
+- **The key comes back masked.** `GET /api/config` returns `api_key_preview`,
+  the first four and last four characters. So Bloud cannot ask whether the app
+  already holds the key it is about to send, and gates the write on a digest of
+  what it last applied (`{{appDataDir}}/config/whisper.state`) instead. Without
+  that gate the periodic resync would rewrite the app's config store once a
+  minute forever.
+- **The app merges rather than replaces.** Fields Bloud does not name (language,
+  timeout, chunk size) keep whatever the operator set, and Bloud names three.
+
+With no transcription endpoint configured Bloud writes nothing at all, so an
+operator who filled the app's own Config page before Bloud had an opinion keeps
+it. The same rule protects an edit made after: a pass whose digest is unchanged
+leaves the app's settings alone even if a human changed them, because Bloud
+cannot tell an operator's key from its own and re-delivering on a timer would be
+Bloud overwriting a person.
+
+## Two processes in one container
+
+The container runs the writer service (which owns every database write,
+including user mutations, and is reached over an IPC socket on
 `127.0.0.1:50001`) and the web app. The image's start script waits up to
 30s for the writer before starting the app, so both are in one container by
 upstream design and there is nothing for the graph to order.
@@ -178,7 +234,8 @@ resize or recompression.
 
 ## Testing
 
-Covered without the image:
+Against a fake that models the app's routes one for one
+(`apps/podly/fakepodly_test.go`):
 
 - `apps/podly/configurator_test.go`: the env file's contents and mode, the
   read-only steady state, the no-secret-store shape, and that a revoke rotates
@@ -186,13 +243,18 @@ Covered without the image:
 - `apps/podly/accounts_test.go`: account creation, rotation reaching the app, a
   deleted account coming back, and the two cases where the pass must decline to
   write (auth off, service password rejected inside the app).
+- `apps/podly/transcription_test.go`: the endpoint reaching the app's config
+  store, no write when nothing is declared, no rewrite on a steady-state pass,
+  a changed endpoint or a rotated key reaching the app, an operator's own edit
+  surviving the pass after it, and untouched fields staying untouched.
 - `apps/conformance_test.go`: the shared harness, including that PreStart is
   offline and idempotent.
 
 ### How to verify
 
-The integration tier is the gate that has never run for this app, and it needs
-the disk to pull the image:
+The hand-run checks above covered the app's behaviour. The integration tier is
+the gate for the orchestrator's path, and on the lite image it is an ordinary
+pull:
 
 ```bash
 ./bloud validate --tier integration --test-run podly
@@ -207,5 +269,7 @@ What to look for, in order:
 3. Rotate from the dashboard, then sign in with the new value. This is the claim
    `rotate: bloud` makes and the one an environment-only delivery could not keep.
 4. Revoke sessions, and confirm a browser that was signed in is signed out.
-5. Subscribe to a feed from the app's own UI in a podcast player, and confirm the
+5. Set Settings → Transcription, then confirm the app's own Config page shows the
+   endpoint and model, and that a second pass does not rewrite them.
+6. Subscribe to a feed from the app's own UI in a podcast player, and confirm the
    enclosure URLs carry the deployment's scheme.

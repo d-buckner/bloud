@@ -230,3 +230,34 @@ export async function addLauncher(input: { name: string; url: string; icon?: str
 export async function removeLauncher(id: string): Promise<void> {
   await fetchJSON('/api/external-apps/' + id, { method: 'DELETE' });
 }
+
+// Transcription: the one endpoint the instance declares for speech-to-text.
+export interface TranscriptionSettings {
+  configured: boolean;
+  name: string;
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  servedTo: string[];
+}
+
+export async function getTranscriptionSettings(): Promise<TranscriptionSettings> {
+  return fetchJSON<TranscriptionSettings>('/api/settings/transcription');
+}
+
+/**
+ * Saves the transcription endpoint and returns what the API reports afterwards.
+ *
+ * The save is an intent, so the read-back is the orchestrator's applied state
+ * rather than an echo of the request: a payload that dropped the path or the
+ * model would show up here as a stored value that disagrees with what was sent.
+ */
+export async function setTranscriptionSettings(body: {
+  baseUrl: string;
+  name?: string;
+  model?: string;
+  apiKey?: string;
+}): Promise<TranscriptionSettings> {
+  await fetchJSON('/api/settings/transcription', { method: 'PUT', body: JSON.stringify(body) });
+  return getTranscriptionSettings();
+}

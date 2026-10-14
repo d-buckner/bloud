@@ -299,11 +299,7 @@ func (o *Orchestrator) bindContract(
 	case "requestManager":
 		out.RequestManagers = append(out.RequestManagers, o.requestManagerBinding(ref, contract, offer, src, requires))
 	case "mediaServer":
-		out.MediaServers = append(out.MediaServers, configurator.MediaServerBinding{
-			ProviderRef:   ref,
-			AdminUsername: o.contractValue(src, contract, offer, "adminUsername"),
-			AdminPassword: o.publishedSecret(src, contract, offer, requires),
-		})
+		out.MediaServers = append(out.MediaServers, o.mediaServerBinding(ref, contract, offer, src, requires))
 	case "sso":
 		out.SSO = append(out.SSO, configurator.SSOBinding{ProviderRef: ref, APIToken: o.publishedSecret(src, contract, offer, requires)})
 	case "downloadClient":
@@ -343,6 +339,8 @@ func (o *Orchestrator) bindContract(
 		})
 	case "agentApi":
 		out.AgentAPIs = append(out.AgentAPIs, o.agentAPIBinding(ref, contract, offer, src, requires))
+	case "transcription":
+		out.Transcription = append(out.Transcription, o.transcriptionBinding(ref, contract, offer, src, requires))
 	case "caldav":
 		// No secret arm: the `caldav` contract publishes none, because the
 		// credential is the person's own password and it never crosses an app
@@ -381,6 +379,22 @@ func (o *Orchestrator) warnUnboundPayload(contract string, src providerSource) {
 	}
 }
 
+// mediaServerBinding builds one media-server binding: the bootstrap credential
+// the consumer signs in with, plus the username it was minted for.
+func (o *Orchestrator) mediaServerBinding(
+	ref configurator.ProviderRef,
+	contract string,
+	offer catalog.ContractProvides,
+	src providerSource,
+	requires []string,
+) configurator.MediaServerBinding {
+	return configurator.MediaServerBinding{
+		ProviderRef:   ref,
+		AdminUsername: o.contractValue(src, contract, offer, "adminUsername"),
+		AdminPassword: o.publishedSecret(src, contract, offer, requires),
+	}
+}
+
 // requestManagerBinding builds one request-manager binding: the credentials the
 // provider's login is built on, from which the consumer derives the API key.
 func (o *Orchestrator) requestManagerBinding(
@@ -416,6 +430,30 @@ func (o *Orchestrator) agentAPIBinding(
 		Endpoint:    o.routedEndpoint(src, offer),
 		APIKey:      o.publishedSecret(src, contract, offer, requires),
 		ModelName:   o.contractValue(src, contract, offer, "modelName"),
+	}
+}
+
+// transcriptionBinding builds the one binding shape the transcription contract
+// has: an endpoint, the bearer for it, and an optional model id.
+//
+// Only a setting provides this contract today, so `ref.BaseURL` is already the
+// endpoint the operator typed, path included. A catalog app that ever provides
+// it would compose a declared `path` value onto its container address the way
+// the modelSource arm does; nothing guesses that today because nothing offers
+// one, and guessing an address is how a consumer ends up dialing a port that
+// speaks something else.
+func (o *Orchestrator) transcriptionBinding(
+	ref configurator.ProviderRef,
+	contract string,
+	offer catalog.ContractProvides,
+	src providerSource,
+	requires []string,
+) configurator.TranscriptionBinding {
+	return configurator.TranscriptionBinding{
+		ProviderRef: ref,
+		Endpoint:    ref.BaseURL,
+		APIKey:      o.publishedSecret(src, contract, offer, requires),
+		Model:       o.contractValue(src, contract, offer, "model"),
 	}
 }
 
