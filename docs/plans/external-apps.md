@@ -75,11 +75,14 @@ kind. Registering a remote Home Assistant lands its endpoint and that token in
 the wrapper's env file with `apps/ha-mcp/configurator.go` untouched, which makes
 the claim above tested rather than asserted
 (`services/host-agent/internal/engine/orchestrator/external_app_homeassistant_seam_test.go`).
-Two things a remote provider has to say about itself that a local one never needs
-are metadata rather than code: `operatorValues` marks a static value as a fact
-about the install Bloud booted, so the form asks instead of prefilling a name
-nothing there owns, and `secretHelp` says where the credential is minted, because
-the contract's secret name never does. Both are axis B's mechanism.
+Three things a remote provider may have to say about itself that a local one never
+needs are metadata rather than code: `operatorValues` marks a static value as a
+fact about the install Bloud booted, so the form asks instead of prefilling a
+name nothing there owns; `secretLabels` renames a credential, because the
+contract's secret name is the consumer's wire field rather than what the operator
+is holding; and `secretHelp` says where it is minted, which that name never does.
+Jellyfin and Radicale use the first, Home Assistant the other two. All three are
+axis B's mechanism.
 
 ## What the code already knows
 

@@ -379,7 +379,7 @@ func validateProvides(app *App) error {
 		if err := validateContractSecrets(name, contract, offer); err != nil {
 			return err
 		}
-		if err := validateSecretHelp(name, offer); err != nil {
+		if err := validateSecretAnnotations(name, offer); err != nil {
 			return err
 		}
 		if err := validateClientAccess(name, offer); err != nil {
@@ -445,24 +445,34 @@ func validateContractSecrets(name string, contract Contract, offer ContractProvi
 	return nil
 }
 
-// validateSecretHelp checks the guidance an offer attaches to its own
-// credentials.
+// validateSecretAnnotations checks the per-credential annotations an offer
+// attaches to its own secrets: the label a form shows for it, and the sentence
+// rendered under that input.
 //
 // Both rules are no-op guards, the same shape `operatorValues` is held to. A key
 // naming no secret this offer publishes decorates a box the generated form never
-// renders, and a blank value renders an empty line under an input that needed
-// explaining. Either one is an entry that changes nothing, so it fails the load
-// rather than sitting in the metadata long enough to go stale against the
-// declaration around it.
-func validateSecretHelp(name string, offer ContractProvides) error {
-	for _, key := range slices.Sorted(maps.Keys(offer.SecretHelp)) {
-		if !slices.Contains(offer.Secrets, key) {
-			return fmt.Errorf("provides.%s.secretHelp explains %q, which this offer does not publish (it publishes %v)",
-				name, key, offer.Secrets)
-		}
-		if strings.TrimSpace(offer.SecretHelp[key]) == "" {
-			return fmt.Errorf("provides.%s.secretHelp.%s must say where the operator gets this value; a blank hint explains nothing",
-				name, key)
+// renders, and a blank value leaves an input unlabeled or a line empty under an
+// input that needed explaining. Either one is an entry that changes nothing, so
+// it fails the load rather than sitting in the metadata long enough to go stale
+// against the declaration around it.
+func validateSecretAnnotations(name string, offer ContractProvides) error {
+	annotations := []struct {
+		kind  string
+		value map[string]string
+	}{
+		{"secretLabels", offer.SecretLabels},
+		{"secretHelp", offer.SecretHelp},
+	}
+	for _, annotation := range annotations {
+		for _, key := range slices.Sorted(maps.Keys(annotation.value)) {
+			if !slices.Contains(offer.Secrets, key) {
+				return fmt.Errorf("provides.%s.%s names %q, which this offer does not publish (it publishes %v)",
+					name, annotation.kind, key, offer.Secrets)
+			}
+			if strings.TrimSpace(annotation.value[key]) == "" {
+				return fmt.Errorf("provides.%s.%s.%s must not be blank; an empty annotation changes nothing",
+					name, annotation.kind, key)
+			}
 		}
 	}
 	return nil

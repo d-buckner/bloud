@@ -145,9 +145,16 @@ func providerContractFields(app *catalog.App) []externalProviderContract {
 			})
 		}
 		for _, secret := range spec.Secrets {
+			// The contract's secret name is the consumer's wire field, not the
+			// operator's vocabulary, so the offer says what the person pasting the
+			// value calls it. Without a label the key is all there is to go on.
+			label := offer.SecretLabels[secret]
+			if label == "" {
+				label = humanizeFieldKey(secret)
+			}
 			fields = append(fields, externalProviderField{
 				Key:      secret,
-				Label:    humanizeFieldKey(secret),
+				Label:    label,
 				Kind:     "secret",
 				Required: true,
 				// The provider knows where its own credential is minted and the

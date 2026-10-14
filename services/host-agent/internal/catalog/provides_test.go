@@ -193,7 +193,7 @@ containers:
 			port: "8123",
 			provides: "  appApi:\n    secrets: [password]\n    values: {username: svc}\n" +
 				"    secretHelp:\n      accessToken: \"read it out of the app\"",
-			wantErr: `provides.appApi.secretHelp explains "accessToken", which this offer does not publish`,
+			wantErr: `provides.appApi.secretHelp names "accessToken", which this offer does not publish`,
 		},
 		{
 			// An empty hint renders an empty line under the one input that needed
@@ -202,7 +202,32 @@ containers:
 			port: "8123",
 			provides: "  appApi:\n    secrets: [password]\n    values: {username: svc}\n" +
 				"    secretHelp:\n      password: \"   \"",
-			wantErr: "provides.appApi.secretHelp.password must say where the operator gets this value",
+			wantErr: "provides.appApi.secretHelp.password must not be blank",
+		},
+		{
+			// The contract's key is the consumer's wire field. An app whose
+			// credential is a token renames the input so the operator reads what
+			// they are being asked for.
+			name: "a credential the offer renames",
+			port: "8123",
+			provides: "  appApi:\n    secrets: [password]\n    values: {username: svc}\n" +
+				"    secretLabels:\n      password: \"Long-lived access token\"",
+		},
+		{
+			name: "a credential label for a secret this offer does not publish",
+			port: "8123",
+			provides: "  appApi:\n    secrets: [password]\n    values: {username: svc}\n" +
+				"    secretLabels:\n      accessToken: \"Token\"",
+			wantErr: `provides.appApi.secretLabels names "accessToken", which this offer does not publish`,
+		},
+		{
+			// An empty label falls back to the humanized key, which is the thing the
+			// label exists to avoid.
+			name: "a credential label that says nothing",
+			port: "8123",
+			provides: "  appApi:\n    secrets: [password]\n    values: {username: svc}\n" +
+				"    secretLabels:\n      password: \"   \"",
+			wantErr: "provides.appApi.secretLabels.password must not be blank",
 		},
 		{
 			// The caldav contract carries no secret on purpose: the credential is

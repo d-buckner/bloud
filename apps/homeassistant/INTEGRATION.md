@@ -276,25 +276,26 @@ Bloud does not run the provider, so there is no `PostStart` to mint anything.
   `secrets.json`, but the token itself stays live until someone revokes it in
   Home Assistant. That is the remote operator's boundary to enforce, and it is
   the reason they should paste a token rather than their password.
-- **The form asks for the account name.** `provides.appApi.operatorValues:
-  [username]` says that `bloud-bootstrap-admin` is a fact about the install
-  Bloud booted, not about Home Assistant. A remote instance is signed in as
-  whatever its own operator named that account, so the field starts blank and
-  required instead of prefilled with a name that authenticates against nothing
-  there. A prefilled wrong answer saves cleanly and surfaces later as a refused
-  login in whichever consumer received it. A record registered before
-  `operatorValues` existed keeps whatever was stored for it, so the box shows the
-  old name rather than coming up empty, and correcting it is the operator typing
-  the right one; nothing rewrites a stored value behind their back.
-  `apps/jellyfin/metadata.yaml` and
-  `apps/radicale/metadata.yaml` declare the same thing for the same reason.
+- **The form asks for an endpoint and a token, nothing else.** The contract also
+  carries a `username`, and this app declares `bloud-bootstrap-admin` for it,
+  because that is the account the mint below creates. A remote operator is not
+  asked for one: a token belongs to whichever account minted it, nothing in the
+  catalog reads the field for Home Assistant, and a required box would be asking
+  for decoration. A record registered here carries the catalog's constant in that
+  field, and it is inert for exactly that reason. Jellyfin and Radicale do the
+  opposite, and correctly: their consumers sign in with a username, so those
+  apps declare it under `operatorValues` and the field starts blank rather than
+  prefilled with a name that authenticates against nothing there. A prefilled
+  wrong answer saves
+  cleanly and surfaces later as a refused login in whichever consumer received
+  it, which is why those two ask.
 - **The credential box says what it wants.** The contract names the secret
-  `password`, because that is the shape the consumer sends, and the generated
-  form labels the input from that name. `provides.appApi.secretHelp.password`
-  is the sentence rendered under it: mint a long-lived access token in Home
-  Assistant, it is not your account password. Typing the login password saves
-  cleanly and the consumer is refused on every call, which is the failure the
-  hint exists to prevent.
+  `password`, because that is the shape the consumer sends, and a form that
+  labels the input from that name invites a login password.
+  `provides.appApi.secretLabels.password` renames the box to "Long-lived access
+  token" and `secretHelp.password` is the sentence rendered under it. Typing the
+  login password saves cleanly and the consumer is refused on every call, which
+  is the failure both exist to prevent.
 - **Whose authority the credential carries becomes the operator's choice.** The
   mint below produces an owner token because owner is the account Bloud created.
   A remote operator mints from whatever account they pick, so the caveat under

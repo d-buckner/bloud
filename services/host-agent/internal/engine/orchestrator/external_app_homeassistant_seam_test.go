@@ -130,8 +130,9 @@ func containerDef(t *testing.T, app *catalog.App, name string) catalog.Container
 }
 
 // externalHAIntent is the operator registering a Home Assistant down the hall:
-// the endpoint they typed, the account name they typed, and the long-lived token
-// they minted in that instance's own UI.
+// the endpoint they typed and the long-lived token they minted in that instance's
+// own UI. Nothing else, which is the point: the contract carries a username, but
+// a token stands on its own and no consumer asks who it belongs to.
 func externalHAIntent() AddExternalAppIntent {
 	return NewAddExternalAppIntent(ExternalAppSpec{
 		ID:      "ext-ha",
@@ -139,7 +140,6 @@ func externalHAIntent() AddExternalAppIntent {
 		Source:  store.ExternalAppSourceForApp("homeassistant"),
 		Name:    "Garage Home Assistant",
 		URL:     seamHAURL,
-		Values:  map[string]map[string]string{"appApi": {"username": "daniel"}},
 		Secrets: map[string]string{"appApi": seamHAToken},
 	})
 }

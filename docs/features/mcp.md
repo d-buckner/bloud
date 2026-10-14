@@ -303,12 +303,16 @@ Bloud does not reach registers it as an external app
 ([plans/external-apps.md](../plans/external-apps.md)), and the same fields arrive
 from the registration form instead of a configurator. `BaseURL` is the endpoint
 they typed, `password` is the credential they minted on that instance, and
-`username` is the account they named. Two pieces of provider metadata make the
-generated form ask for the right things. `operatorValues` marks a static value as
-a fact about the install Bloud would have booted, so a remote form asks for the
-account name rather than prefilling the one Bloud mints. `secretHelp` says where
-the credential comes from, because the secret is named `password` and Home
-Assistant's is a long-lived access token minted on a profile page. The consumer
+`username` is the account they named, where the app has an account name to ask
+for. Three pieces of provider metadata make the generated form ask for the right
+things. `operatorValues` marks a static value as a fact about the install Bloud
+would have booted, so a remote form asks for the account name rather than
+prefilling the one Bloud mints; Jellyfin and Radicale declare that, because their
+consumers sign in with a username. Home Assistant declares neither, because
+nothing reads its username and a token stands on its own. `secretLabels` renames
+a credential and `secretHelp` says where it comes from, because the secret is
+named `password` and Home Assistant's is a long-lived access token minted on a
+profile page. The consumer
 still has no branch to write: `ProviderRef.Kind` exists, and `pkg/configurator`
 says out loud that a consumer must not branch on it.
 

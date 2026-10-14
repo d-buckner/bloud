@@ -54,6 +54,17 @@ type ContractProvides struct {
 	// a consumer as the corresponding field of its binding. Names an app does not
 	// list here are never handed to another app, however they were stored.
 	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	// SecretLabels renames one credential in the form a remote install is
+	// registered with, keyed by the secret name it describes.
+	//
+	// The secret name is the consumer's wire field, not the operator's vocabulary:
+	// `appApi` calls its credential `password` because that is the field the
+	// companion's binding carries, and for AFFiNE that is literally true. Home
+	// Assistant's is a long-lived access token minted on a profile page, and a box
+	// labeled "Password" invites the operator to type the one string that will be
+	// refused on every call. The provider knows what its own credential is called;
+	// this is where it says so.
+	SecretLabels map[string]string `yaml:"secretLabels,omitempty" json:"secretLabels,omitempty"`
 	// SecretHelp explains where one of those credentials comes from, keyed by the
 	// secret name it describes.
 	//

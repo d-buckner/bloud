@@ -467,6 +467,7 @@ func remoteIdentityApp() *catalog.App {
 				Values:  map[string]string{"adminUsername": "bloud-bootstrap-admin"},
 				// The credential is whatever the remote server's own UI issues, and
 				// the contract's name for it does not say so.
+				SecretLabels:   map[string]string{"adminPassword": "API key"},
 				SecretHelp:     map[string]string{"adminPassword": "Issue an API key in that server's own settings; Bloud cannot mint one for an install it did not boot."},
 				OperatorValues: []string{"adminUsername"},
 			},
@@ -557,11 +558,11 @@ func TestExternalAppsModule_OperatorOwnedValueSurvivesTheStaticMerge(t *testing.
 	assert.Equal(t, "daniel", add.Spec.Values["mediaServer"]["adminUsername"])
 }
 
-// TestExternalAppsModule_SecretHelpReachesTheForm follows a credential hint to
-// the response body. The dashboard renders `help` off the wire for secret inputs
-// the same way it does for values, and nothing type-checks that the offer's
-// sentence survives the derivation and the marshalling to get there.
-func TestExternalAppsModule_SecretHelpReachesTheForm(t *testing.T) {
+// TestExternalAppsModule_SecretAnnotationsReachTheForm follows a credential's
+// label and hint to the response body. The dashboard renders both off the wire
+// for secret inputs, and nothing type-checks that the offer's wording survives
+// the derivation and the marshalling to get there.
+func TestExternalAppsModule_SecretAnnotationsReachTheForm(t *testing.T) {
 	mod, _ := operatorOwnedTestModule()
 
 	w := httptest.NewRecorder()
@@ -581,6 +582,8 @@ func TestExternalAppsModule_SecretHelpReachesTheForm(t *testing.T) {
 	}
 	require.Len(t, secrets, 1)
 	assert.Equal(t, "adminPassword", secrets[0].Key)
+	assert.Equal(t, "API key", secrets[0].Label,
+		"the offer renames the input; the contract's key is the consumer's wire field")
 	assert.Equal(t,
 		"Issue an API key in that server's own settings; Bloud cannot mint one for an install it did not boot.",
 		secrets[0].Help, "the offer's sentence is the only thing that tells the operator where the value comes from")
@@ -594,8 +597,11 @@ func TestExternalAppsModule_SecretHelpReachesTheForm(t *testing.T) {
 // `caldav-service` and Jellyfin's is `bloud-bootstrap-admin`, so the only record
 // of "this static value names the account Bloud created" is the app declaring it
 // under `operatorValues`. The table is that knowledge, reviewed in a diff, and it
-// fails if one of these three drops the declaration or starts prefilling the
-// local name as someone else's answer.
+// fails if one of these two drops the declaration or starts prefilling the local
+// name as someone else's answer.
+//
+// Home Assistant is absent because it asks for no account at all: its credential
+// is a token, and its own test below pins that.
 func TestRealCatalogRemoteInstallsAskForTheAccount(t *testing.T) {
 	apps, err := catalog.NewLoader(realProviderCatalogDir(t)).LoadAll()
 	require.NoError(t, err)
@@ -603,7 +609,6 @@ func TestRealCatalogRemoteInstallsAskForTheAccount(t *testing.T) {
 	for _, tc := range []struct{ app, contract, key string }{
 		{"jellyfin", "mediaServer", "adminUsername"},
 		{"radicale", "appApi", "username"},
-		{"homeassistant", "appApi", "username"},
 	} {
 		t.Run(tc.app, func(t *testing.T) {
 			app, ok := apps[tc.app]
@@ -674,15 +679,17 @@ func derivedField(t *testing.T, app *catalog.App, contractName, key string) exte
 	return externalProviderField{}
 }
 
-// TestRealCatalogHomeAssistantExplainsItsToken pins the guidance a remote Home
-// Assistant install renders. The contract's name for the credential is
-// `password`, which is the shape the consumer sends and the wrong instruction to
-// give a person: Home Assistant authenticates a companion with a long-lived
-// access token minted in its own UI, and an operator who types their login
-// password saves cleanly and then watches the companion get refused on every
-// call. It reads the real catalog because the sentence is a fact about Home
-// Assistant's `provides:` block.
-func TestRealCatalogHomeAssistantExplainsItsToken(t *testing.T) {
+// TestRealCatalogHomeAssistantAsksForOnlyAToken pins what registering a Home
+// Assistant down the hall actually asks for: an endpoint and a token.
+//
+// Two facts shape that form, and neither is cosmetic. The credential's label must
+// not be the contract's wire name: `password` is what the consumer's binding
+// field is called, and a box reading "Password" invites the operator to type the
+// one string that will be refused on every call. And the username must stay
+// unasked: it names the account a local install creates, nothing in the catalog
+// reads it for Home Assistant, and the dashboard leaves non-required fields out,
+// so requiring it would demand an account name that feeds nothing.
+func TestRealCatalogHomeAssistantAsksForOnlyAToken(t *testing.T) {
 	apps, err := catalog.NewLoader(realProviderCatalogDir(t)).LoadAll()
 	require.NoError(t, err)
 	app, ok := apps["homeassistant"]
@@ -701,13 +708,15 @@ func TestRealCatalogHomeAssistantExplainsItsToken(t *testing.T) {
 
 	token, ok := byKey["password"]
 	require.True(t, ok, "the appApi credential is the field a remote install fills")
-	assert.Contains(t, token.Help, "token",
-		"the label says password; only the catalog knows it is a token the app's own UI issues")
+	assert.Equal(t, "Long-lived access token", token.Label,
+		"the contract names the consumer's field; only Home Assistant knows what its operator is pasting")
 	assert.Contains(t, strings.ToLower(token.Help), "not your account password",
-		"the hint has to rule out the one thing the label invites")
+		"the hint has to rule out the one thing a credential box invites")
 
 	username, ok := byKey["username"]
-	require.True(t, ok, "the owner's name is on the form")
-	assert.True(t, username.Required, "a remote install has to name its own account")
-	assert.Empty(t, username.Default, "the account this instance created is no answer for someone else's")
+	require.True(t, ok, "the contract carries a username, so the derivation still names it")
+	assert.False(t, username.Required,
+		"nothing reads a Home Assistant username, so the form must not demand one")
+	assert.Equal(t, "bloud-bootstrap-admin", username.Default,
+		"the key is answered from the catalog rather than asked; for a remote install the value is inert")
 }
