@@ -204,6 +204,7 @@ flowchart TD
     app_jellyfin -->|ldap| app_authentik
     app_navidrome -->|forward-auth| app_authentik
     app_paperless_ngx -->|native-oidc| app_authentik
+    app_podly -->|inference| ai_model
     app_podly -->|transcription| ai_model
     app_prowlarr -->|forward-auth| app_authentik
     app_prowlarr -->|pvr| app_radarr

@@ -36,6 +36,9 @@ type fakePodly struct {
 	// are here so a test can prove Bloud leaves them alone rather than resetting
 	// them to the image's defaults.
 	whisper fakeWhisper
+	// llm is the app's combined-config llm section: the ad classifier's model and
+	// the endpoint it is dialed on.
+	llm fakeLLM
 	// configWrites counts PUT /api/config, so a test can assert a steady-state
 	// pass touches nothing.
 	configWrites int
@@ -50,6 +53,13 @@ type fakeWhisper struct {
 	apiKey      string
 	model       string
 	language    string
+}
+
+// fakeLLM is the llm section of the app's config store.
+type fakeLLM struct {
+	model   string
+	baseURL string
+	apiKey  string
 }
 
 // sessionCookieName is the name the app actually sets: Flask's default, renamed
@@ -180,9 +190,10 @@ func (f *fakePodly) putConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Whisper map[string]any `json:"whisper"`
+		LLM     map[string]any `json:"llm"`
 	}
 	decodeFakeBody(r, &body)
-	if body.Whisper == nil {
+	if body.Whisper == nil && body.LLM == nil {
 		writeFakeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid configuration"})
 		return
 	}
@@ -199,6 +210,17 @@ func (f *fakePodly) putConfig(w http.ResponseWriter, r *http.Request) {
 			"language": &f.whisper.language,
 		} {
 			if v, ok := body.Whisper[key].(string); ok && v != "" {
+				*dst = v
+			}
+		}
+	}
+	if body.LLM != nil {
+		for key, dst := range map[string]*string{
+			"llm_model":       &f.llm.model,
+			"openai_base_url": &f.llm.baseURL,
+			"llm_api_key":     &f.llm.apiKey,
+		} {
+			if v, ok := body.LLM[key].(string); ok && v != "" {
 				*dst = v
 			}
 		}
@@ -227,7 +249,24 @@ func (f *fakePodly) configForClient() map[string]any {
 	if f.whisper.apiKey != "" {
 		whisper["api_key_preview"] = "**********"
 	}
-	return map[string]any{"config": map[string]any{"whisper": whisper}}
+	out := map[string]any{"whisper": whisper}
+	llm := map[string]any{
+		"llm_model":       f.llm.model,
+		"openai_base_url": f.llm.baseURL,
+	}
+	if f.llm.apiKey != "" {
+		llm["llm_api_key_preview"] = "**********"
+	}
+	out["llm"] = llm
+	return map[string]any{"config": out}
+}
+
+// llmState reads what the fake's config store holds for the ad classifier, so a
+// test can assert on the delivered values rather than on the request.
+func (f *fakePodly) llmState() fakeLLM {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.llm
 }
 
 // whisperState reads what the fake's config store holds, so a test can assert on

@@ -226,7 +226,10 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	if err != nil || !signedIn {
 		return err
 	}
-	return c.reconcileTranscription(ctx, state)
+	if err := c.reconcileTranscription(ctx, state); err != nil {
+		return err
+	}
+	return c.reconcileInference(ctx, state)
 }
 
 // reconcileAccount makes the app's copy of the sign-in password the host's copy.
@@ -304,7 +307,7 @@ func (c *Configurator) reconcileTranscription(ctx context.Context, state *config
 	desired := whisperSection{
 		WhisperType: "remote",
 		BaseURL:     binding.Endpoint,
-		APIKey:      binding.APIKey,
+		APIKey:      orPlaceholder(binding.APIKey),
 		Model:       binding.Model,
 	}
 	if transcriptionApplied(state, desired) {

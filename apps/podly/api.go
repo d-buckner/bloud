@@ -174,3 +174,24 @@ func (a *podlyAPI) setWhisper(ctx context.Context, w whisperSection) (bool, erro
 		OK(http.StatusOK).
 		Ensure(ctx)
 }
+
+// llmSection is the `llm` half of the app's config: the model that decides which
+// transcript spans are advertising, and the endpoint it is dialed on. Ad removal
+// is this model's job, so an app with whisper wired and no llm wired transcribes
+// and then cannot cut anything.
+type llmSection struct {
+	Model   string `json:"llm_model"`
+	BaseURL string `json:"openai_base_url,omitempty"`
+	APIKey  string `json:"llm_api_key,omitempty"`
+}
+
+// setLLM writes the ad-classifier settings, through the config API for the same
+// reason setWhisper does: an env-provided value is re-applied on every hydration
+// and the API refuses to overwrite it, so env would hand the operator a setting
+// they could never change again.
+func (a *podlyAPI) setLLM(ctx context.Context, l llmSection) (bool, error) {
+	return a.sess.PUT(configPath).
+		JSON(map[string]any{"llm": l}).
+		OK(http.StatusOK).
+		Ensure(ctx)
+}

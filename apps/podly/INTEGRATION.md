@@ -212,6 +212,55 @@ leaves the app's settings alone even if a human changed them, because Bloud
 cannot tell an operator's key from its own and re-delivering on a timer would be
 Bloud overwriting a person.
 
+## The ad classifier: the second model endpoint
+
+Transcription is only half of what the lite image needs. The app dials a second
+OpenAI-compatible endpoint to decide which spans of the transcript are
+advertising, and that is the only part of its job a feed reader cannot already do.
+Bloud wires it from the `inference` contract (Settings -> AI), writing:
+
+```json
+{"llm": {"llm_model": "openai/<model>", "openai_base_url": "<endpoint>", "llm_api_key": "<key>"}}
+```
+
+Two things about that field are not obvious from the app's own UI, and both were
+found by running a real episode through it rather than by reading its docs.
+
+**The model name needs a provider prefix.** The app calls `litellm.completion()`,
+and litellm routes on the prefix: a bare `qwen3.8-flash-next` raises
+`BadRequestError: LLM Provider NOT provided` client-side, before a request is
+sent, while `openai/qwen3.8-flash-next` reaches the same endpoint and answers.
+That is why upstream's own default is `groq/openai/gpt-oss-120b`. Bloud's
+inference contract is OpenAI-compatible by definition, so `openai/` is the correct
+prefix for every provider it can hold; a name already carrying a slash is left
+alone. Verified against the running image with both spellings against one
+endpoint.
+
+**A keyless endpoint still needs a key.** The app builds an OpenAI SDK client for
+both halves, and `OpenAI(api_key=None)` refuses to construct at all; an empty
+string constructs, but the app's own LLM path turns one into none
+(`llm.get("llm_api_key") or ...`). So a provider with no credential is handed the
+literal string `placeholder`, which the endpoint ignores: measured against a
+keyless upstream, both `/v1/audio/transcriptions` and `/v1/chat/completions`
+answer 200 with `Authorization: Bearer placeholder`.
+
+### What a real ingestion looks like
+
+Measured end to end on a native runtime with a real ad-bearing episode (~33 min):
+
+| stage | result |
+| --- | --- |
+| feed add | 25 episodes ingested |
+| transcribe | 1131 segments in 2 chunks, remote whisper |
+| identify ads | 22 litellm calls, 103 identifications, 194 s flagged |
+| refine boundaries | per-ad pass, ~5 min |
+| output | 30.4 min ad-free mp3, 30,139,479 bytes |
+| serve | ad-free RSS enclosure reports exactly that byte count |
+
+The classification pass is the slow part and it is sequential: 90-segment windows
+(60 new plus 30 overlap) at one call each, then a refinement call per ad block.
+It is I/O wait on the upstream, not load on the container.
+
 ## Two processes in one container
 
 The container runs the writer service (which owns every database write,
@@ -223,6 +272,41 @@ upstream design and there is nothing for the graph to order.
 `PUID` and `PGID` are set to the upstream compose defaults. The image's
 entrypoint only drops privileges when both are present; with neither it runs the
 whole app as root.
+
+## Why Bloud sets `SERVER_THREADS`
+
+`src/main.py` reads `SERVER_THREADS` and falls back to **one** worker thread when
+it is unset, and every upstream compose file ships `SERVER_THREADS=1`. A feed add
+is a synchronous `feedparser.parse(url)` inside the request handler
+(`src/app/feeds.py`) with no timeout, so one feed host that accepts the TCP
+connection and then sends nothing holds the only worker, and every later request
+queues behind it indefinitely. Bloud's own health probe queues with them.
+
+Observed on a real install: adding a feed from `www.cbc.ca` left the app serving
+nothing for an hour. The last line it logged was the fetch, zero requests were
+served after it, and the container held one ESTABLISHED, silent socket to the
+only address that host resolves to. `waitress.queue` depth climbed the whole time.
+That host answers `curl` in 1.6s and stalls Python user agents: the same fetch
+times out at 20s from the host and at 15s from inside a container.
+
+Measured A/B against `2.7.5-lite`, same feed both times:
+
+| container | app still answers |
+| --- | --- |
+| `SERVER_THREADS` unset (1 worker) | no, every request times out |
+| `SERVER_THREADS=4` | yes, 200 in 1.5ms, and `/api/config` in 22ms |
+
+A well-behaved feed (NPR's RSS) adds in 5.6s on either setting, so this is about
+one hostile host, not about feed adds being slow.
+
+Four is `waitress`'s own documented default. It is safe here rather than merely
+smaller: the app opens SQLite in WAL mode with a 90s `busy_timeout`
+(`src/app/__init__.py`), which is the configuration built for concurrent
+connections, so concurrent workers wait instead of erroring.
+
+This shrinks the blast radius from one stalled feed to four. It does not close the
+hole: the fetch has no timeout upstream, so four hostile feeds still wedge the
+app. The real fix is a `timeout=` on the upstream `feedparser.parse` call.
 
 ## Icon
 
