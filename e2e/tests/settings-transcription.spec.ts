@@ -84,7 +84,10 @@ test.describe('podly transcription settings (Settings -> Transcription)', () => 
       // The field is blank and marked "stored": the page knows a key exists
       // without knowing what it is.
       await expect(section.locator('#tr-key')).toHaveValue('');
-      await expect(section.getByText('stored')).toBeVisible();
+      // Exact, not substring: the hint under the field reads "Leave blank to
+      // keep the stored key.", so a loose match resolves to two nodes and the
+      // assertion becomes a strict-mode violation whenever a key is stored.
+      await expect(section.getByText('stored', { exact: true })).toBeVisible();
 
       // And the API agrees: it reports presence, never the value.
       const live = await apiLib.getTranscriptionSettings();

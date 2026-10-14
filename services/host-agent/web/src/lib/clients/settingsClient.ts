@@ -110,12 +110,28 @@ export interface SetTranscriptionRequest {
 	apiKey?: string;
 }
 
+/**
+ * What the save accepted, as the API canonicalized it.
+ *
+ * The endpoint is echoed back parsed rather than verbatim, so the form can poll
+ * for the stored value without reimplementing the parser, same as the address
+ * setting's response.
+ */
+export interface SetTranscriptionResponse {
+	status: string;
+	baseUrl: string;
+	model: string;
+	configured: boolean;
+}
+
 export function fetchTranscriptionSettings(): Promise<TranscriptionSettings> {
 	return get<TranscriptionSettings>('/api/settings/transcription');
 }
 
-export function setTranscriptionSettings(data: SetTranscriptionRequest): Promise<IntentResponse> {
-	return put<IntentResponse>('/api/settings/transcription', data);
+export function setTranscriptionSettings(
+	data: SetTranscriptionRequest
+): Promise<SetTranscriptionResponse> {
+	return put<SetTranscriptionResponse>('/api/settings/transcription', data);
 }
 
 /**

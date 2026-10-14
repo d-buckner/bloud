@@ -8,7 +8,9 @@
 		setTranscriptionSettings,
 		type TranscriptionSettings
 	} from '$lib/clients/settingsClient';
+	import { appliedTo, buildSaveRequest, SAVE_WINDOW } from '$lib/utils/transcriptionSave';
 	import Button from '$lib/components/Button.svelte';
+	import { pollUntil } from '$lib/store/effects/convergence';
 
 	let settings = $state<TranscriptionSettings | null>(null);
 	let loading = $state(true);
@@ -92,19 +94,24 @@
 		error = '';
 		saved = false;
 		try {
-			const body: Parameters<typeof setTranscriptionSettings>[0] = {
-				baseUrl: payload.remove ? '' : baseUrl.trim(),
-				name: name.trim() || 'Transcription',
-				model: model.trim()
-			};
-			// Only include the key when it was typed. Omitting means "keep".
-			if (!payload.remove && apiKey !== '') {
-				body.apiKey = apiKey;
+			const body = buildSaveRequest({ name, baseUrl, model, apiKey }, payload.remove === true);
+			const accepted = await setTranscriptionSettings(body);
+			// The save is an intent: the 202 is a receipt, not a result. Wait for the
+			// stored state to reach what the save reported, so a write the orchestrator
+			// dropped is an error on screen rather than a page that looks configured.
+			const applied = appliedTo(accepted, body.apiKey);
+			settings = await pollUntil(fetchTranscriptionSettings, applied, SAVE_WINDOW);
+			if (!applied(settings)) {
+				throw new Error(`Saved, but the endpoint is still ${settings.baseUrl || 'unset'}. Check the logs.`);
 			}
-			await setTranscriptionSettings(body);
-			saved = true;
+			// Re-seed the fields from what the server now holds rather than from what
+			// was typed: the parser may have rewritten the address, and a Remove has
+			// to empty the input instead of leaving the removed address on screen.
+			name = settings.name || 'Transcription';
+			baseUrl = settings.baseUrl;
+			model = settings.model;
 			apiKey = '';
-			settings = await fetchTranscriptionSettings();
+			saved = true;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not save transcription settings';
 		} finally {

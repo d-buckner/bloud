@@ -79,7 +79,8 @@ jobs:
           # has more variance than a container-only app's. Its own leg keeps that
           # variance off every other group's deadline.
           - group: podly
-            test-run: 'TestPodly'          - group: media-stack
+            test-run: 'TestPodly'
+          - group: media-stack
             test-run: 'TestMediaStack'
           - group: catalog
             test-run: 'TestCatalogUpdate'
