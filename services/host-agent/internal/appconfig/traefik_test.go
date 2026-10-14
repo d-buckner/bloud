@@ -203,3 +203,51 @@ func TestTraefikStaticConfig_ExplicitOverridesDefault(t *testing.T) {
 	require.Equal(t, []string{"10.0.0.20/32"}, trusted,
 		"an explicit trusted-proxy list must be the whole list, not a widening of the default")
 }
+
+// A JDK HttpClient offers an h2c upgrade on every request it makes and writes
+// the body in its own segment after the headers. Authentik's ASGI server reads
+// that offer as a protocol switch and never hands the body to Django, so
+// Penpot's OAuth2 token exchange arrives with no client_id at all and fails as
+// invalid_client while its credential is correct. The route has to delete the
+// offer, and it has to do it only where a machine client posts: Authentik's own
+// live-update websockets need the upgrade to survive.
+func TestAuthentikRoutes_StripTheH2CUpgradeFromTheOIDCEndpoints(t *testing.T) {
+	c := NewTraefikConfigurator(nil, 80, 3000, 9001, t.TempDir(), nil)
+
+	var cfg struct {
+		HTTP struct {
+			Routers map[string]struct {
+				Rule        string   `yaml:"rule"`
+				Middlewares []string `yaml:"middlewares"`
+			} `yaml:"routers"`
+			Middlewares map[string]struct {
+				Headers struct {
+					CustomRequestHeaders map[string]string `yaml:"customRequestHeaders"`
+				} `yaml:"headers"`
+			} `yaml:"middlewares"`
+		} `yaml:"http"`
+	}
+	require.NoError(t, yaml.Unmarshal([]byte(c.authentikRoutes()), &cfg),
+		"the generated Authentik routes must be valid YAML")
+
+	mw := cfg.HTTP.Middlewares["authentik-oidc-plain-http"]
+	for _, header := range []string{"Connection", "Upgrade", "HTTP2-Settings"} {
+		value, ok := mw.Headers.CustomRequestHeaders[header]
+		require.True(t, ok, "%s must be deleted on the OIDC endpoints", header)
+		require.Empty(t, value, "%s must be deleted, not rewritten", header)
+	}
+
+	require.Contains(t, cfg.HTTP.Routers["authentik-application"].Middlewares,
+		"authentik-oidc-plain-http",
+		"/application is where a client exchanges an authorization code")
+	require.Contains(t, cfg.HTTP.Routers["authentik-ws"].Rule, "/ws",
+		"Authentik's websockets are their own route, which is what makes the strip safe")
+
+	for name, router := range cfg.HTTP.Routers {
+		if name == "authentik-application" {
+			continue
+		}
+		require.NotContains(t, router.Middlewares, "authentik-oidc-plain-http",
+			"%s must keep whatever upgrade its client offers", name)
+	}
+}

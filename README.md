@@ -142,6 +142,27 @@ flowchart TD
         c_paperless_ngx --> c_paperless_ngx_redis
     end
 
+    subgraph app_penpot["Penpot"]
+        c_penpot_postgres["postgres"]
+        c_penpot_valkey["valkey"]
+        c_penpot_exporter["exporter"]
+        c_penpot_mcp["mcp"]
+        c_penpot_admin_console["admin-console"]
+        c_penpot_frontend["frontend"]
+        c_penpot_backend["backend"]
+        c_penpot_exporter --> c_penpot_backend
+        c_penpot_exporter --> c_penpot_valkey
+        c_penpot_mcp --> c_penpot_backend
+        c_penpot_admin_console --> c_penpot_backend
+        c_penpot_admin_console --> c_penpot_postgres
+        c_penpot_frontend --> c_penpot_backend
+        c_penpot_frontend --> c_penpot_exporter
+        c_penpot_frontend --> c_penpot_mcp
+        c_penpot_frontend --> c_penpot_admin_console
+        c_penpot_backend --> c_penpot_postgres
+        c_penpot_backend --> c_penpot_valkey
+    end
+
     subgraph app_podly["Podly"]
         c_podly["podly"]
     end
@@ -197,6 +218,7 @@ flowchart TD
     app_hermes -->|native-oidc| app_authentik
     app_hermes -->|mcp| app_dav_mcp
     app_hermes -->|mcp| app_ha_mcp
+    app_hermes -->|mcp| app_penpot
     app_hermes -->|inference| ai_model
     app_hermes_webui -->|agentApi| app_hermes
     app_homeassistant -->|native-oidc| app_authentik
@@ -204,6 +226,7 @@ flowchart TD
     app_jellyfin -->|ldap| app_authentik
     app_navidrome -->|forward-auth| app_authentik
     app_paperless_ngx -->|native-oidc| app_authentik
+    app_penpot -->|native-oidc| app_authentik
     app_podly -->|inference| ai_model
     app_podly -->|transcription| ai_model
     app_prowlarr -->|forward-auth| app_authentik
@@ -234,6 +257,7 @@ flowchart TD
     app_traefik -->|proxy| app_jellyfin
     app_traefik -->|proxy| app_navidrome
     app_traefik -->|proxy| app_paperless_ngx
+    app_traefik -->|proxy| app_penpot
     app_traefik -->|proxy| app_podly
     app_traefik -->|proxy| app_prowlarr
     app_traefik -->|proxy| app_qbittorrent
@@ -270,6 +294,7 @@ removal.
 - **Jellyfin**: Free software media system for streaming movies, TV, and music
 - **Navidrome**: Modern music server and streamer compatible with Subsonic/Airsonic clients
 - **Paperless-ngx**: Document management system that turns scans and PDFs into a searchable archive
+- **Penpot**: Open-source design platform for interfaces, design systems, and prototypes
 - **Podly**: Removes ads from podcasts and serves the ad-free versions as RSS feeds
 - **Prowlarr**: Indexer manager that syncs indexers to Sonarr, Radarr, and other PVRs
 - **qBittorrent**: BitTorrent client with a web interface
@@ -300,7 +325,7 @@ It's built for things you have the right to use.
 |---|---|
 | **LDAP** | Jellyfin, Radicale, Seerr |
 | **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
-| **Native OIDC** | AFFiNE, Hermes, Hermes Web UI, Home Assistant, Immich, Paperless-ngx, Vaultwarden |
+| **Native OIDC** | AFFiNE, Hermes, Hermes Web UI, Home Assistant, Immich, Paperless-ngx, Penpot, Vaultwarden |
 | **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Home Assistant MCP, Podly |
 <!-- END GENERATED LOGIN TABLE -->
 

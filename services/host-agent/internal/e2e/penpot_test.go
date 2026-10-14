@@ -1,0 +1,685 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//go:build integration
+
+package e2e
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"codeberg.org/d-buckner/bloud/apps/penpot"
+)
+
+var penpotURL = getEnvDefault("BLOUD_E2E_PENPOT_URL", "http://localhost:9002")
+
+// The seven containers apps/penpot declares. Named here rather than derived
+// from the catalog so the uninstall assertion can fail: a test that read the
+// same list the planner used could never notice a node the orchestrator
+// orphaned.
+var penpotContainers = []string{
+	"apps-penpot-postgres",
+	"apps-penpot-valkey",
+	"apps-penpot-backend",
+	"apps-penpot-exporter",
+	"apps-penpot-mcp",
+	"apps-penpot-admin-console",
+	"apps-penpot-frontend",
+}
+
+func penpotPublicURL() string {
+	return bloudSubdomainURL("penpot")
+}
+
+// TestPenpotInstallViaAPI installs Penpot through the API.
+//
+// The deadline is the largest in the suite, and the reason is the shape of the
+// install rather than any one slow part: seven containers, about 1.85 GB of
+// images, a JVM backend that opens its listener only after its own migrations,
+// and a frontend whose nginx renders its runtime config from the environment
+// file at start. The health checks' own retries cover the slow boots; this
+// covers the whole convergence.
+func TestPenpotInstallViaAPI(t *testing.T) {
+	postJSON(t, hostAgentURL+"/api/apps/penpot/install", `{}`, http.StatusAccepted)
+	waitAppRunning(t, "penpot", 25*time.Minute)
+	waitHTTPOrFatal(t, 2*time.Minute, penpotURL+"/js/config.js")
+	waitRoutedApp(t, penpotPublicURL()+"/", 3*time.Minute)
+}
+
+// TestPenpotServesTheConfigurationBloudGenerated is the browser-visible half of
+// the wiring. Penpot's SPA reads its flags, its public URI, and the identity
+// provider's display name from this file, which the image's entrypoint renders
+// from the environment at container start. So what an anonymous visitor can
+// fetch is exactly what Bloud configured: if the file had not reached the
+// container, or the image had ignored it, the defaults would come back instead.
+func TestPenpotServesTheConfigurationBloudGenerated(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	for _, base := range []string{penpotURL, penpotPublicURL()} {
+		body := httpGet(t, base+"/js/config.js")
+		for _, want := range []string{
+			"enable-login-with-oidc",
+			"enable-mcp",
+			"enable-admin-console",
+			"disable-onboarding",
+			"Bloud SSO",
+			`var penpotPublicURI = "` + penpotPublicURL() + `"`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s/js/config.js does not contain %q; got:\n%s", base, want, body)
+			}
+		}
+	}
+
+	// The half of the wiring a config file cannot prove. get-profile is the SPA's
+	// first call and it reaches every part of the install: nginx, the JVM, its
+	// database, and (because enable-admin-console is on) the admin console, since
+	// the RPC ends in with-nitrate-licence. When that last call fails Penpot
+	// answers 503 {:type :nitrate-unavailable} and the browser renders
+	// "temporarily unavailable" with no login page, on an install whose every
+	// container reports healthy. httpGet prints the body on a non-200, which is
+	// where Penpot names the failing dependency.
+	httpGet(t, penpotPublicURL()+"/api/main/methods/get-profile")
+}
+
+// TestPenpotBackendReachedItsIdentityProvider is the assertion that earns this
+// app's place in the suite. Penpot initializes the OIDC provider once, at
+// startup, and when that fails it logs a warning and boots anyway with no
+// provider: the login page still renders, the button is still there, and every
+// sign-in fails. A node at RUNNING proves nothing about it.
+//
+// The two log lines are Penpot's own (app.auth.oidc, the provider init):
+// success says "provider initialized", failure says "unable to initialize auth
+// provider". The failure Penpot can actually hit in a Bloud install is
+// discovery against a private issuer being refused by its SSRF guard, which is
+// what PENPOT_SSRF_ALLOWED_HOSTS exists to prevent.
+func TestPenpotBackendReachedItsIdentityProvider(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	logs := runCmd(t, "podman", "logs", "apps-penpot-backend")
+	if strings.Contains(logs, "unable to initialize auth provider") {
+		t.Fatal("Penpot could not reach its OIDC issuer at startup; the login page would " +
+			"offer a provider that cannot authenticate anyone.\nBackend's own words:\n" +
+			logContext(logs, "unable to initialize auth provider") +
+			"\nWhat the container can actually see:\n" +
+			oidcDiagnosis(envFile(t, filepath.Join(appDataDir("penpot"), "config", "penpot.env"))["PENPOT_OIDC_BASE_URI"]))
+	}
+	if !strings.Contains(logs, "provider initialized") {
+		t.Fatal("the backend never reported an initialized auth provider; SSO is not configured.\n" +
+			"Last lines of the backend log:\n" + tailLines(logs, 25))
+	}
+}
+
+// logContext returns the log lines that carry the marker plus their neighbours,
+// because Penpot writes the reason for a failed provider init next to the
+// warning, not in it. A failure that only quotes the warning is a failure the
+// reader has to go reproduce by hand.
+// softRun runs a diagnostic. Unlike runCmd it never fails the test: a probe that
+// could not run is itself an answer, and the point of these is to be printed
+// next to a failure that already happened.
+func softRun(name string, args ...string) string {
+	out, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		return strings.TrimSpace(fmt.Sprintf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out))
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// oidcDiagnosis answers the question Penpot's log cannot. "unable to discover
+// OIDC configuration" wraps at least three different faults (the SSRF guard
+// refusing the address, the issuer name not resolving inside the container, the
+// proxy answering something other than 200) and they need three different
+// fixes, so the test reports what the container sees instead of guessing: the
+// two variables that decide the guard, whether the name resolves, and the status
+// line of the actual discovery request made from inside the container.
+func oidcDiagnosis(baseURI string) string {
+	var b strings.Builder
+
+	env := softRun("podman", "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", "apps-penpot-backend")
+	for _, line := range strings.Split(env, "\n") {
+		if strings.HasPrefix(line, "PENPOT_SSRF_ALLOWED_HOSTS=") || strings.HasPrefix(line, "PENPOT_OIDC_BASE_URI=") {
+			b.WriteString("  container env: " + line + "\n")
+		}
+	}
+
+	parsed, err := url.Parse(baseURI)
+	if err != nil || parsed.Hostname() == "" {
+		return b.String() + "  could not parse PENPOT_OIDC_BASE_URI: " + baseURI + "\n"
+	}
+
+	host, port := parsed.Hostname(), parsed.Port()
+	if port == "" {
+		port = "80"
+	}
+	b.WriteString("  resolves to: " + softRun("podman", "exec", "apps-penpot-backend", "getent", "hosts", host) + "\n")
+
+	// The image has no curl and no wget; bash is installed (it is the image's own
+	// entrypoint) and its /dev/tcp pseudo-file makes the request the container
+	// would make, from inside the container.
+	path := strings.TrimSuffix(parsed.Path, "/") + "/.well-known/openid-configuration"
+	script := fmt.Sprintf(
+		"exec 3<>/dev/tcp/%s/%s || { echo 'connect failed'; exit 0; }; "+
+			"printf 'GET %s HTTP/1.0\r\nHost: %s\r\n\r\n' >&3; head -n 1 <&3", host, port, path, host)
+	b.WriteString("  " + baseURI + ".well-known/openid-configuration from inside: " +
+		softRun("podman", "exec", "apps-penpot-backend", "bash", "-c", script) + "\n")
+	return b.String()
+}
+
+func logContext(logs, marker string) string {
+	lines := strings.Split(logs, "\n")
+	var out []string
+	for i, line := range lines {
+		if !strings.Contains(line, marker) {
+			continue
+		}
+		from, to := i-2, i+6
+		if from < 0 {
+			from = 0
+		}
+		if to > len(lines) {
+			to = len(lines)
+		}
+		out = append(out, lines[from:to]...)
+	}
+	if len(out) == 0 {
+		return tailLines(logs, 25)
+	}
+	return strings.Join(out, "\n")
+}
+
+// tailLines returns the last n lines of a log.
+func tailLines(logs string, n int) string {
+	lines := strings.Split(strings.TrimRight(logs, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// penpotTokenEndpoint resolves the provider's token endpoint the way Penpot's
+// backend does, from the discovery document. The origin is the app's own routed
+// origin rather than the issuer's host: sso.localhost is a name the app
+// containers resolve through an extraHosts pin, not necessarily one this test
+// process can resolve, and Authentik builds the endpoints it advertises from the
+// Host it is asked on, so the document comes back self-consistent either way.
+func penpotTokenEndpoint(t *testing.T) string {
+	t.Helper()
+	base := getEnvDefault("BLOUD_SSO_BASE_URL", "http://localhost:8080")
+	res, err := http.Get(base + "/application/o/penpot/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatalf("GET %s/application/o/penpot/.well-known/openid-configuration: %v", base, err)
+	}
+	defer res.Body.Close()
+	var doc struct {
+		TokenEndpoint string `json:"token_endpoint"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&doc); err != nil || doc.TokenEndpoint == "" {
+		t.Fatalf("%s/application/o/penpot/.well-known/openid-configuration is not a discovery document (status %d)",
+			base, res.StatusCode)
+	}
+	return doc.TokenEndpoint
+}
+
+// penpotProviderHoldsTheEnvFileCredential asks Authentik over its API which
+// client credential it actually stores for this app and compares it to the one
+// the install handed Penpot. A mismatch is invisible everywhere else: the
+// authorize request carries only the client_id, so the browser is handed a code
+// and the backend's token exchange is the first place the two values meet.
+func penpotProviderHoldsTheEnvFileCredential(t *testing.T, wantID, wantSecret string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, authentikURL+"/api/v3/providers/oauth2/?search=penpot", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+authentikToken(t))
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("listing OAuth2 providers: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("listing OAuth2 providers: status %d", res.StatusCode)
+	}
+
+	var out struct {
+		Results []struct {
+			PK           int    `json:"pk"`
+			Name         string `json:"name"`
+			ClientID     string `json:"client_id"`
+			ClientType   string `json:"client_type"`
+			ClientSecret string `json:"client_secret"`
+			RedirectURIs []struct {
+				URL string `json:"url"`
+			} `json:"redirect_uris"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding the provider list: %v", err)
+	}
+
+	found := 0
+	for _, p := range out.Results {
+		t.Logf("provider pk=%d name=%q client_id=%q client_type=%q", p.PK, p.Name, p.ClientID, p.ClientType)
+		for _, u := range p.RedirectURIs {
+			t.Logf("  registered redirect uri %s", u.URL)
+		}
+		if p.ClientID != wantID {
+			continue
+		}
+		found++
+		switch {
+		case p.ClientSecret == "":
+			t.Log("the API did not expose the stored client_secret; the exchange below is the check")
+		case p.ClientSecret != wantSecret:
+			t.Errorf("Authentik stores a different client_secret for %s than the env file Penpot boots from (%d characters stored, %d in the file)",
+				wantID, len(p.ClientSecret), len(wantSecret))
+		default:
+			t.Logf("the stored client_secret matches the env file (%d characters)", len(wantSecret))
+		}
+	}
+	if found == 0 {
+		t.Errorf("no OAuth2 provider carries client_id %q; the search returned %d rows", wantID, len(out.Results))
+	}
+	if found > 1 {
+		t.Errorf("%d providers carry client_id %q; the token endpoint takes the first match, which need not be this app's",
+			found, wantID)
+	}
+}
+
+// TestPenpotOidcClientCanExchangeAToken performs the one call the browser
+// journey depends on that the browser cannot report. Penpot's backend posts the
+// authorization code to the provider's token endpoint with the credential from
+// the env file, and when that POST does not answer 200 the user sees a login
+// page that silently reloads and the backend logs only "unable to fetch access
+// token". The hint Penpot puts in the browser's URL is that literal sentence:
+// everything that distinguishes the causes is in the provider's answer, which
+// never reaches the browser.
+//
+// The code here is deliberately bogus. Authentik checks the client credential
+// before it looks the code up (TokenParams.__post_init__ compares
+// provider.client_secret, then __post_init_code checks the redirect URI against
+// the provider's registered list and only then loads the code), so the error
+// names whichever input was wrong. invalid_grant is the pass condition: it means
+// the credential Bloud handed Penpot is the credential the provider holds.
+func TestPenpotOidcClientCanExchangeAToken(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	values := envFile(t, filepath.Join(appDataDir("penpot"), "config", "penpot.env"))
+	clientID := values["PENPOT_OIDC_CLIENT_ID"]
+	secret := values["PENPOT_OIDC_CLIENT_SECRET"]
+	if clientID == "" || secret == "" {
+		t.Fatal("the env file carries no client credential to test")
+	}
+	endpoint := penpotTokenEndpoint(t)
+	penpotProviderHoldsTheEnvFileCredential(t, clientID, secret)
+
+	// The file is not what the JVM reads. A container is created from the file at
+	// one moment and keeps those bytes until something recreates it, so a value
+	// that lands in the file after the container was made is a value Penpot never
+	// sees. Ask the container what it was started with.
+	containerEnv := runCmd(t, "podman", "inspect", "-f",
+		"{{range .Config.Env}}{{println .}}{{end}}", "apps-penpot-backend")
+	if !strings.Contains(containerEnv, "PENPOT_OIDC_CLIENT_SECRET="+secret) {
+		t.Errorf("the backend container was created without the client secret the env file carries (%d variables inspected)."+
+			"Penpot drops a nil client secret from the token request, and the provider answers that with invalid_client",
+			strings.Count(containerEnv, "\n"))
+	}
+
+	// Penpot builds its own redirect URI: build-redirect-uri in
+	// backend/src/app/auth/oidc.clj is PENPOT_PUBLIC_URI with the path replaced,
+	// and the token request repeats the string the authorize request sent.
+	redirect := strings.TrimSuffix(values["PENPOT_PUBLIC_URI"], "/") + "/api/auth/oidc/callback"
+	t.Logf("exchanging against %s with client %s and redirect %s", endpoint, clientID, redirect)
+
+	exchange := func(usedSecret, usedRedirect string) (int, string) {
+		form := url.Values{
+			"grant_type":    {"authorization_code"},
+			"code":          {"bloud-integration-probe-not-a-real-code"},
+			"client_id":     {clientID},
+			"client_secret": {usedSecret},
+			"redirect_uri":  {usedRedirect},
+		}
+		res, err := http.PostForm(endpoint, form)
+		if err != nil {
+			t.Fatalf("POST %s: %v", endpoint, err)
+		}
+		defer res.Body.Close()
+		body, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(body)
+	}
+
+	status, body := exchange(secret, redirect)
+	t.Logf("token endpoint answered the configured credential: %d %s", status, body)
+	switch {
+	case status == http.StatusOK:
+		t.Errorf("a made-up authorization code exchanged for tokens: %s", body)
+	case strings.Contains(body, "invalid_grant"):
+		t.Log("the provider accepted the credential and rejected only the made-up code")
+	case strings.Contains(body, "invalid_client"):
+		t.Errorf("the provider refused the client credential Penpot boots with, which is the one failure "+
+			"mode the browser can only show as a login page that reloads: %d %s", status, body)
+	default:
+		t.Errorf("unexpected answer from the token endpoint: %d %s", status, body)
+	}
+
+	// The control: a credential that must not work. Without it, an endpoint that
+	// ignored the secret would look identical to one that checked it.
+	if _, wrong := exchange("not-the-client-secret", redirect); !strings.Contains(wrong, "invalid_client") {
+		t.Errorf("the provider accepted a wrong client secret, so the check above proves nothing: %s", wrong)
+	}
+}
+
+// TestPenpotOidcTokenEndpointReadsAnUpgradingClient repeats the exchange the way
+// Penpot's own HTTP client makes it: an h2c upgrade offer on the headers, and
+// the body written as its own segment after them.
+//
+// This is the shape that broke the login, and it is invisible to every other
+// check in this suite. Penpot's backend runs on a JDK HttpClient, which offers
+// h2c on every request. Authentik's ASGI server reads that offer as a protocol
+// switch and never hands the body to Django, so the exchange arrives with no
+// client_id and answers invalid_client while the credential is correct, and all
+// the browser ever learns is that the access token could not be fetched. The
+// proxy deletes the offer on /application because it cannot honor an h2c upgrade
+// it is handed (see appconfig.traefikRoutes); this is what keeps that deletion
+// from being cleaned up as dead config.
+func TestPenpotOidcTokenEndpointReadsAnUpgradingClient(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	values := envFile(t, filepath.Join(appDataDir("penpot"), "config", "penpot.env"))
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {"bloud-integration-probe-not-a-real-code"},
+		"client_id":     {values["PENPOT_OIDC_CLIENT_ID"]},
+		"client_secret": {values["PENPOT_OIDC_CLIENT_SECRET"]},
+		"redirect_uri":  {strings.TrimSuffix(values["PENPOT_PUBLIC_URI"], "/") + "/api/auth/oidc/callback"},
+	}.Encode()
+
+	endpoint := penpotTokenEndpoint(t)
+	body := postOfferingH2C(t, endpoint, form)
+	t.Logf("the provider answered the upgrading request with %s", body)
+
+	switch {
+	case strings.Contains(body, "invalid_grant"):
+		t.Log("the form reached the provider through the upgrade offer")
+	case strings.Contains(body, "invalid_client"):
+		t.Errorf("the provider read no form at all: the upgrade offer ate the request body, which is the one "+
+			"failure a browser can only show as a login page that reloads. The proxy must delete the offer on"+
+			"/application (appconfig.traefikRoutes): %s", body)
+	default:
+		t.Errorf("unexpected answer from the token endpoint: %s", body)
+	}
+}
+
+// postOfferingH2C writes the request by hand because the point of it is the
+// bytes: Go's own client manages Connection and Upgrade for its own websocket
+// support and would not be trusted to reproduce what a JDK client sends. The
+// body goes out in a second write, as it does from the JDK, because a server
+// that switches protocols on the headers is exactly what drops it.
+func postOfferingH2C(t *testing.T, endpoint, form string) string {
+	t.Helper()
+
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatalf("the token endpoint is not a URL: %v", err)
+	}
+	host := target.Host
+	if target.Port() == "" {
+		host += ":80"
+	}
+
+	conn, err := net.DialTimeout("tcp", host, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial %s: %v", host, err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(20 * time.Second)); err != nil {
+		t.Fatalf("set the deadline: %v", err)
+	}
+
+	headers := "POST " + target.RequestURI() + " HTTP/1.1\r\n" +
+		"Host: " + target.Host + "\r\n" +
+		"content-type: application/x-www-form-urlencoded\r\n" +
+		"accept: application/json\r\n" +
+		"Content-Length: " + strconv.Itoa(len(form)) + "\r\n" +
+		"Connection: Upgrade, HTTP2-Settings\r\n" +
+		"Upgrade: h2c\r\n" +
+		"HTTP2-Settings: AAEAAEAAAAIAAAAAAAMAAAAAAAQBAAAAAAUAAEAAAAYABgAA\r\n\r\n"
+	if _, err := io.WriteString(conn, headers); err != nil {
+		t.Fatalf("write the headers: %v", err)
+	}
+	if _, err := io.WriteString(conn, form); err != nil {
+		t.Fatalf("write the body: %v", err)
+	}
+
+	var got strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buf)
+		got.Write(buf[:n])
+		if err != nil || strings.Contains(got.String(), "}") {
+			break
+		}
+	}
+
+	all := got.String()
+	start := strings.Index(all, "{")
+	if start < 0 {
+		t.Fatalf("the token endpoint did not answer with JSON: %s", all)
+	}
+	end := strings.LastIndex(all, "}")
+	return all[start : end+1]
+}
+
+// TestPenpotEnvFileStaysOnTheHost checks the delivery channel: the file is read
+// on the host when the container is created and is deliberately not mounted
+// into it, so it must exist with the mode that keeps the OIDC client secret out
+// of every other reader's reach, and with the same client credential Bloud
+// registered at the provider.
+func TestPenpotEnvFileStaysOnTheHost(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	path := filepath.Join(appDataDir("penpot"), "config", "penpot.env")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("%s mode = %o, want 600 (it holds an OIDC client secret)", path, perm)
+	}
+
+	values := envFile(t, path)
+	if values["PENPOT_OIDC_CLIENT_ID"] == "" {
+		t.Error("PENPOT_OIDC_CLIENT_ID is empty; the login page would offer a provider with no client")
+	}
+	if values["PENPOT_OIDC_CLIENT_SECRET"] == "" {
+		t.Error("PENPOT_OIDC_CLIENT_SECRET is empty")
+	}
+	if values["PENPOT_OIDC_BASE_URI"] == "" {
+		t.Error("PENPOT_OIDC_BASE_URI is empty; Penpot cannot discover the provider")
+	}
+	// There is no PENPOT_OIDC_REDIRECT_URI to check: Penpot has no such config
+	// key. backend/src/app/auth/oidc.clj builds the redirect URI as
+	// PENPOT_PUBLIC_URI with the path replaced by /api/auth/oidc/callback, so
+	// the assertion that matters is the one below on PENPOT_PUBLIC_URI, and the
+	// callback path is the one metadata.yaml declares to Authentik.
+	if want := penpotPublicURL(); values["PENPOT_PUBLIC_URI"] != want {
+		t.Errorf("PENPOT_PUBLIC_URI = %q, want %q", values["PENPOT_PUBLIC_URI"], want)
+	}
+	// The issuer host has to be in the allowlist or discovery is refused before
+	// it starts: Penpot's SSRF guard rejects private and loopback addresses, and
+	// a localhost deployment's issuer is loopback by design.
+	if !strings.Contains(values["PENPOT_SSRF_ALLOWED_HOSTS"], "sso.localhost") {
+		t.Errorf("PENPOT_SSRF_ALLOWED_HOSTS = %q, want it to name the issuer host",
+			values["PENPOT_SSRF_ALLOWED_HOSTS"])
+	}
+	if values["PENPOT_SECRET_KEY"] == "" {
+		t.Error("PENPOT_SECRET_KEY is empty; every restart would sign out every session")
+	}
+}
+
+// TestPenpotAdminConsoleStaysUp pins the failure that is invisible from the
+// container list. The admin console is a dependency of the profile RPC, not an
+// optional page: when it is down every Penpot request, the login page's first
+// one included, answers 503 {:type :nitrate-unavailable}, and the container can
+// sit in that state while the graph calls the install converged. It also exits
+// rather than degrading when its own base path is wrong, so "running" is the
+// assertion, and the narrow env file is what keeps it running.
+func TestPenpotAdminConsoleStaysUp(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	state := strings.TrimSpace(runCmd(t, "podman", "inspect", "-f", "{{.State.Status}}", "apps-penpot-admin-console"))
+	if state != "running" {
+		t.Fatalf("apps-penpot-admin-console is %q; Penpot answers 503 for everything while it is down.\n"+
+			"Its own words:\n%s", state, tailLines(runCmd(t, "podman", "logs", "apps-penpot-admin-console"), 20))
+	}
+
+	values := envFile(t, filepath.Join(appDataDir("penpot"), "config", "penpot-admin-console.env"))
+	if v, ok := values["PENPOT_ADMIN_CONSOLE_URI"]; ok {
+		t.Errorf("the admin console's env file carries PENPOT_ADMIN_CONSOLE_URI=%q; the image reads that as its own base path and exits", v)
+	}
+	if values["PENPOT_SECRET_KEY"] == "" {
+		t.Error("the admin console has no signing key to derive the backend's shared secret from")
+	}
+}
+
+// TestPenpotMcpStaysUnpublishedUntilTheOperatorEnablesIt pins the contract's
+// empty-means-not-ready rule on the real path. Penpot mints its MCP key itself,
+// shown once, and only after a signed-in person turns the integration on in
+// their profile. Bloud cannot invent that value, so a fresh install has nothing
+// to publish, and a consumer must see nothing rather than a key that
+// authenticates against nothing.
+func TestPenpotMcpStaysUnpublishedUntilTheOperatorEnablesIt(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	published := readSecrets(t).AppSecrets["penpot"].Published
+	if token := published["httpToken"]; token != "" {
+		t.Errorf("penpot published an MCP token (%d chars) before anyone enabled MCP in Penpot", len(token))
+	}
+	values := readSecrets(t).AppSecrets["penpot"].PublishedValues
+	if path := values["mcp"]["path"]; path != "" {
+		t.Errorf("penpot published an MCP path %q with no token behind it; consumers must see one not-ready state, not half of one", path)
+	}
+}
+
+// TestPenpotMCPLookupQueryRunsAgainstTheRealDatabase runs Bloud's operator MCP
+// key read against Penpot's own Postgres.
+//
+// The unit test pins the query's shape; only Postgres can say it parses. A
+// previous revision asked psql to interpolate a -v variable inside a -c command
+// string, which psql does not do, and every reconciliation pass failed with
+// "syntax error at or near :" while the app itself looked healthy: the read is a
+// deliberate soft failure, so the only symptom was a contract that never
+// appeared. An empty result here is the expected answer (no operator in this
+// environment has created an MCP key); a psql error is the failure.
+func TestPenpotMCPLookupQueryRunsAgainstTheRealDatabase(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	query := penpot.MCPKeyQuery("operator@example.com")
+	if query == "" {
+		t.Fatal("Bloud refuses to build its own MCP key query, so it can never publish the contract")
+	}
+
+	out, err := exec.Command("podman", "exec", "apps-penpot-postgres", "psql",
+		"-U", "penpot", "-d", "penpot", "-At", "-v", "ON_ERROR_STOP=1", "-c", query).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the MCP key read does not run against Penpot's database: %v\n%s", err, out)
+	}
+	t.Logf("the query runs; the key read returned %q", strings.TrimSpace(string(out)))
+}
+
+// TestPenpotUninstallCleanup uninstalls Penpot through the API and asserts the
+// full cleanup: store entry, all seven containers, data directory, routes, and
+// the identity-provider objects Bloud created for it on install.
+func TestPenpotUninstallCleanup(t *testing.T) {
+	postJSON(t, hostAgentURL+"/api/apps/penpot/uninstall",
+		`{"clearData":true}`, http.StatusAccepted)
+
+	deadline := time.Now().Add(5 * time.Minute)
+	for time.Now().Before(deadline) {
+		if appStatus(t, "penpot") == "" {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	if status := appStatus(t, "penpot"); status != "" {
+		t.Fatalf("penpot still listed as installed (status %q)", status)
+	}
+
+	for _, name := range penpotContainers {
+		if _, err := exec.Command("podman", "container", "exists", name).CombinedOutput(); err == nil {
+			t.Errorf("%s container still exists after uninstall", name)
+		}
+	}
+
+	if os.Getenv("BLOUD_DATA_DIR") != "" {
+		if _, err := os.Stat(appDataDir("penpot")); err == nil {
+			t.Errorf("data directory %s still exists after clearData uninstall", appDataDir("penpot"))
+		}
+	}
+
+	traefikDir := os.Getenv("BLOUD_TRAEFIK_DYNAMIC_DIR")
+	if traefikDir != "" {
+		routesPath := filepath.Join(traefikDir, "apps-routes.yml")
+		routes, err := os.ReadFile(routesPath)
+		if err != nil {
+			t.Fatalf("reading %s: %v", routesPath, err)
+		}
+		if strings.Contains(string(routes), "penpot") {
+			t.Errorf("apps-routes.yml still references penpot after uninstall")
+		}
+	}
+
+	if authentikApplicationExists(t, "penpot") {
+		t.Errorf("Authentik application %q still exists after uninstall", "penpot")
+	}
+	if p := authentikProviderOrNil(t, "Penpot OAuth2 Provider"); p != nil {
+		t.Errorf("Authentik OAuth2 provider %q still exists after uninstall", p.Name)
+	}
+	t.Log("penpot fully uninstalled: store, containers, data, routes, and SSO cleaned up")
+}
+
+// envFile parses a generated dotenv file into its key/value pairs.
+func envFile(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	values := map[string]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if key, value, ok := strings.Cut(line, "="); ok {
+			values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+	return values
+}
+
+func httpGet(t *testing.T, url string) string {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: status %d: %s", url, resp.StatusCode, body)
+	}
+	return string(body)
+}

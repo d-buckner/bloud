@@ -255,6 +255,8 @@ func (c *TraefikConfigurator) authentikRoutes() string {
     authentik-application:
       rule: "PathPrefix(` + "`" + `/application` + "`" + `)"
       service: authentik
+      middlewares:
+        - authentik-oidc-plain-http
       priority: 85
 
     # Authentik flows (login, logout, etc.)
@@ -287,11 +289,43 @@ func (c *TraefikConfigurator) authentikRoutes() string {
       service: authentik
       priority: 85
 
+` + oidcUpgradeMiddleware() + `
   services:
     authentik:
       loadBalancer:
         servers:
           - url: "` + authentikURL + `"
+`
+}
+
+// oidcUpgradeMiddleware emits the one middleware attached to the OIDC endpoints,
+// and carries the reason, because the reason is longer than the config.
+//
+// A client that offers an h2c upgrade loses its request body here. Penpot's
+// backend runs on a JDK HttpClient, which sends Connection: Upgrade,
+// HTTP2-Settings plus Upgrade: h2c on every request and writes the body in its
+// own segment after the headers. Authentik's ASGI server reads an upgrade offer
+// as a protocol switch and never hands the body to Django, so the OAuth2 token
+// exchange arrives with no client_id at all and answers invalid_client while
+// Penpot tells the browser it was unable to fetch an access token. The
+// credential is fine: the same POST with the same body parses when those three
+// headers are absent, and parses with them present once a proxy deletes them.
+// Verified against these pinned versions, both through Traefik and straight to
+// Authentik's own port, so the proxy is not the fault and cannot be the only
+// place the fix lives.
+//
+// Traefik cannot honor an h2c upgrade, so it must not pass the offer on:
+// deleting the upgrade headers makes the request the HTTP/1.1 request it already
+// is. Scoped to /application because Authentik's own websockets, the only
+// upgrades that must survive, live under /ws (authentik-ws).
+func oidcUpgradeMiddleware() string {
+	return `  middlewares:
+    authentik-oidc-plain-http:
+      headers:
+        customRequestHeaders:
+          Connection: ""
+          Upgrade: ""
+          HTTP2-Settings: ""
 `
 }
 

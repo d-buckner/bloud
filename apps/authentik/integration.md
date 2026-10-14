@@ -80,6 +80,26 @@ What this does not change:
      callbackPath: /oauth2/callback
    ```
 
+## The OIDC route deletes the client's upgrade offer
+
+The `/application` router carries a `headers` middleware that removes
+`Connection`, `Upgrade`, and `HTTP2-Settings` from the request
+(`appconfig.traefikRoutes`). It is not decoration.
+
+Authentik's ASGI server treats an upgrade offer as a protocol switch and does not
+hand the request body to Django. A client that offers one therefore arrives with
+an empty `request.POST`, and an OAuth2 token exchange that loses its body loses
+its client credential with it: the provider answers `invalid_client` while the
+secret it holds is correct, and the app can only report that it could not fetch
+an access token. The JDK's `HttpClient` offers an h2c upgrade on every request,
+which is how this was found; it is not specific to that client, and it is not
+specific to the app that hit it first. Traefik cannot honor an h2c upgrade, so
+passing the offer on serves no one.
+
+The middleware is scoped to `/application` for one reason: Authentik's admin
+websocket route (`/ws`) is a real upgrade and must keep its headers. Do not
+widen this middleware, and do not move it onto the entrypoint.
+
 ## API Token for App Integrations
 
 The API token this app generates for the host agent is also published to its

@@ -157,7 +157,24 @@ jobs:
             | grep -iE '${{ matrix.app }}|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|system info|503|loading|"level":"(error|warn)"' \
             | tail -150 || true
           echo "=== App container logs ==="
-          podman logs --tail 80 "apps-${{ matrix.app }}" 2>&1 || true
+          # Every container the app declares, not one named after it: an app
+          # with its own database and sidecars has no apps-<app> container at
+          # all, and the failure is usually in one of the others.
+          for c in $(podman ps -a --format '{{.Names}}' | grep -E "^apps-${{ matrix.app }}(-|\$)"); do
+            echo "--- $c (tail) ---"
+            podman logs --tail 80 "$c" 2>&1 || true
+            echo "--- $c (errors) ---"
+            podman logs "$c" 2>&1 | grep -iE "error|warn|unable|refused|denied|exception" | tail -30 || true
+          done
+          echo "=== Identity provider's view of the token exchanges ==="
+          # The app's server-side half of a login is a request to Authentik that no
+          # browser can see, and Authentik logs one named warning per reason it
+          # refused: unknown client_id, wrong client secret, unknown or expired
+          # code. The single generic invalid_client that reaches the app does not
+          # say which of them it was.
+          podman logs --since 40m apps-authentik-server 2>&1 \
+            | grep -aE "OAuth2Provider does not exist|Invalid client secret|Code does not exist|is expired|Invalid HTTP|/application/o/" \
+            | tail -40 || true
           echo "=== Podman containers ==="
           podman ps -a 2>&1 || true
           echo "=== Podman socket ==="

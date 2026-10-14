@@ -1,9 +1,9 @@
 # Bloud MCP
 
-**Status:** Shipped. Four providers today: `apps/affine-mcp`, `apps/dav-mcp`,
-`apps/arr-mcp`, and `apps/ha-mcp`, all consumed by Hermes. AFFiNE's own MCP server
-is deliberately not exposed.
-**Last updated:** 2026-10-13
+**Status:** Shipped. Five providers today: `apps/affine-mcp`, `apps/dav-mcp`,
+`apps/arr-mcp`, `apps/ha-mcp`, and `apps/penpot` (the app's own server), all
+consumed by Hermes. AFFiNE's own MCP server is deliberately not exposed.
+**Last updated:** 2026-10-14
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md),
 [plans/arr-mcp-provider.md](../plans/arr-mcp-provider.md) for a provider that
 fills several contracts at once,
@@ -24,7 +24,8 @@ each provider as a tool namespace.
 affine-mcp  (provides mcp)  <──┐
 dav-mcp  (provides mcp)    <──┼──  hermes (integrates mcp, optional + multi)
 arr-mcp  (provides mcp)    <──┤
-ha-mcp  (provides mcp)     <──┘
+ha-mcp   (provides mcp)    <──┤
+penpot   (provides mcp)    <──┘
 ```
 
 Dependencies are a set, not a menu: the resolver binds every compatible
@@ -57,6 +58,10 @@ The design's original rule was "the provider is the app": a target with its own
 MCP server should not need a separate container wrapping it. That rule is right
 when the app's server is sufficient. It is wrong when the app's server is
 weaker than a third party's, which is exactly AFFiNE's case.
+
+The rule was always the right rule; AFFiNE was the case where its premise
+failed. `apps/penpot` is the case where the premise holds, and it is the
+provider that shows what the original shape costs and buys: see below.
 
 The wrapper shape costs a second container to vet and a boundary that can drift
 from the target's API. It buys the tool surface the built-in server does not
@@ -115,6 +120,48 @@ is the credential and a path a config file can name cannot be a secret. The serv
 listens on a separate generated path that only the gate knows, which keeps
 upstream's own posture intact instead of replacing it.
 
+### What the fifth provider changed about the shape
+
+`apps/penpot` is the fifth provider and the first where the provider **is the
+app**. Penpot ships its own streamable-HTTP MCP server, its own in-browser
+plugin, and its own credential, and nothing about its tool surface is weaker
+than a wrapper could build, because the tools operate on the file the human is
+looking at. There is no second container to vet and no boundary to drift.
+
+Four things about the existing shape turned out to be wrapper-shaped habits that
+this provider does not get to keep.
+
+- **The credential is minted by the target, in a browser, and Bloud can only read
+  it.** Every other provider either generates its own bearer or mints a target
+  token through an API. Penpot's MCP key has no API: a person enables MCP under
+  *Your account → Integrations → MCP Server*, Penpot shows the key once, and the
+  same screen hands out the server URL with the key embedded as `userToken`. A
+  key Bloud invented would authenticate against nothing and would not be the
+  string the operator's browser tab dials with. So the configurator reads the key
+  out of Penpot's own database, scoped to the operator's email and to
+  `access_token` rows of type `mcp`. This is the first provider whose published
+  `httpToken` is a human's personal credential rather than an instance one.
+- **Not publishing is the normal state, not a degraded one.** Nobody may have
+  enabled MCP. The provider then publishes no `httpToken` and no `path`, Hermes'
+  filter drops the binding, and the agent has no Penpot namespace. That is the
+  correct rendering of the install, and it is the clearest demonstration the
+  [empty-token rule](#the-empty-token-rule-and-where-it-applies) was written for.
+- **The published `path` is a runtime value, and it is not only a path.** Penpot's
+  endpoint is `/mcp/stream?userToken=<key>`: the credential travels in the query
+  string, so the path and the secret are the same string twice. `path` is
+  therefore in `runtimeValues`, and both fields are cleared together so "no key"
+  stays one state a consumer can see rather than half of one.
+- **A tool call needs a live browser tab.** The plugin runs inside the Penpot
+  page. If the browser freezes or unloads that tab, MCP fails fast and reports no
+  plugin connected. Bloud cannot fix that and does not hide it. Every other
+  provider in the catalog answers a tool call with no human present; Penpot is
+  the first whose tools are only available while the operator is there.
+
+One property improved as a side effect. Because the key belongs to a specific
+profile, a Penpot tool call is attributable to a person in Penpot's own audit
+log, which is the attribution the [Open Questions](#open-questions) section says
+no other provider can offer.
+
 ### What removing the built-in server also removed
 
 The Manticore Search sidecar existed only to light the lexical channel of
@@ -143,7 +190,10 @@ over workspace metadata and is unaffected.
   a runtime choice, is what makes Hermes take every MCP provider the instance
   offers; a specialized harness declares a narrower list.
 - **One published credential means one principal.** No per-user MCP
-  authorization. A stated limit, not an oversight.
+  authorization. A stated limit, not an oversight. `apps/penpot` is the
+  exception it proves: its published key belongs to one named human, because
+  Penpot mints it for that profile, so that one provider's tool calls carry a
+  person's identity into the target's own audit log.
 
 ---
 
@@ -211,12 +261,15 @@ metadata (`contractValue` in `internal/engine/orchestrator/orchestrator.go`). A
 provider can move a value from runtime to static, or the reverse, without
 touching consumers.
 
-The shipped `mcp` provider uses both static values (`/mcp`, `affine-mcp`),
-because the wrapper serves one endpoint for every workspace. The mechanism is
-still load-bearing: `appApi` publishes `username` and `workspaceId` at runtime,
-because those are facts only AFFiNE can produce. The built-in MCP server used it
-for a workspace-scoped `path`, which is the shape this section was written for
-and remains available to a future provider.
+The shipped wrappers use static values (`/mcp`, `affine-mcp`), because a wrapper
+serves one endpoint for every workspace. `apps/penpot` is the provider that uses
+`runtimeValues` for `path`: its endpoint is `/mcp/stream?userToken=<key>`, and
+the key does not exist until a person enables MCP inside Penpot, so neither half
+of the value is knowable at catalog load. `appApi` publishes `username` and
+`workspaceId` at runtime for the same reason: those are facts only AFFiNE can
+produce. The built-in MCP server used it for a workspace-scoped `path`, which is
+the shape this section was written for and remains available to a future
+provider.
 
 ### Why there is no composed URL in the binding
 
@@ -386,6 +439,12 @@ users fine must not land in ERROR because a companion-facing value could not be
 published. The companion is protected anyway by the empty-token and
 empty-scope filters.
 
+Penpot is the same judgment call with a different reason. Its MCP sync never
+fails the node: Penpot is a design tool that works with or without the harness,
+and a database that is briefly unreachable would take the app out of the
+dashboard to report a missing tool namespace. The resync re-runs the read, which
+is what makes "not now" a fine answer.
+
 ---
 
 ## Reachability
@@ -404,6 +463,13 @@ not a secret URL. What gates it is the bearer Bloud generates, which is a
 long-lived instance credential the operator can rotate by reinstalling or by
 clearing `httpToken` from the secrets store. The catalog's deferred
 loopback-only port publish would tighten this for every app; it is not MCP work.
+
+Penpot reaches the same address through the app's own routed origin: the
+frontend's nginx proxies `/mcp/stream` to the MCP container, which publishes no
+port of its own. The harness still dials `LocalURL + Path`, and the path carries
+the key, so the reachability question for Penpot is the reachability question for
+Penpot: the key is the gate, and the endpoint exists only while
+`enable-mcp` left the nginx rule in place.
 
 ---
 
@@ -538,6 +604,10 @@ mcp_servers:
     url: http://localhost:9333/mcp
     headers:
       Authorization: Bearer <generated>
+  penpot:
+    url: http://localhost:9002/mcp/stream?userToken=<operator key>
+    headers:
+      Authorization: Bearer <operator key>
 ```
 
 Bloud manages the namespace, not the section. The key a provider's `serverName`
@@ -562,6 +632,11 @@ behind rather than lingering as a stale namespace.
 - **Contract-scoped secrets.** A harness declaring `mcp` receives only the
   secrets listed under `requires`. Declaring a contract never grants more than
   was asked for.
+- **A provider-minted key stays revocable where it was minted.** Penpot's MCP key
+  is Penpot's: regenerating it in Penpot's UI revokes the old one immediately,
+  and the reconciliation pass re-reads the database and republishes, so the
+  harness's namespace follows the operator's decision instead of outliving it.
+  Deleting the key in Penpot unpublishes the endpoint entirely.
 - **The tool surface is the boundary, not the credential.**
   `AFFINE_TOOL_PROFILE` defaults to `full` (all 106 tools, including
   `delete_workspace` and `delete_doc`, which require an exact-match confirmation
@@ -582,7 +657,10 @@ user-creation path AFFiNE does not expose today.
 
 **The bearer is stored in Bloud's secrets file.** `secrets.json` holds it.
 Anyone with the Bloud host's filesystem access holds it, which is the same
-exposure as every other published credential.
+exposure as every other published credential. For Penpot that credential is a
+specific person's personal MCP key, which Penpot's own documentation says to
+treat like a password; Bloud stores it in the same file it stores every other
+deployment secret, and does not log it.
 
 **The endpoint is as reachable as the app.** Under a public domain, `/mcp` is
 reachable from wherever the app is reachable. The bearer is the gate, not the
@@ -607,9 +685,10 @@ address.
 ## Adding an MCP Provider
 
 1. **Decide whether the app's own server is sufficient.** If it is, the provider
-   is the app: declare `provides.mcp` and publish its own scoped credential. If
-   it is not, the provider is a wrapper, and the wrapper consumes the `appApi`
-   contract (or a future sibling) to reach the target.
+   is the app: declare `provides.mcp` and publish its own scoped credential.
+   `apps/penpot` is that case, worked end to end. If it is not, the provider is a
+   wrapper, and the wrapper consumes the `appApi` contract (or a future sibling)
+   to reach the target.
 2. **Declare the contract.**
 
    ```yaml
@@ -624,7 +703,9 @@ address.
 3. **Publish the credential in `PreStart` or `PostStart`.** A provider whose
    listener takes a static secret publishes a generated one (`SetAppSecret`); a
    provider whose own API results in it, or whose target mints it, publishes that
-   instead. A runtime value goes through `SetAppContractValue`.
+   instead. A runtime value goes through `SetAppContractValue`. A provider whose
+   credential only exists after a human acts publishes nothing until it does,
+   which is a state consumers must survive, not an error to retry.
 4. **Make it idempotent.** Regenerate only when the stored credential is absent.
    A configurator that generates per pass invalidates every registered namespace.
 5. **Fail the node when the provider is the thing being wired.** The wrapper's

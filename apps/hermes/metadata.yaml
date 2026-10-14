@@ -71,6 +71,13 @@ integrations:
       # long-lived token Bloud minted for the owner account. Same shape as the
       # other wrappers: Hermes changes nothing when the app appears.
       - app: ha-mcp
+      # The design file. Penpot is the one provider that is the app rather than a
+      # wrapper: its own MCP server runs as a container in the install, and Bloud
+      # publishes the key Penpot minted for the operator. This is also the one
+      # namespace where the model matters most: Penpot's tools execute arbitrary
+      # Plugin API code against the focused page, and the model doing that is
+      # whatever Bloud's AI settings point Hermes at.
+      - app: penpot
 
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider

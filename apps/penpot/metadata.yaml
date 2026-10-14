@@ -1,0 +1,236 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: penpot
+displayName: Penpot
+description: Open-source design platform for interfaces, design systems, and prototypes
+category: productivity
+port: 9002
+estimatedSizeMB: 1850
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # Penpot joins the identity provider as an OIDC client, so the provider has to
+  # exist and be reachable before this app's first boot. Declared without
+  # `requires`: Bloud never reads Authentik's user list here. The account a
+  # person gets in Penpot is created by Penpot itself, from the claims its own
+  # OIDC sign-in receives (invariant 15: declaring a contract gets the address,
+  # never a credential that was not asked for).
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# Penpot ships its own MCP server, and it is the app rather than a wrapper: the
+# endpoint, the tool surface, and the credential all belong to Penpot (see
+# docs/features/mcp.md for when a provider is the app and when it is a wrapper).
+#
+# `path` is a runtime value because it is not a path alone. Penpot's MCP endpoint
+# takes its credential as a query parameter (`/mcp/stream?userToken=<key>`), and
+# the key is Penpot's to mint, not Bloud's: it is the value Penpot's own
+# Integrations screen shows the signed-in user and the value the in-browser MCP
+# plugin dials with. So Bloud publishes the pair only once it can read a real
+# key out of Penpot, and publishes nothing until then. A harness that gets no
+# binding writes no namespace, which is the correct rendering of "nobody has
+# enabled MCP in Penpot yet".
+#
+# `httpToken` carries the same string, because the `mcp` contract's consumer
+# authenticates with a bearer header and Penpot reads a query parameter: the
+# harness sends both and Penpot uses the one it understands.
+provides:
+  mcp:
+    secrets: [httpToken]
+    runtimeValues: [path]
+    values:
+      serverName: penpot
+
+# SSO through Penpot's generic OIDC provider. The per-install client credentials
+# cannot live in a static manifest, so the configurator renders them into
+# <appDataDir>/config/penpot.env along with the rest of Penpot's environment.
+#
+# `enable-oidc-registration` (set by the configurator, not here) is what lets a
+# first SSO sign-in create the Penpot profile from the provider's claims;
+# password registration stays disabled. Penpot links an OIDC sign-in to an
+# existing profile by email, and requires the provider to assert
+# `email_verified`, which Bloud's verified-email claim mapping does.
+sso:
+  strategy: native-oidc
+  callbackPath: /api/auth/oidc/callback
+  providerName: Bloud SSO
+  userCreation: true
+
+containers:
+  - name: apps-penpot-postgres
+    image: docker.io/library/postgres:15
+    network: penpot-internal
+    restartPolicy: always
+    environment:
+      POSTGRES_DB: penpot
+      POSTGRES_USER: penpot
+      POSTGRES_PASSWORD: "{{postgresPassword}}"
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - source: "{{appDataDir}}/postgres"
+        destination: /var/lib/postgresql/data
+    healthCheck:
+      test: ["CMD-SHELL", "pg_isready -U penpot -d penpot"]
+      interval: 5
+      timeout: 5
+      retries: 10
+
+  # Penpot uses the Redis protocol for websocket notifications and for routing
+  # MCP tasks between the MCP server and the browser plugin. Valkey is what the
+  # official compose file ships (and what it recommends over Redis).
+  - name: apps-penpot-valkey
+    image: docker.io/valkey/valkey:8.1
+    network: penpot-internal
+    restartPolicy: always
+    healthCheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep PONG"]
+      interval: 5
+      timeout: 5
+      retries: 10
+
+  # The exporter reads the env file the backend's configurator writes, so the
+  # graph has to order the writer before the reader: a declared env file that
+  # does not exist yet is an error, not a no-op. Same for the admin console and
+  # the frontend.
+  - name: apps-penpot-exporter
+    image: docker.io/penpotapp/exporter:2.18.3
+    network: penpot-internal
+    restartPolicy: always
+    envFile: "{{appDataDir}}/config/penpot.env"
+    dependsOn:
+      - apps-penpot-backend
+      - apps-penpot-valkey
+
+  # Penpot's built-in MCP server. The image binds 0.0.0.0 and runs in
+  # multi-user mode by default, and the frontend's nginx proxies /mcp/stream and
+  # /mcp/ws to it, so it publishes no port of its own: the only way in is the
+  # routed Penpot origin, behind the user's MCP key.
+  - name: apps-penpot-mcp
+    image: docker.io/penpotapp/mcp:2.18.3
+    network: penpot-internal
+    restartPolicy: always
+    dependsOn:
+      - apps-penpot-backend
+    healthCheck:
+      # CMD, not CMD-SHELL, and that is the whole point: this is the one Penpot
+      # image built from a non-`-dev` Docker Hardened Image base (`dhi.io/node`,
+      # where the backend and frontend use `*-dev`), and it ships no /bin/sh and
+      # no coreutils at all. A CMD-SHELL probe cannot ever pass here: podman exec
+      # fails with "executable file /bin/sh not found" before node is reached.
+      # So the probe is exec'd directly, and it opens the port itself instead of
+      # speaking the protocol: a bare GET /mcp is a session request, which the
+      # server logs and allocates a transport for, every ten seconds, forever.
+      test:
+        - CMD
+        - node
+        - -e
+        - const s=require("net").connect(4401,"127.0.0.1");s.setTimeout(3e3,()=>process.exit(1));s.on("connect",()=>process.exit(0));s.on("error",()=>process.exit(1));
+      interval: 10
+      timeout: 10
+      retries: 30
+
+  # The admin console Penpot 2.18 introduced. It is optional today and Penpot
+  # documents it as becoming required, so Bloud installs it now rather than
+  # making every existing install take a topology change later.
+  - name: apps-penpot-admin-console
+    image: docker.io/penpotapp/admin-console:2.18.3
+    network: penpot-internal
+    restartPolicy: always
+    # Not the shared file: this image reads PENPOT_ADMIN_CONSOLE_URI as its own
+    # base path, so the address the backend dials it on would tell it to serve at
+    # "/" and it exits(1). See adminEnvFileName in env.go.
+    envFile: "{{appDataDir}}/config/penpot-admin-console.env"
+    environment:
+      PENPOT_DATABASE_URI: postgresql://apps-penpot-postgres/penpot
+      PENPOT_DATABASE_USERNAME: penpot
+      PENPOT_DATABASE_PASSWORD: "{{postgresPassword}}"
+    dependsOn:
+      - apps-penpot-backend
+      - apps-penpot-postgres
+
+  # The routed node: nginx serving the SPA plus the proxy rules Penpot's own
+  # image installs for /api, /assets, /readyz, /ws/notifications, /mcp/*, and
+  # /admin-console. Everything a consumer or a harness dials on this app's
+  # origin lands here.
+  - name: apps-penpot-frontend
+    image: docker.io/penpotapp/frontend:2.18.3
+    networks:
+      - apps-net
+      - penpot-internal
+    restartPolicy: always
+    envFile: "{{appDataDir}}/config/penpot.env"
+    ports:
+      - host: 9002
+        container: 8080
+    dependsOn:
+      - apps-penpot-backend
+      - apps-penpot-exporter
+      - apps-penpot-mcp
+      - apps-penpot-admin-console
+    healthCheck:
+      # The image ships nginx without curl or wget; bash is installed and its
+      # /dev/tcp pseudo-file makes the connect without an HTTP client.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 5
+      timeout: 10
+      retries: 60
+
+  # Listed last, and the reason is a line of orchestrator code rather than a
+  # preference: primaryContainerNode() returns the app's *last* declared
+  # container, and that node is where ensureSSO provisions the OIDC client, in
+  # its own lifecycle pass, before its own container is created. Penpot's JVM
+  # reads PENPOT_OIDC_* exactly once, at process start, and never retries: with
+  # this block above the routed frontend, Authentik got the client 40 seconds
+  # after the JVM had already failed to discover it, the login page offered a
+  # provider that could not authenticate anyone, and nothing short of a resync
+  # recreate could fix it. See INTEGRATION.md.
+  #
+  # dependsOn, not this order, is what makes the graph converge, so being last
+  # here does not delay anything: the exporter, the admin console, and the
+  # frontend all still wait on this node, and this node waits only on its
+  # database.
+  #
+  # This configurator also writes the env file every other Penpot container is
+  # created from, which is what the dependsOn entries above point at.
+  - name: apps-penpot-backend
+    image: docker.io/penpotapp/backend:2.18.3
+    networks:
+      - apps-net
+      - penpot-internal
+    restartPolicy: always
+    envFile: "{{appDataDir}}/config/penpot.env"
+    # The database credentials are the one part of Penpot's environment that a
+    # static manifest *can* state: `{{postgresPassword}}` is rendered by the
+    # catalog renderer, and the env file (whose values win over `environment:`)
+    # deliberately does not carry these three keys.
+    environment:
+      PENPOT_DATABASE_URI: postgresql://apps-penpot-postgres/penpot
+      PENPOT_DATABASE_USERNAME: penpot
+      PENPOT_DATABASE_PASSWORD: "{{postgresPassword}}"
+    extraHosts:
+      # The backend performs the OIDC code exchange and the discovery fetch
+      # server-side, by the same hostname the browser uses.
+      - sso.localhost:host-gateway
+    volumes:
+      - source: "{{appDataDir}}/assets"
+        destination: /opt/data/assets
+    dependsOn:
+      - apps-penpot-postgres
+      - apps-penpot-valkey
+    healthCheck:
+      # A TCP probe, not an HTTP one: the JVM opens its listener only after
+      # migrations and startup tasks finish, so "something is listening on 6060"
+      # is the readiness signal this image can be checked against without
+      # depending on a management path that is not part of its documented API.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6060'"]
+      interval: 10
+      timeout: 10
+      retries: 90
