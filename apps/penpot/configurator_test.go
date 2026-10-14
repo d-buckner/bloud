@@ -1,0 +1,459 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package penpot
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+)
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError + 1}))
+}
+
+// fakeSecrets records what the configurator publishes so the MCP contract can
+// be asserted as a set of writes rather than as a log line.
+type fakeSecrets struct {
+	appValues   map[string]string
+	contractVal map[string]string
+	setErr      error
+}
+
+func newFakeSecrets() *fakeSecrets {
+	return &fakeSecrets{
+		appValues:   map[string]string{},
+		contractVal: map[string]string{},
+	}
+}
+
+func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return "", nil }
+
+func (f *fakeSecrets) GetAppSecret(_, key string) string { return f.appValues[key] }
+
+func (f *fakeSecrets) SetAppSecret(_, key, value string) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	f.appValues[key] = value
+	return nil
+}
+
+func (f *fakeSecrets) contractKey(contract, key string) string { return contract + "/" + key }
+
+func (f *fakeSecrets) SetAppContractValue(_, contract, key, value string) error {
+	f.contractVal[f.contractKey(contract, key)] = value
+	return nil
+}
+
+func (f *fakeSecrets) GetAppContractValue(_, contract, key string) string {
+	return f.contractVal[f.contractKey(contract, key)]
+}
+
+func (f *fakeSecrets) DeleteAppSecrets(string) error { return nil }
+
+func oidcState() *configurator.AppState {
+	return &configurator.AppState{
+		SSOEnabled: true,
+		OIDC: &configurator.OIDCOutput{
+			ClientID:     "penpot-client",
+			ClientSecret: "penpot-secret",
+			IssuerURL:    "http://sso.localhost:8080/application/o/penpot/",
+			RedirectURI:  "http://penpot.localhost:8080/api/auth/oidc/callback",
+		},
+	}
+}
+
+// envLines parses a rendered env file the way the runtime does: comments and
+// blanks skipped, one KEY=value per line, one layer of quotes stripped.
+func envLines(t *testing.T, content string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for i, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		require.Truef(t, ok, "line %d is not KEY=value: %q", i+1, line)
+		out[strings.TrimSpace(key)] = strings.Trim(value, `"'`)
+	}
+	return out
+}
+
+func TestRenderEnvWithSSO(t *testing.T) {
+	content, err := renderEnv(publicSettings{
+		publicURL: "http://penpot.localhost:8080",
+		secretKey: "shared-signing-key",
+		oidc:      oidcState().OIDC,
+	})
+	require.NoError(t, err)
+
+	env := envLines(t, content)
+	assert.Equal(t, "http://penpot.localhost:8080", env["PENPOT_PUBLIC_URI"])
+	assert.Equal(t, "shared-signing-key", env["PENPOT_SECRET_KEY"])
+	assert.Equal(t, "false", env["PENPOT_TELEMETRY_ENABLED"])
+
+	for _, flag := range []string{
+		"disable-registration", "enable-oidc-registration", "enable-login-with-oidc",
+		"disable-email-verification", "enable-mcp", "enable-admin-console",
+	} {
+		assert.Contains(t, env["PENPOT_FLAGS"], flag, "PENPOT_FLAGS must carry "+flag)
+	}
+
+	// The addresses Penpot's own entrypoints fall back to when a URI is unset.
+	// A silent fallback to "penpot-backend" would point the install at a
+	// container Bloud never created.
+	assert.Equal(t, "http://apps-penpot-backend:6060", env["PENPOT_BACKEND_URI"])
+	assert.Equal(t, "http://apps-penpot-exporter:6061", env["PENPOT_EXPORTER_URI"])
+	assert.Equal(t, "http://apps-penpot-mcp:4401", env["PENPOT_MCP_URI"])
+	assert.Equal(t, "http://apps-penpot-mcp:4402", env["PENPOT_MCP_URI_WS"])
+	assert.Equal(t, "http://apps-penpot-admin-console:3000", env["PENPOT_ADMIN_CONSOLE_URI"])
+	assert.Equal(t, "http://apps-penpot-frontend:8080", env["PENPOT_INTERNAL_URI"])
+	assert.Equal(t, "redis://apps-penpot-valkey/0", env["PENPOT_REDIS_URI"])
+
+	assert.Equal(t, "penpot-client", env["PENPOT_OIDC_CLIENT_ID"])
+	assert.Equal(t, "penpot-secret", env["PENPOT_OIDC_CLIENT_SECRET"])
+	// The issuer, not its origin: Penpot joins the discovery path onto this.
+	assert.Equal(t, "http://sso.localhost:8080/application/o/penpot/", env["PENPOT_OIDC_BASE_URI"])
+	assert.Contains(t, env["PENPOT_OIDC_SCOPES"], "email")
+	// Penpot's SSRF guard refuses private addresses, and a localhost install's
+	// issuer is one by design.
+	assert.Equal(t, "sso.localhost", env["PENPOT_SSRF_ALLOWED_HOSTS"])
+}
+
+func TestRenderEnvWithoutSSO(t *testing.T) {
+	content, err := renderEnv(publicSettings{publicURL: "https://bloud.example.com", secretKey: "k"})
+	require.NoError(t, err)
+
+	env := envLines(t, content)
+	for key := range env {
+		assert.False(t, strings.HasPrefix(key, "PENPOT_OIDC_"), "no OIDC block without a provider: "+key)
+	}
+	_, hasSSRF := env["PENPOT_SSRF_ALLOWED_HOSTS"]
+	assert.False(t, hasSSRF, "no SSRF bypass without a provider to reach")
+	assert.Equal(t, "https://bloud.example.com", env["PENPOT_PUBLIC_URI"])
+}
+
+func TestRenderEnvRejectsUnquotableValue(t *testing.T) {
+	// The runtime's env parser strips quotes rather than escaping them, so a
+	// value carrying one must fail the render instead of shipping a file the
+	// app reads as something else.
+	_, err := renderEnv(publicSettings{publicURL: `http://a"b`, secretKey: "k"})
+	require.Error(t, err)
+}
+
+func TestSecretKeyIsReusedAcrossRenders(t *testing.T) {
+	first, err := secretKey(nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, first)
+
+	second, err := secretKey(nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, first, second, "a fresh install generates a new key")
+
+	content, err := renderEnv(publicSettings{publicURL: "http://x", secretKey: first})
+	require.NoError(t, err)
+	reused, err := secretKey([]byte(content))
+	require.NoError(t, err)
+	assert.Equal(t, first, reused, "the key in the file is the key that stays")
+}
+
+func TestPreStartWritesEnvFileAndConverges(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		node func(configurator.Deps) configurator.NodeLifecycle
+	}{
+		{"backend", func(d configurator.Deps) configurator.NodeLifecycle { return newEnvWriter(d) }},
+		{"frontend", func(d configurator.Deps) configurator.NodeLifecycle { return newFrontendConfigurator(d) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			state := &configurator.AppState{DataPath: dir}
+			cfg := tc.node(configurator.Deps{})
+
+			first, err := cfg.PreStart(context.Background(), state)
+			require.NoError(t, err)
+			assert.True(t, first.RestartNeeded, "a first write must recreate the container")
+
+			raw, err := os.ReadFile(filepath.Join(dir, "config", envFileName))
+			require.NoError(t, err)
+			assert.Contains(t, string(raw), "PENPOT_PUBLIC_URI=http://penpot.localhost:8080")
+
+			second, err := cfg.PreStart(context.Background(), state)
+			require.NoError(t, err)
+			assert.False(t, second.RestartNeeded, "a steady-state pass must touch nothing")
+		})
+	}
+}
+
+// TestBothNodesAgreeOnTheFile is the reason two nodes write one file: the second
+// writer must converge on the first one's bytes, or the install oscillates
+// between two configurations and recreates containers forever.
+func TestBothNodesAgreeOnTheFile(t *testing.T) {
+	dir := t.TempDir()
+	state := oidcState()
+	state.DataPath = dir
+
+	backend := newEnvWriter(configurator.Deps{})
+	frontend := newFrontendConfigurator(configurator.Deps{})
+
+	_, err := backend.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	before, err := os.ReadFile(filepath.Join(dir, "config", envFileName))
+	require.NoError(t, err)
+
+	res, err := frontend.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	assert.False(t, res.RestartNeeded, "the frontend must not rewrite what the backend wrote")
+
+	after, err := os.ReadFile(filepath.Join(dir, "config", envFileName))
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after))
+	assert.Contains(t, string(after), "PENPOT_OIDC_CLIENT_ID=penpot-client")
+}
+
+// configJSServer serves the file the frontend image renders at start.
+func configJSServer(flags string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != configJSPath {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = fmt.Fprintf(w, "var penpotFlags = %q;\n", flags)
+	}))
+}
+
+func TestPostStartVerifiesServedFlags(t *testing.T) {
+	t.Run("all required flags present", func(t *testing.T) {
+		server := configJSServer("disable-email-verification disable-registration " +
+			"enable-oidc-registration enable-login-with-oidc enable-mcp enable-admin-console")
+		defer server.Close()
+
+		c := newFrontendConfigurator(configurator.Deps{})
+		c.baseURL = server.URL
+		require.NoError(t, c.PostStart(context.Background(), oidcState()))
+	})
+
+	t.Run("missing flag is a fault", func(t *testing.T) {
+		// The env file said enable-mcp; the app is not serving it, so the
+		// container was created from something else.
+		server := configJSServer("disable-registration enable-login-with-oidc enable-oidc-registration")
+		defer server.Close()
+
+		c := newFrontendConfigurator(configurator.Deps{})
+		c.baseURL = server.URL
+		err := c.PostStart(context.Background(), oidcState())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "enable-mcp")
+	})
+
+	t.Run("oidc flags only required with a provider", func(t *testing.T) {
+		server := configJSServer("disable-registration enable-mcp enable-admin-console")
+		defer server.Close()
+
+		c := newFrontendConfigurator(configurator.Deps{})
+		c.baseURL = server.URL
+		require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{}))
+	})
+}
+
+func TestFlagsIn(t *testing.T) {
+	flags := flagsIn(`var penpotFlags = "enable-mcp disable-registration other";`)
+	assert.True(t, flags["enable-mcp"])
+	assert.True(t, flags["disable-registration"])
+	assert.False(t, flags["other"], "only flag-shaped tokens are read out")
+	assert.Empty(t, flagsIn("var penpotPublicURI = \"http://x\";"))
+}
+
+// execFunc is the Deps.Exec seam.
+func execFunc(fn func(container string, env map[string]string, cmd []string) ([]byte, error)) configurator.ExecFunc {
+	return func(_ context.Context, container string, env map[string]string, cmd []string) ([]byte, error) {
+		return fn(container, env, cmd)
+	}
+}
+
+func TestMCPPublisherPublishsOperatorKey(t *testing.T) {
+	secrets := newFakeSecrets()
+	var gotContainer string
+	var gotCmd []string
+	p := &mcpPublisher{
+		secrets: secrets,
+		email:   "operator@example.com",
+		logger:  discardLogger(),
+		exec: execFunc(func(container string, _ map[string]string, cmd []string) ([]byte, error) {
+			gotContainer, gotCmd = container, cmd
+			return []byte("  mcp-token-value\n"), nil
+		}),
+	}
+
+	p.sync(context.Background())
+
+	assert.Equal(t, "mcp-token-value", secrets.appValues["httpToken"])
+	assert.Equal(t, mcpStreamPath+"mcp-token-value", secrets.contractVal["mcp/path"])
+	assert.Equal(t, postgresNode, gotContainer)
+	assert.Contains(t, strings.Join(gotCmd, " "), "operator@example.com")
+	assert.NotContains(t, strings.Join(gotCmd, " "), "mcp-token-value",
+		"the key comes back on stdout; it never goes in on the command line")
+}
+
+func TestMCPPublisherUnpublishesWhenKeyIsGone(t *testing.T) {
+	secrets := newFakeSecrets()
+	secrets.appValues["httpToken"] = "stale"
+	secrets.contractVal["mcp/path"] = mcpStreamPath + "stale"
+
+	p := &mcpPublisher{
+		secrets: secrets,
+		email:   "operator@example.com",
+		logger:  discardLogger(),
+		exec:    execFunc(func(string, map[string]string, []string) ([]byte, error) { return []byte("\n"), nil }),
+	}
+
+	p.sync(context.Background())
+
+	assert.Equal(t, "", secrets.appValues["httpToken"])
+	assert.Equal(t, "", secrets.contractVal["mcp/path"])
+}
+
+func TestMCPPublisherLeavesPublishedValueOnFailure(t *testing.T) {
+	secrets := newFakeSecrets()
+	secrets.appValues["httpToken"] = "still-good"
+
+	p := &mcpPublisher{
+		secrets: secrets,
+		email:   "operator@example.com",
+		logger:  discardLogger(),
+		exec: execFunc(func(string, map[string]string, []string) ([]byte, error) {
+			return nil, fmt.Errorf("database is starting")
+		}),
+	}
+
+	p.sync(context.Background())
+	assert.Equal(t, "still-good", secrets.appValues["httpToken"],
+		"a failed read must not be read as a revoked key")
+}
+
+func TestMCPPublisherSkipsWithoutAUsableEmail(t *testing.T) {
+	for name, email := range map[string]string{
+		"empty":        "  ",
+		"needs escape": `we"ird@example.com`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			secrets := newFakeSecrets()
+			called := false
+			p := &mcpPublisher{
+				secrets: secrets,
+				email:   email,
+				logger:  discardLogger(),
+				exec: execFunc(func(string, map[string]string, []string) ([]byte, error) {
+					called = true
+					return []byte("nope\n"), nil
+				}),
+			}
+			p.sync(context.Background())
+			assert.False(t, called, "no lookup, so no key can be published")
+			assert.Empty(t, secrets.appValues)
+		})
+	}
+}
+
+func TestMCPPublisherToleratesMissingDeps(t *testing.T) {
+	// The zero Deps a CLI or a test supplies has neither a secrets store nor a
+	// container runtime; sync must be a no-op rather than a panic.
+	p := &mcpPublisher{email: "operator@example.com", logger: discardLogger()}
+	p.sync(context.Background())
+}
+
+func TestMCPKeyQueryIsScopedToTheOperator(t *testing.T) {
+	q := strings.ToLower(mcpKeyQuery)
+	assert.Contains(t, q, "t.type = 'mcp'", "never return a general access token")
+	assert.Contains(t, q, "p.email = :'email'", "the operator's own profile, quoted as a literal")
+	assert.Contains(t, q, "expires_at", "an expired key is not published")
+	assert.Contains(t, q, "limit 1")
+}
+
+// TestMetadataAgreesWithCode pins the two halves of the app together: the
+// container names and env file path metadata.yaml declares are the ones the Go
+// constants use, and the MCP offer is the shape the publisher writes.
+func TestMetadataAgreesWithCode(t *testing.T) {
+	raw, err := os.ReadFile("metadata.yaml")
+	require.NoError(t, err)
+
+	var md struct {
+		Name string `yaml:"name"`
+		Port int    `yaml:"port"`
+		SSO  struct {
+			Strategy     string `yaml:"strategy"`
+			CallbackPath string `yaml:"callbackPath"`
+		} `yaml:"sso"`
+		Provides map[string]struct {
+			Secrets       []string          `yaml:"secrets"`
+			RuntimeValues []string          `yaml:"runtimeValues"`
+			Values        map[string]string `yaml:"values"`
+		} `yaml:"provides"`
+		Containers []struct {
+			Name    string `yaml:"name"`
+			EnvFile string `yaml:"envFile"`
+			Ports   []struct {
+				Host      int `yaml:"host"`
+				Container int `yaml:"container"`
+			} `yaml:"ports"`
+		} `yaml:"containers"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &md))
+
+	assert.Equal(t, appName, md.Name)
+	assert.Equal(t, defaultPort, md.Port)
+	assert.Equal(t, "native-oidc", md.SSO.Strategy)
+
+	nodes := map[string]string{}
+	for _, c := range md.Containers {
+		nodes[c.Name] = c.EnvFile
+	}
+	for _, node := range []string{
+		backendNode, frontendNode, exporterNode, mcpNode, adminConsoleNode, postgresNode, valkeyNode,
+	} {
+		_, declared := nodes[node]
+		assert.Truef(t, declared, "%s is not a container metadata.yaml declares", node)
+	}
+	require.Len(t, md.Containers, 7, "every container is accounted for by a constant")
+
+	// The four containers that read Penpot's environment must all name the file
+	// the configurator writes; the three that do not must not declare it, or a
+	// container is created asking for a file nothing writes.
+	for _, node := range []string{backendNode, frontendNode, exporterNode, adminConsoleNode} {
+		assert.Equalf(t, "{{appDataDir}}/config/"+envFileName, nodes[node],
+			"%s must read the generated env file", node)
+	}
+	for _, node := range []string{postgresNode, valkeyNode, mcpNode} {
+		assert.Emptyf(t, nodes[node], "%s declares no env file", node)
+	}
+
+	require.Len(t, md.Containers, 7)
+	for _, c := range md.Containers {
+		if c.Name != frontendNode {
+			continue
+		}
+		require.Len(t, c.Ports, 1)
+		assert.Equal(t, defaultPort, c.Ports[0].Host, "Traefik routes to the published host port")
+	}
+
+	offer := md.Provides["mcp"]
+	assert.Equal(t, []string{"httpToken"}, offer.Secrets)
+	assert.Equal(t, []string{"path"}, offer.RuntimeValues)
+	assert.Equal(t, "penpot", offer.Values["serverName"])
+	assert.NotContains(t, offer.Values, "path",
+		"the path is minted at runtime; a static one would be published before any key exists")
+}

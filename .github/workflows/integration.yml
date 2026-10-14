@@ -80,6 +80,15 @@ jobs:
           # variance off every other group's deadline.
           - group: podly
             test-run: 'TestPodly'
+          # Penpot is the largest install in the catalog: seven containers and
+          # about 1.85 GB of images, including a headless-chromium exporter.
+          # Its own leg keeps that pull off every other group's deadline, and
+          # the leg is where the one assertion no unit test can make lives: the
+          # backend must have reached its OIDC issuer at startup, because
+          # Penpot logs a warning and boots anyway with no provider when that
+          # fails, and a login page that offers a dead provider looks healthy.
+          - group: penpot
+            test-run: 'TestPenpot'
           - group: media-stack
             test-run: 'TestMediaStack'
           - group: catalog

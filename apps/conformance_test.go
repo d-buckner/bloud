@@ -67,6 +67,11 @@ var conformanceTable = []appSpec{
 	{Dir: "jellyfin", Node: "apps-jellyfin", DefaultPort: 8096},
 	{Dir: "navidrome", Node: "apps-navidrome", DefaultPort: 4533},
 	{Dir: "paperless-ngx", Node: "apps-paperless-ngx", DefaultPort: 8000, WithSSO: true},
+	// The env file is written by the backend node and read by the frontend node,
+	// so both are held to the same idempotency rule; the app's port belongs to
+	// the frontend, so only it declares a default port.
+	{Dir: "penpot", Node: "apps-penpot-backend", WithSSO: true},
+	{Dir: "penpot", Node: "apps-penpot-frontend", DefaultPort: 9002, WithSSO: true},
 	{Dir: "podly", Node: "apps-podly", DefaultPort: 5001},
 	{Dir: "prowlarr", Node: "apps-prowlarr", DefaultPort: 9696},
 	{Dir: "qbittorrent", Node: "apps-qbittorrent", DefaultPort: 8081},

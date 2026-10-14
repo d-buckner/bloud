@@ -94,7 +94,9 @@ type secretsFile struct {
 	AuthentikBootstrapToken    string `json:"authentikBootstrapToken"`
 	LdapBindPassword           string `json:"ldapBindPassword"`
 	AppSecrets                 map[string]struct {
-		AdminPassword string `json:"adminPassword"`
+		AdminPassword   string                       `json:"adminPassword"`
+		Published       map[string]string            `json:"published"`
+		PublishedValues map[string]map[string]string `json:"publishedValues"`
 	} `json:"appSecrets"`
 }
 

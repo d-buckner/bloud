@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package penpot
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+)
+
+// configJSPath is the file the frontend image renders from its environment at
+// container start: penpotFlags, the public URI, and the SSO provider's label.
+//
+// It is the readiness probe *and* the verification, which is why it is a static
+// asset of the frontend rather than an API call: a 200 for it proves nginx is
+// up, and its contents prove the generated env file reached the container and
+// the image's own entrypoint read it. A 200 from the SPA shell would prove
+// neither, because the shell is baked into the image.
+const configJSPath = "/js/config.js"
+
+// penpotAPI is the typed surface over the running app, reached from the host at
+// the app's published port (the same address Traefik proxies to).
+type penpotAPI struct {
+	cl *appclient.Client
+}
+
+func newAPI(f configurator.ClientFactory, baseURLFn func() string) *penpotAPI {
+	return &penpotAPI{cl: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn})}
+}
+
+// waitConfig polls until the frontend serves its rendered config and returns
+// the body. The default WaitPolicy (3 minutes) is the bound, inside the
+// framework's PostStart ceiling, so the wait expires on its own terms.
+func (a *penpotAPI) waitConfig(ctx context.Context) (string, error) {
+	var body string
+	ready := func(status int, raw []byte) bool {
+		if status != http.StatusOK {
+			return false
+		}
+		body = string(raw)
+		return true
+	}
+	err := a.cl.GET(configJSPath).
+		Wait(ready).
+		Interval(2 * time.Second).
+		Do(ctx)
+	if err != nil {
+		return "", err
+	}
+	return body, nil
+}
+
+// flagsIn reports the flag tokens the served config declares.
+//
+// The frontend's entrypoint writes `var penpotFlags = "...";` into config.js
+// from PENPOT_FLAGS, so reading them back is a read of what the running app
+// told the browser, not of what Bloud wrote on disk.
+func flagsIn(configJS string) map[string]bool {
+	flags := map[string]bool{}
+	for _, line := range strings.Split(configJS, "\n") {
+		if !strings.Contains(line, "penpotFlags") {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			field = strings.Trim(field, `";=`)
+			if strings.HasPrefix(field, "enable-") || strings.HasPrefix(field, "disable-") {
+				flags[field] = true
+			}
+		}
+	}
+	return flags
+}
