@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"codeberg.org/d-buckner/bloud/cli/backend"
@@ -50,7 +51,10 @@ func runAppE2E(root string, args []string) error {
 
 	app := os.Getenv("BLOUD_E2E_APP")
 	if app == "" {
-		return fmt.Errorf("BLOUD_E2E_APP is required (e.g. jellyfin, navidrome, immich, affine, paperless-ngx, vaultwarden, install-streaming)")
+		return fmt.Errorf("BLOUD_E2E_APP is required (any catalog app with a spec in e2e/tests/<app>.spec.ts)")
+	}
+	if err := setAppE2EEnv(root, app); err != nil {
+		return err
 	}
 
 	runner := &appE2ERunner{
@@ -67,7 +71,8 @@ Provisions a self-contained runtime, installs one app through the
 host-agent API, and runs that app's Playwright spec.
 
 Required environment:
-  BLOUD_E2E_APP            App to test: jellyfin | navidrome | immich | affine | paperless-ngx | vaultwarden | install-streaming
+  BLOUD_E2E_APP            App to test: any catalog app with a spec in
+                           e2e/tests/<app>.spec.ts
 
 Optional environment (same as "e2e lifecycle"):
   BLOUD_BACKEND            Override the stored backend preference
@@ -81,6 +86,27 @@ Optional environment (same as "e2e lifecycle"):
 
 Flags:
   --keep                 Leave the host-agent deployment running after the test`)
+}
+
+// setAppE2EEnv reads the app's e2e.env declarations from metadata and sets them
+// in the process environment, so the passthrough mechanism (devPassthroughEnv)
+// forwards them to the host-agent. CI no longer needs to know an app's dev
+// switches: the app declares them next to itself.
+func setAppE2EEnv(root, app string) error {
+	apps, err := loadAppMetadata(filepath.Join(root, "apps"))
+	if err != nil {
+		return err
+	}
+	md, ok := apps[app]
+	if !ok {
+		return fmt.Errorf("app %q has no catalog metadata", app)
+	}
+	for k, v := range md.E2E.Env {
+		if err := os.Setenv(k, v); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *appE2ERunner) run() (runErr error) {

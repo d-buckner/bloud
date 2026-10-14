@@ -35,3 +35,26 @@ func TestRequireE2EDepsPassesWhenInstalled(t *testing.T) {
 		t.Errorf("requireE2EDeps failed with the suite installed: %v", err)
 	}
 }
+
+// TestSetAppE2EEnvReadsMetadata pins that the e2e app runner sets an app's dev
+// switches from its metadata (e2e.env), not from a CLI or CI hardcode. It is
+// the regression this change exists to prevent.
+func TestSetAppE2EEnvReadsMetadata(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "apps", "vaultwarden"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	md := "name: vaultwarden\ne2e:\n  env:\n    BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP: \"1\"\n"
+	if err := os.WriteFile(filepath.Join(root, "apps", "vaultwarden", "metadata.yaml"), []byte(md), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	key := "BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP"
+	t.Setenv(key, "")
+	if err := setAppE2EEnv(root, "vaultwarden"); err != nil {
+		t.Fatalf("setAppE2EEnv: %v", err)
+	}
+	if got := os.Getenv(key); got != "1" {
+		t.Errorf("setAppE2EEnv set %s=%q, want %q", key, got, "1")
+	}
+}
