@@ -20,6 +20,15 @@ type AppMetadata struct {
 	Integrations map[string]Integration `yaml:"integrations"`
 	SSO          SSOConfig              `yaml:"sso"`
 	Containers   []ContainerMetadata    `yaml:"containers"`
+	E2E          E2EConfig              `yaml:"e2e"`
+}
+
+// E2EConfig declares what a dev or e2e run of this app needs from the CLI: the
+// env switches the CLI sets and forwards to the host-agent for this app. The
+// host-agent's catalog loader validates the keys against the switches it
+// actually reads, so a typo fails the load instead of being ignored.
+type E2EConfig struct {
+	Env map[string]string `yaml:"env"`
 }
 
 type SSOConfig struct {

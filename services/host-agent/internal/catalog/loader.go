@@ -114,6 +114,9 @@ func (l *Loader) validateApp(app *App) error {
 	if err := validateSSO(app); err != nil {
 		return err
 	}
+	if err := validateE2EEnv(app); err != nil {
+		return err
+	}
 	if err := validateExtraPorts(app); err != nil {
 		return err
 	}
@@ -124,6 +127,29 @@ func (l *Loader) validateApp(app *App) error {
 		return err
 	}
 	return validateIntegrations(app)
+}
+
+// knownE2EEnvKeys is the set of dev switches the host-agent actually reads, and
+// therefore the only names an app's e2e.env may declare. A name outside this
+// list would be forwarded to the host-agent and silently ignored, which reads
+// as "the switch does nothing" rather than "the name is wrong". Add a switch
+// here when the host-agent learns to read it.
+var knownE2EEnvKeys = []string{
+	"BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP",
+}
+
+// validateE2EEnv holds the e2e.env block to the switches the host-agent reads.
+// The block is a CLI concern (the runtime never consumes it), but the catalog
+// is the one place the whole tree agrees, so a declaration that names no known
+// switch is rejected here rather than forwarded and dropped.
+func validateE2EEnv(app *App) error {
+	for key := range app.E2E.Env {
+		if !slices.Contains(knownE2EEnvKeys, key) {
+			return fmt.Errorf("e2e.env names %q, which is not a dev switch the host-agent reads (known: %s)",
+				key, strings.Join(knownE2EEnvKeys, ", "))
+		}
+	}
+	return nil
 }
 
 // validateIdentity checks the fields every catalog entry must carry to render.

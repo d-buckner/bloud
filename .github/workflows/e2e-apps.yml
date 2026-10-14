@@ -120,11 +120,6 @@ jobs:
           BLOUD_E2E_APP: ${{ matrix.app }}
           BLOUD_URL: http://localhost:8080
           BLOUD_API_URL: http://localhost:3000
-          # The Vaultwarden web vault refuses plain-HTTP servers, and Bloud
-          # serves apps over HTTP until it has TLS. This opt-in dev switch (set
-          # for that leg only) lets its browser rung run; see
-          # apps/vaultwarden/INTEGRATION.md, "Plain HTTP".
-          BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP: ${{ matrix.app == 'vaultwarden' && '1' || '' }}
           # One automatic re-run of a test that failed. The flakes in this
           # suite are convergence timing, not assertions, so a real
           # regression still fails on both attempts. Reported rather than

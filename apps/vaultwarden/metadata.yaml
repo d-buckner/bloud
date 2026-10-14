@@ -40,6 +40,14 @@ sso:
     - offline_access
   accessTokenMinutes: 60
 
+# The web vault refuses plain-HTTP servers, and Bloud serves apps over HTTP
+# until it has TLS. This opt-in dev switch lets the browser e2e rung run for
+# this app only. The CLI reads it from here (see setAppE2EEnv), so CI never
+# special-cases an app.
+e2e:
+  env:
+    BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP: "1"
+
 containers:
   - name: apps-vaultwarden
     image: docker.io/vaultwarden/server:1.37.3

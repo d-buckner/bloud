@@ -53,7 +53,7 @@ func renderLifecycleHostAgentUnit(cfg lifecycleConfig) string {
 		fmt.Fprintf(&extraEnv, "Environment=BLOUD_TRAEFIK_PORT=%s\n", traefikPortEnv("native"))
 	}
 	// Opt-in development switches (see devPassthroughEnv), in a stable order.
-	for _, key := range devPassthroughEnv {
+	for _, key := range passthroughEnvKeys() {
 		if v, ok := cfg.devEnv[key]; ok {
 			fmt.Fprintf(&extraEnv, "Environment=%s=%s\n", key, v)
 		}

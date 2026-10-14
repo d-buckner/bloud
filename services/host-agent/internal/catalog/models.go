@@ -44,6 +44,18 @@ type App struct {
 	// reconciles, and routes like every other app. Wrapper and service-shaped
 	// apps (affine-mcp) set it. Absent means the app has a UI worth a tile.
 	Headless bool `yaml:"headless,omitempty" json:"headless,omitempty"`
+	// E2E declares what a dev or e2e run of this app needs from the CLI: the
+	// env switches the CLI sets and forwards to the host-agent for this app.
+	// The keys are validated against the switches the host-agent actually
+	// reads (validateE2EEnv), so a typo fails the load instead of being
+	// silently ignored.
+	E2E E2EConfig `yaml:"e2e,omitempty" json:"e2e,omitempty"`
+}
+
+// E2EConfig is the e2e block of an app's metadata: the environment a dev or
+// e2e run of that app needs. See App.E2E.
+type E2EConfig struct {
+	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 }
 
 // ContainerDef describes one container in a multi-container app.

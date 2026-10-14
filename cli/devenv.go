@@ -2,19 +2,23 @@
 
 package main
 
-import "regexp"
+import (
+	"path/filepath"
+	"regexp"
+	"sort"
+)
 
-// devPassthroughEnv names the opt-in development switches the CLI forwards from
-// its own environment to the host-agent it starts. The native backend would
-// inherit them anyway; the VM backends run the host-agent over ssh with an
-// explicit environment, and the e2e runner writes a systemd unit, so without
-// this they could never be set there. Every switch listed is off unless set, and
-// each one names the app it affects, so a stray variable cannot change anything
-// else.
+// devPassthroughEnv names the deployment-wide opt-in development switches the
+// CLI forwards from its own environment to the host-agent it starts. The native
+// backend would inherit them anyway; the VM backends run the host-agent over
+// ssh with an explicit environment, and the e2e runner writes a systemd unit,
+// so without this they could never be set there. Every switch listed is off
+// unless set.
+//
+// App-specific switches are NOT listed here: they are discovered from the
+// catalog (each app's e2e.env, see appDevEnvKeys), so a new app switch needs no
+// CLI edit.
 var devPassthroughEnv = []string{
-	// Serves the Vaultwarden web vault over plain HTTP (localhost names only):
-	// see apps/vaultwarden/INTEGRATION.md, "Plain HTTP".
-	"BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP",
 	// Names the upstream TLS terminator Traefik should trust, so a proxied
 	// deployment keeps the real scheme instead of rewriting X-Forwarded-Proto
 	// to http. Without this the setting cannot reach the host-agent at all on
@@ -24,6 +28,38 @@ var devPassthroughEnv = []string{
 	// The deployment-wide public scheme (http|https) for a TLS-terminating
 	// proxy. Per-host schemes saved in Settings win over it.
 	"BLOUD_PUBLIC_SCHEME",
+}
+
+// appDevEnvKeys returns every app-specific dev switch declared across the
+// catalog (the keys of each app's e2e.env), sorted so the render order is
+// stable.
+func appDevEnvKeys() []string {
+	root, err := getProjectRoot()
+	if err != nil {
+		return nil
+	}
+	apps, err := loadAppMetadata(filepath.Join(root, "apps"))
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var keys []string
+	for _, app := range apps {
+		for k := range app.E2E.Env {
+			if !seen[k] {
+				seen[k] = true
+				keys = append(keys, k)
+			}
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// passthroughEnvKeys is every switch the CLI forwards, in a stable order:
+// deployment-wide first, then app-specific switches from the catalog.
+func passthroughEnvKeys() []string {
+	return append(append([]string{}, devPassthroughEnv...), appDevEnvKeys()...)
 }
 
 // devEnvValue is what a forwarded value may contain. It is deliberately narrow:
@@ -39,7 +75,7 @@ var devEnvValue = regexp.MustCompile(`^[A-Za-z0-9_.,/-]+$`)
 // values outside devEnvValue are omitted, so the result is empty by default.
 func devPassthrough(getenv func(string) string) map[string]string {
 	out := map[string]string{}
-	for _, key := range devPassthroughEnv {
+	for _, key := range passthroughEnvKeys() {
 		if v := getenv(key); v != "" && devEnvValue.MatchString(v) {
 			out[key] = v
 		}
