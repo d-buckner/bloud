@@ -179,7 +179,10 @@ containers:
     image: docker.io/penpotapp/admin-console:2.18.3
     network: penpot-internal
     restartPolicy: always
-    envFile: "{{appDataDir}}/config/penpot.env"
+    # Not the shared file: this image reads PENPOT_ADMIN_CONSOLE_URI as its own
+    # base path, so the address the backend dials it on would tell it to serve at
+    # "/" and it exits(1). See adminEnvFileName in env.go.
+    envFile: "{{appDataDir}}/config/penpot-admin-console.env"
     environment:
       PENPOT_DATABASE_URI: postgresql://apps-penpot-postgres/penpot
       PENPOT_DATABASE_USERNAME: penpot

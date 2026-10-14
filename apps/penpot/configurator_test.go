@@ -193,6 +193,10 @@ func TestPreStartWritesEnvFileAndConverges(t *testing.T) {
 			require.NoError(t, err)
 			assert.Contains(t, string(raw), "PENPOT_PUBLIC_URI=http://penpot.localhost:8080")
 
+			admin, err := os.ReadFile(filepath.Join(dir, "config", adminEnvFileName))
+			require.NoError(t, err, "the admin console's container is created from the second file")
+			assert.Contains(t, string(admin), "PENPOT_PUBLIC_URI=http://penpot.localhost:8080")
+
 			second, err := cfg.PreStart(context.Background(), state)
 			require.NoError(t, err)
 			assert.False(t, second.RestartNeeded, "a steady-state pass must touch nothing")
@@ -224,6 +228,48 @@ func TestBothNodesAgreeOnTheFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(before), string(after))
 	assert.Contains(t, string(after), "PENPOT_OIDC_CLIENT_ID=penpot-client")
+}
+
+// TestAdminEnvFileIsTheNarrowOne guards the split. The admin console reads
+// PENPOT_ADMIN_CONSOLE_URI as the path it must serve itself under, not as the
+// address others dial it on, so the shared file's value makes it exit(1) with
+// "Admin Console must be served under /admin-console/, but
+// PENPOT_ADMIN_CONSOLE_URI puts it at /". A dead admin console is not a missing
+// admin page: the profile RPC calls it, so every request, the login page's
+// first one included, answers 503 {:type :nitrate-unavailable}.
+func TestAdminEnvFileIsTheNarrowOne(t *testing.T) {
+	settings := publicSettings{
+		publicURL: "http://penpot.localhost:8080",
+		secretKey: "the-signing-key",
+		oidc: &configurator.OIDCOutput{
+			ClientID:     "penpot-client",
+			ClientSecret: "penpot-secret",
+			IssuerURL:    "http://sso.localhost:8080/application/o/penpot/",
+		},
+	}
+
+	full, err := renderEnv(settings)
+	require.NoError(t, err)
+	admin, err := renderAdminEnv(settings)
+	require.NoError(t, err)
+
+	wide, narrow := envLines(t, full), envLines(t, admin)
+	assert.Equal(t, "http://"+adminConsoleNode+":3000", wide["PENPOT_ADMIN_CONSOLE_URI"])
+
+	for _, key := range []string{
+		"PENPOT_ADMIN_CONSOLE_URI", "PENPOT_BACKEND_URI", "PENPOT_MCP_URI",
+		"PENPOT_FLAGS", "PENPOT_OIDC_CLIENT_SECRET", "PENPOT_SSRF_ALLOWED_HOSTS",
+	} {
+		assert.NotContains(t, narrow, key, "the console must not be told where it lives")
+	}
+	for _, key := range adminEnvKeys {
+		assert.NotEmpty(t, narrow[key], "the console needs %s", key)
+	}
+
+	// The console derives the shared secret the backend authenticates to it with
+	// out of this key, so the two files cannot disagree about it.
+	assert.Equal(t, wide["PENPOT_SECRET_KEY"], narrow["PENPOT_SECRET_KEY"])
+	assert.Equal(t, wide["PENPOT_PUBLIC_URI"], narrow["PENPOT_PUBLIC_URI"])
 }
 
 // configJSServer serves the file the frontend image renders at start, plus the
@@ -465,10 +511,13 @@ func TestMetadataAgreesWithCode(t *testing.T) {
 	}
 	require.Len(t, md.Containers, 7, "every container is accounted for by a constant")
 
-	// The four containers that read Penpot's environment must all name the file
-	// the configurator writes; the three that do not must not declare it, or a
-	// container is created asking for a file nothing writes.
-	for _, node := range []string{backendNode, frontendNode, exporterNode, adminConsoleNode} {
+	// The containers that read Penpot's environment must name the file the
+	// configurator writes; the ones that do not must not declare it, or a
+	// container is created asking for a file nothing writes. The admin console
+	// names the second file on purpose (adminEnvFileName).
+	assert.Equalf(t, "{{appDataDir}}/config/"+adminEnvFileName, nodes[adminConsoleNode],
+		"%s must read the narrow env file", adminConsoleNode)
+	for _, node := range []string{backendNode, frontendNode, exporterNode} {
 		assert.Equalf(t, "{{appDataDir}}/config/"+envFileName, nodes[node],
 			"%s must read the generated env file", node)
 	}

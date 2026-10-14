@@ -74,18 +74,22 @@ func (c *envWriter) appExternalURL() string {
 	return configurator.AppExternalURL(c.ssoBaseURL, appName)
 }
 
-// writeEnvFile renders and writes <appDataDir>/config/penpot.env, reporting a
-// recreate when the bytes changed.
+// writeEnvFile renders and writes the install's two dotenv files under
+// <appDataDir>/config, reporting a recreate when either file's bytes changed.
 //
 // Both the backend and the frontend configurators call this. It is not a
-// duplication to be hoisted away: the file is a property of the install, and
-// each node that creates a container from it has to be able to guarantee the
+// duplication to be hoisted away: the files are a property of the install, and
+// each node that creates a container from one has to be able to guarantee the
 // file exists before it does, because a declared envFile that cannot be read is
 // a container-create failure. The renderer is deterministic and the signing key
 // is read back out of the previous file, so the second writer converges on the
 // same bytes and reports changed=false.
+//
+// The admin console gets its own file rather than a share of the first one;
+// adminEnvFileName carries the reason.
 func writeEnvFile(state *configurator.AppState, publicURL string, logger *slog.Logger) (configurator.PreStartResult, error) {
-	path := filepath.Join(state.DataPath, "config", envFileName)
+	dir := filepath.Join(state.DataPath, "config")
+	path := filepath.Join(dir, envFileName)
 
 	existing, _ := os.ReadFile(path)
 	key, err := secretKey(existing)
@@ -93,22 +97,37 @@ func writeEnvFile(state *configurator.AppState, publicURL string, logger *slog.L
 		return configurator.NoRestart(), err
 	}
 
-	content, err := renderEnv(publicSettings{publicURL: publicURL, secretKey: key, oidc: state.OIDC})
+	settings := publicSettings{publicURL: publicURL, secretKey: key, oidc: state.OIDC}
+	changed, err := writeRendered(path, settings, renderEnv)
 	if err != nil {
 		return configurator.NoRestart(), err
 	}
 
-	// Mode 0600: the file holds the OIDC client secret and the signing key. The
-	// reader is the host runtime, which merges the file into the container's
-	// environment when it creates the container; no container ever opens the
-	// file itself, so the app's uid is not a consideration here.
-	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeHostOnly)
+	adminChanged, err := writeRendered(filepath.Join(dir, adminEnvFileName), settings, renderAdminEnv)
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("writing penpot env file: %w", err)
+		return configurator.NoRestart(), err
 	}
-	if !changed {
+
+	if !changed && !adminChanged {
 		return configurator.NoRestart(), nil
 	}
-	logger.Info("wrote Penpot env file", "path", path, "sso", state.OIDC != nil)
+	logger.Info("wrote Penpot env files", "path", path, "sso", state.OIDC != nil)
 	return configurator.MustRestart("Penpot env file rewritten"), nil
+}
+
+// writeRendered writes one generated dotenv file, reporting whether the bytes
+// changed. Mode 0600: these files hold the OIDC client secret and the signing
+// key. The reader is the host runtime, which merges the file into the
+// container's environment when it creates the container; no container ever
+// opens the file itself, so the app's uid is not a consideration here.
+func writeRendered(path string, s publicSettings, render func(publicSettings) (string, error)) (bool, error) {
+	content, err := render(s)
+	if err != nil {
+		return false, err
+	}
+	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeHostOnly)
+	if err != nil {
+		return false, fmt.Errorf("writing penpot env file: %w", err)
+	}
+	return changed, nil
 }

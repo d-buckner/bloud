@@ -225,14 +225,39 @@ temporarily unavailable due to a system issue" in place of the login page.
 
 So an install where every container reports healthy can have no way to sign in.
 That is what the first CI boot actually hit: the frontend's nginx was serving,
-`/js/config.js` was exactly right, and the browser got the unavailable page
-because the admin console had not finished booting when the SPA asked.
+`/js/config.js` was exactly right, and the browser got the unavailable page.
+
+The cause was the shared env file, and it is worth keeping the reasoning down
+because the two readings of one variable are both correct. Penpot's compose
+passes `PENPOT_ADMIN_CONSOLE_URI` to the backend and the frontend, where it means
+"the address to dial the console on", and pointedly does not pass it to the
+console itself. The console reads the same name as "the path I am served under",
+and its bundle refuses any other answer because its asset URLs are baked with
+that path at build time. Run the image with the shared file's value and it
+applies its database migrations, then exits 1:
+
+```text
+Error: Admin Console must be served under "/admin-console/", but
+PENPOT_ADMIN_CONSOLE_URI puts it at "/". The client bundle is built with that
+path baked into its asset URLs, so it cannot be moved at runtime
+```
+
+Bloud therefore writes two dotenv files. `penpot.env` is the wide one the
+backend, frontend, and exporter share; `penpot-admin-console.env` is the narrow
+one (public URI, signing key, internal URI: the same set the compose passes to
+that service), and `adminEnvKeys` in `env.go` is the list. Both are cut from one
+rendered settings slice, because the console derives the shared secret the
+backend authenticates to it with out of `PENPOT_SECRET_KEY` (its bundle: `PENPOT_
+ADMIN_CONSOLE_SHARED_KEY ?? hkdf(PENPOT_SECRET_KEY, "admin-console")`) and the
+two files cannot be allowed to disagree about it.
 
 The routed node's `PostStart` therefore polls `GET /api/main/methods/get-profile`
 until it answers 200. It is the only outside-visible check that reaches nginx,
 the JVM, PostgreSQL, and the admin console at once, and it is the request the
 browser is about to make, so the node stops being "running" in the same terms the
-user will experience.
+user will experience. A 503 body is kept as the failure text: the first CI boot
+after this gate landed said `503 {:type :nitrate-unavailable}` in the install
+error, which is what pointed at the console rather than at nginx.
 
 ## Health checks
 

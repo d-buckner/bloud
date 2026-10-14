@@ -101,12 +101,12 @@ func TestPenpotBackendReachedItsIdentityProvider(t *testing.T) {
 
 	logs := runCmd(t, "podman", "logs", "apps-penpot-backend")
 	if strings.Contains(logs, "unable to initialize auth provider") {
-		t.Fatalf("Penpot could not reach its OIDC issuer at startup; the login page would " +
+		t.Fatal("Penpot could not reach its OIDC issuer at startup; the login page would " +
 			"offer a provider that cannot authenticate anyone.\nBackend's own words:\n" +
 			logContext(logs, "unable to initialize auth provider"))
 	}
 	if !strings.Contains(logs, "provider initialized") {
-		t.Fatalf("the backend never reported an initialized auth provider; SSO is not configured.\n" +
+		t.Fatal("the backend never reported an initialized auth provider; SSO is not configured.\n" +
 			"Last lines of the backend log:\n" + tailLines(logs, 25))
 	}
 }
@@ -190,6 +190,31 @@ func TestPenpotEnvFileStaysOnTheHost(t *testing.T) {
 	}
 	if values["PENPOT_SECRET_KEY"] == "" {
 		t.Error("PENPOT_SECRET_KEY is empty; every restart would sign out every session")
+	}
+}
+
+// TestPenpotAdminConsoleStaysUp pins the failure that is invisible from the
+// container list. The admin console is a dependency of the profile RPC, not an
+// optional page: when it is down every Penpot request, the login page's first
+// one included, answers 503 {:type :nitrate-unavailable}, and the container can
+// sit in that state while the graph calls the install converged. It also exits
+// rather than degrading when its own base path is wrong, so "running" is the
+// assertion, and the narrow env file is what keeps it running.
+func TestPenpotAdminConsoleStaysUp(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	state := strings.TrimSpace(runCmd(t, "podman", "inspect", "-f", "{{.State.Status}}", "apps-penpot-admin-console"))
+	if state != "running" {
+		t.Fatalf("apps-penpot-admin-console is %q; Penpot answers 503 for everything while it is down.\n"+
+			"Its own words:\n%s", state, tailLines(runCmd(t, "podman", "logs", "apps-penpot-admin-console"), 20))
+	}
+
+	values := envFile(t, filepath.Join(appDataDir("penpot"), "config", "penpot-admin-console.env"))
+	if v, ok := values["PENPOT_ADMIN_CONSOLE_URI"]; ok {
+		t.Errorf("the admin console's env file carries PENPOT_ADMIN_CONSOLE_URI=%q; the image reads that as its own base path and exits", v)
+	}
+	if values["PENPOT_SECRET_KEY"] == "" {
+		t.Error("the admin console has no signing key to derive the backend's shared secret from")
 	}
 }
 
