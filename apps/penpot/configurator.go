@@ -57,7 +57,7 @@ func newEnvWriter(deps configurator.Deps) *envWriter {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &envWriter{ssoBaseURL: deps.PrimaryBaseURL, logger: logger.With("app", appName)}
+	return &envWriter{ssoBaseURL: deps.Address.PrimaryBaseURL, logger: logger.With("app", appName)}
 }
 
 func (c *envWriter) Name() string { return backendNode }

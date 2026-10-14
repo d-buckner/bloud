@@ -305,9 +305,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func testConfigurator(t *testing.T, app http.Handler) (*Configurator, string) {
 	t.Helper()
 	c := NewConfigurator(0, configurator.Deps{
-		Secrets:        &fakeSecrets{password: "test-password"},
-		PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
-		Logger:         quietLogger(),
+		Secrets: &fakeSecrets{password: "test-password"},
+		Logger:  quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
+		},
 	})
 	if app != nil {
 		server := httptest.NewServer(app)
@@ -344,7 +346,12 @@ func TestAppExternalURL_DerivesSubdomain(t *testing.T) {
 		"http://localhost:8080/dashboard/": "http://paperless-ngx.localhost:8080",
 	}
 	for base, want := range cases {
-		c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL(base), Logger: quietLogger()})
+		c := NewConfigurator(0, configurator.Deps{
+			Logger: quietLogger(),
+			Address: configurator.AddressDeps{
+				PrimaryBaseURL: staticBaseURL(base),
+			},
+		})
 		assert.Equal(t, want, c.appExternalURL(), "base URL %q", base)
 	}
 }

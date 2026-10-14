@@ -14,6 +14,11 @@ import (
 // Deps carries the host-side inputs app configurator factories need.
 // It lives here (rather than an internal package) so app configurators in
 // the separate apps module can accept it.
+//
+// The four leaf fields are the inputs every configurator can use. The three
+// grouped fields are subsystems: a factory declares what it uses by which
+// sub-values it reads, and each group states its own nil contract once instead
+// of repeating it per field.
 type Deps struct {
 	// Logger for configurator logging.
 	Logger *slog.Logger
@@ -22,6 +27,33 @@ type Deps struct {
 	// degraded/CLI contexts; factories must tolerate nil).
 	Secrets AppSecretsProvider
 
+	// HTTP builds app HTTP clients for this process: shared transport,
+	// default retry policy, shared logger. The zero value is usable (lazy
+	// defaults), so a configurator can always call deps.HTTP.New(...).
+	HTTP ClientFactory
+
+	// Assets installs static/downloaded files with the shared content
+	// cache. The zero value is usable. Populated by the host runtime; see
+	// pkg/appasset.
+	Assets appasset.Installer
+
+	// Identity is the person who runs the instance, as the identity provider
+	// knows them.
+	Identity IdentityDeps
+
+	// Address is where the instance is reachable from, which changes at
+	// runtime and is never captured at construction.
+	Address AddressDeps
+
+	// Runtime is the set of container side effects a configurator may ask
+	// the host to perform. The orchestrator stays the single writer of those
+	// effects, so each one arrives as a callback and is nil wherever no
+	// runtime exists.
+	Runtime RuntimeDeps
+}
+
+// IdentityDeps is the operator's own SSO identity.
+type IdentityDeps struct {
 	// OperatorEmail is the operator's SSO identity email (the Authentik admin
 	// email). Apps that bootstrap a first-run admin account use it, not a
 	// synthetic address, so the operator's OIDC login links to that account
@@ -37,7 +69,10 @@ type Deps struct {
 	// function so a user created after the agent started is seen on the next
 	// pass, not captured at construction. Empty before first-run.
 	OperatorUsername func() string
+}
 
+// AddressDeps is the instance's own address, read live rather than captured.
+type AddressDeps struct {
 	// PrimaryBaseURL resolves the current primary host's public base URL.
 	// It is a function so live host-set changes take effect without
 	// re-registering configurators.
@@ -46,50 +81,42 @@ type Deps struct {
 	// TraefikPort is the public Traefik HTTP entrypoint port, used to build
 	// host-local URLs (e.g. API calls made from the host itself).
 	TraefikPort int
+}
 
+// RuntimeDeps is the container side effects the host will perform on a
+// configurator's request. All three are nil when no runtime is available
+// (CLI/tests). A configurator that needs one must treat nil as "cannot apply
+// now", never as "already applied".
+type RuntimeDeps struct {
 	// RestartContainer stops and starts a running container by name through
 	// the host's container runtime, forcing its process to re-exec and re-read
 	// on-disk config. Configurators need this when the app reads config only
 	// at startup and its own in-app restart is unreliable (e.g. Home Assistant
 	// under a container init). The runtime call is executed by the
 	// orchestrator-provided callback so the orchestrator stays the single
-	// writer of side effects. Nil when no runtime is available (CLI/tests);
-	// factories that require a restart must treat nil as "cannot apply now".
+	// writer of side effects.
 	RestartContainer func(ctx context.Context, name string) error
 
 	// Exec runs a command inside a running container and returns its combined
 	// output. env entries are set in the container process, never on the command
 	// line, so secrets do not leak into an argv. Like RestartContainer, the call
-	// goes through the host runtime the orchestrator provides, so the
-	// orchestrator stays the single writer of container side effects. Nil when
-	// no runtime is available (CLI/tests); callers that require it must treat
-	// nil as "cannot apply now".
+	// goes through the host runtime the orchestrator provides.
 	Exec ExecFunc
 
 	// ContainerRunning reports whether a named container currently exists and
 	// is running. It lets a configurator tell "the container is stopped, so a
 	// read that needs the container is not meaningful yet" from "the container
-	// is up and the read still failed", which is a real fault. Nil when no
-	// runtime is available (CLI/tests); callers that need the distinction must
-	// treat nil as "cannot tell" and keep their hard-error path.
+	// is up and the read still failed", which is a real fault. A configurator
+	// that needs the distinction must treat nil as "cannot tell" and keep its
+	// hard-error path.
 	ContainerRunning ContainerRunningFunc
-
-	// HTTP builds app HTTP clients for this process: shared transport,
-	// default retry policy, shared logger. The zero value is usable (lazy
-	// defaults), so a configurator can always call deps.HTTP.New(...).
-	HTTP ClientFactory
-
-	// Assets installs static/downloaded files with the shared content
-	// cache. The zero value is usable. Populated by the host runtime; see
-	// pkg/appasset.
-	Assets appasset.Installer
 }
 
 // LocalTraefikURL returns the loopback URL of the Traefik HTTP entrypoint.
 // Configurators running on the host call Traefik (and the services behind
 // it) at this URL regardless of the public host set.
 func (d Deps) LocalTraefikURL() string {
-	return fmt.Sprintf("http://localhost:%d", d.TraefikPort)
+	return fmt.Sprintf("http://localhost:%d", d.Address.TraefikPort)
 }
 
 // Factory constructs a NodeLifecycle for a specific app node.

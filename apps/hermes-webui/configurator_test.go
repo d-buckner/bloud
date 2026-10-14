@@ -73,10 +73,14 @@ func quietLogger() *slog.Logger {
 // genuinely nil AppSecretsProvider, which is the CLI/conformance shape.
 func testDeps(secrets configurator.AppSecretsProvider, exec configurator.ExecFunc) configurator.Deps {
 	return configurator.Deps{
-		Logger:         quietLogger(),
-		Secrets:        secrets,
-		PrimaryBaseURL: func() string { return "https://bloud.example.com" },
-		Exec:           exec,
+		Logger:  quietLogger(),
+		Secrets: secrets,
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: func() string { return "https://bloud.example.com" },
+		},
+		Runtime: configurator.RuntimeDeps{
+			Exec: exec,
+		},
 	}
 }
 

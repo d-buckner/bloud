@@ -64,19 +64,44 @@ func configuratorForServer(t *testing.T, handler http.Handler, secrets configura
 }
 
 func TestAppExternalURL_DerivesSubdomain(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
+		},
+	})
 	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
 
-	c = NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://192.168.1.5:8080"), Logger: quietLogger()})
+	c = NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("http://192.168.1.5:8080"),
+		},
+	})
 	assert.Equal(t, "http://affine.192.168.1.5:8080", c.appExternalURL())
 
-	c = NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("https://bloud.example.com"), Logger: quietLogger()})
+	c = NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("https://bloud.example.com"),
+		},
+	})
 	assert.Equal(t, "https://affine.bloud.example.com", c.appExternalURL())
 
 	// Empty/invalid base URL falls back to the dev default.
-	c = NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL(""), Logger: quietLogger()})
+	c = NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL(""),
+		},
+	})
 	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
-	c = NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("://nonsense"), Logger: quietLogger()})
+	c = NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("://nonsense"),
+		},
+	})
 	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
 }
 
@@ -204,7 +229,12 @@ func TestRenderCalDAVBlock_RequiresInstalledProvider(t *testing.T) {
 
 func TestPostStart_RestartsWhenCalDAVProviderAppears(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
+		},
+	})
 	var restarted []string
 	c.restartContainerFn = func(_ context.Context, name string) error {
 		restarted = append(restarted, name)
@@ -229,7 +259,12 @@ func TestPostStart_RestartsWhenCalDAVProviderAppears(t *testing.T) {
 
 func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
+		},
+	})
 	state := &configurator.AppState{
 		DataPath:   dataPath,
 		SSOEnabled: true,
@@ -258,7 +293,12 @@ func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 
 func TestPreStart_WithoutOIDC_WritesServerConfigOnly(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
+		},
+	})
 	state := &configurator.AppState{DataPath: dataPath}
 
 	changed, err := c.PreStart(context.Background(), state)
@@ -277,7 +317,12 @@ func TestPreStart_WithoutOIDC_WritesServerConfigOnly(t *testing.T) {
 
 func TestPreStart_SecretChangeTriggersRecreate(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
+		},
+	})
 
 	mkState := func(secret string) *configurator.AppState {
 		return &configurator.AppState{
@@ -339,9 +384,11 @@ func TestEnsureBootstrapAdmin_UsesOperatorEmail(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	c := NewConfigurator(0, configurator.Deps{
-		Secrets:       &fakeSecrets{password: "test-password-123"},
-		OperatorEmail: "admin@localhost.local",
-		Logger:        quietLogger(),
+		Secrets: &fakeSecrets{password: "test-password-123"},
+		Logger:  quietLogger(),
+		Identity: configurator.IdentityDeps{
+			OperatorEmail: "admin@localhost.local",
+		},
 	})
 	c.baseURL = server.URL
 
@@ -375,7 +422,12 @@ func TestEnsureBootstrapAdmin_SurfacesOtherRejections(t *testing.T) {
 }
 
 func TestEnsureBootstrapAdmin_RequiresSecretsProvider(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:1"), Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{
+		Logger: quietLogger(),
+		Address: configurator.AddressDeps{
+			PrimaryBaseURL: staticBaseURL("http://localhost:1"),
+		},
+	})
 	require.Error(t, c.ensureBootstrapAdmin(context.Background()))
 }
 

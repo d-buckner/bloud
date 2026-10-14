@@ -96,9 +96,9 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	}
 	return &Configurator{
 		port:       port,
-		ssoBaseURL: deps.PrimaryBaseURL,
+		ssoBaseURL: deps.Address.PrimaryBaseURL,
 		secrets:    deps.Secrets,
-		exec:       deps.Exec,
+		exec:       deps.Runtime.Exec,
 		logger:     logger.With("app", appName),
 	}
 }

@@ -249,7 +249,7 @@ func NewPimsyncConfigurator(deps configurator.Deps) *PimsyncConfigurator {
 	return &PimsyncConfigurator{
 		logger:             logger.With("app", pimsyncNodeName),
 		secrets:            deps.Secrets,
-		restartContainerFn: deps.RestartContainer,
+		restartContainerFn: deps.Runtime.RestartContainer,
 	}
 }
 

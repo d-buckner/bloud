@@ -33,7 +33,7 @@ func newFrontendConfigurator(deps configurator.Deps) *frontendConfigurator {
 	}
 	logger = logger.With("app", appName)
 	c := &frontendConfigurator{
-		ssoBaseURL: deps.PrimaryBaseURL,
+		ssoBaseURL: deps.Address.PrimaryBaseURL,
 		logger:     logger,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
@@ -44,9 +44,9 @@ func newFrontendConfigurator(deps configurator.Deps) *frontendConfigurator {
 	})
 	c.mcp = &mcpPublisher{
 		secrets: deps.Secrets,
-		exec:    deps.Exec,
-		running: deps.ContainerRunning,
-		email:   deps.OperatorEmail,
+		exec:    deps.Runtime.Exec,
+		running: deps.Runtime.ContainerRunning,
+		email:   deps.Identity.OperatorEmail,
 		logger:  logger,
 	}
 	return c

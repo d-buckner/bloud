@@ -25,7 +25,7 @@ const appName = "affine"
 // user exists every AFFiNE request redirects to /admin/setup and would block
 // all end users.
 //
-// The email is the operator's SSO identity (deps.OperatorEmail, the Authentik
+// The email is the operator's SSO identity (deps.Identity.OperatorEmail, the Authentik
 // admin email), not a synthetic Bloud account. AFFiNE links an OIDC login to an
 // existing account by email, so when the operator signs in through Bloud's SSO
 // they land on this account: they are the AFFiNE server admin, the workspace
@@ -97,7 +97,7 @@ type Configurator struct {
 }
 
 // NewConfigurator creates a new AFFiNE configurator from the host Deps.
-// deps.PrimaryBaseURL supplies the current Bloud base URL (e.g.
+// deps.Address.PrimaryBaseURL supplies the current Bloud base URL (e.g.
 // "http://localhost:8080"); the app's public URL is derived from it the same
 // way routes and OIDC redirect URIs are (affine.<host>). It is a function so
 // host changes made in the UI take effect without re-registering.
@@ -109,17 +109,17 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	adminEmail := deps.OperatorEmail
+	adminEmail := deps.Identity.OperatorEmail
 	if adminEmail == "" {
 		adminEmail = fallbackAdminEmail
 	}
 	c := &Configurator{
 		port:               port,
-		ssoBaseURL:         deps.PrimaryBaseURL,
+		ssoBaseURL:         deps.Address.PrimaryBaseURL,
 		secrets:            deps.Secrets,
 		adminEmail:         adminEmail,
 		logger:             logger.With("app", "affine"),
-		restartContainerFn: deps.RestartContainer,
+		restartContainerFn: deps.Runtime.RestartContainer,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
