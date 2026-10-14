@@ -24,6 +24,7 @@
 	import {
 		buildProviderPayload,
 		deriveProviderInputs,
+		exampleEndpoint,
 		missingProviderInputs,
 		readProviderInput,
 		type ProviderFieldValues
@@ -49,7 +50,11 @@
 
 	let isProvider = $derived(app?.kind === 'provider');
 	let endpointLabel = $derived(isProvider ? 'Endpoint' : 'URL');
-	let endpointPlaceholder = $derived(isProvider ? 'https://jellyfin.example.com' : 'https://example.com');
+	// Named for the app on the record, the same rule as the add form. A bare
+	// contract provider has no catalog app to name and falls back to the bare
+	// domain, and a launcher is not an endpoint Bloud ever dials, so it gets the
+	// same fallback.
+	let endpointPlaceholder = $derived(exampleEndpoint(isProvider ? app?.app : undefined));
 	let endpointHelp = $derived(
 		isProvider
 			? 'The origin only, with no path. Bloud appends what each integration needs.'

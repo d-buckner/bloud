@@ -164,3 +164,22 @@ function isFilled(input: ProviderInput, fieldValues: ProviderFieldValues, stored
 	if ((fieldValues[input.id] ?? '').trim() !== '') return true;
 	return input.kind === 'secret' && input.contracts.some((contract) => storedSecrets.includes(contract));
 }
+
+/**
+ * An example endpoint for the app a form is registering.
+ *
+ * The placeholder is the only statement about the field's shape while it is
+ * empty, so an example naming some other app is a misreading waiting to happen:
+ * a box under an app selector reading "Home Assistant" that shows
+ * `https://radarr.example.com` teaches the operator that the host part is
+ * decoration, which is the one thing about this field that is not true. Naming
+ * the app also says, at the moment of typing, that this is the app's own origin
+ * and not Bloud's.
+ *
+ * A catalog id is a DNS label by construction, so it drops straight into a
+ * hostname. An absent id gets the bare reserved domain: a launcher, or a bare
+ * contract provider like the AI upstreams, has no app to name.
+ */
+export function exampleEndpoint(appId?: string): string {
+	return appId ? `https://${appId}.example.com` : 'https://example.com';
+}
