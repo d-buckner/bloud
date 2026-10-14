@@ -233,6 +233,11 @@ func (c *Configurator) Name() string {
 	return nodeName
 }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *Configurator) Port() int { return c.port }
+
 // PreStart prepares the mounted config directory so the non-root container can
 // boot. It deliberately writes nothing into it: Seerr owns settings.json and
 // the file must not be pre-seeded (see INTEGRATION.md: a partial settings.json

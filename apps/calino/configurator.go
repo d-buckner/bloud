@@ -69,6 +69,11 @@ func (c *Configurator) Name() string {
 	return nodeName
 }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *Configurator) Port() int { return c.port }
+
 // PreStart has nothing to do, and an explicit no-op is the honest shape: the
 // app takes no configuration from the host, so there is no file to converge and
 // no restart to ask for. Every reconciliation pass returns the same answer,

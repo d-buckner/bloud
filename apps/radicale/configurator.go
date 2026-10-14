@@ -112,6 +112,11 @@ func (c *Configurator) Name() string {
 	return nodeName
 }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *Configurator) Port() int { return c.port }
+
 // PreStart lays out the app's data tree and writes the config the container
 // boots from. It runs on every reconciliation, so a pass that finds the files
 // already correct changes nothing and asks for no recreate.

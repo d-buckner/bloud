@@ -54,11 +54,38 @@ type MetadataSSO struct {
 type MetadataContainer struct {
 	Name    string   `yaml:"name"`
 	Command []string `yaml:"command"`
+	// Ports are the container's published host ports. The harness reads them to
+	// tell which node of a multi-container app owns the app's declared port.
+	Ports []MetadataPort `yaml:"ports"`
 	// Environment is the container's static environment block. Per-install and
 	// rotatable values live in a file the configurator writes, so anything
 	// readable here is a constant a configurator can be pinned against.
 	Environment map[string]string `yaml:"environment"`
 	Volumes     []MetadataVolume  `yaml:"volumes"`
+}
+
+// MetadataPort is one published host port of a container.
+type MetadataPort struct {
+	Host int `yaml:"host"`
+}
+
+// NodePublishesAppPort reports whether the container named node is the one that
+// publishes the app's declared port. A multi-container app declares one `port:`
+// and exactly one of its containers publishes it: the Radicale feed-sync
+// sidecar shares the server's directory, and Penpot's backend writes the env
+// file the frontend reads. Those nodes have no port of their own to agree about.
+func NodePublishesAppPort(md Metadata, node string) bool {
+	for _, c := range md.Containers {
+		if c.Name != node {
+			continue
+		}
+		for _, p := range c.Ports {
+			if p.Host == md.Port {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // MetadataVolume is one host-to-container mount.
@@ -101,10 +128,6 @@ type Case struct {
 
 	// Metadata is the app's parsed metadata.yaml.
 	Metadata Metadata
-
-	// DefaultPort is the port the configurator's constructor falls back to
-	// when registration passes 0. Checked against Metadata.Port.
-	DefaultPort int
 
 	// Preseed runs against a fresh data dir before each pass, for the few
 	// apps whose PreStart short-circuits on a file it installs itself. HA
@@ -343,16 +366,31 @@ func AssertTeardownHonest(t *testing.T, tc Case) {
 // AssertPortMatchesMetadata checks the app's defaultPort against the port the
 // catalog publishes. They are the same fact written twice, and only one of
 // them routes traffic.
+// AssertPortMatchesMetadata checks the port the configurator reports against
+// the port the catalog publishes. They are the same fact written twice, and only
+// one of them routes traffic.
+//
+// The configurator is the source, so a configurator declares its port by
+// implementing configurator.PortReporter. Whether the check applies is decided
+// by metadata, not by the configurator: a node that does not publish the app's
+// port has none to agree about. A node that does publish it and reports nothing
+// fails here, so dropping the method cannot quietly remove the check.
 func AssertPortMatchesMetadata(t *testing.T, tc Case) {
 	t.Helper()
 	if tc.Metadata.Port == 0 {
 		t.Skip("no port in metadata")
 	}
-	if tc.DefaultPort == 0 {
-		t.Skip("case does not declare its default port")
+	reporter, ok := tc.Cfg.(configurator.PortReporter)
+	if !ok {
+		if !NodePublishesAppPort(tc.Metadata, tc.Node) {
+			t.Skipf("%s does not publish the app port, so it reports none", tc.Node)
+		}
+		t.Errorf("%s publishes the app port %d in metadata, but its configurator does not implement configurator.PortReporter",
+			tc.Node, tc.Metadata.Port)
+		return
 	}
-	if tc.DefaultPort != tc.Metadata.Port {
-		t.Errorf("configurator defaultPort = %d, metadata.yaml port = %d; these must be the same value",
-			tc.DefaultPort, tc.Metadata.Port)
+	if got := reporter.Port(); got != tc.Metadata.Port {
+		t.Errorf("configurator Port() = %d, metadata.yaml port = %d; these must be the same value",
+			got, tc.Metadata.Port)
 	}
 }

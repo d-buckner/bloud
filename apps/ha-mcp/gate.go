@@ -58,6 +58,11 @@ func NewGateConfigurator(port int, deps configurator.Deps) *GateConfigurator {
 // Name returns the graph node this configurator owns.
 func (c *GateConfigurator) Name() string { return gateNodeName }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *GateConfigurator) Port() int { return c.port }
+
 // PreStart writes the nginx config the gate container mounts. It is rewritten
 // whenever the bearer or the internal endpoint path changes, which is also the
 // only time the gate needs a recreate: nginx reads its config at start.

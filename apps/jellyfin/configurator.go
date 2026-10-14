@@ -32,7 +32,7 @@ const (
 // the typed API client (api.go) and the static asset installer; all raw HTTP
 // lives in appclient behind the client.
 type Configurator struct {
-	Port    int
+	port    int
 	secrets configurator.AppSecretsProvider
 	logger  *slog.Logger
 	api     *jellyfinAPI
@@ -57,7 +57,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger = slog.Default()
 	}
 	c := &Configurator{
-		Port:         port,
+		port:         port,
 		secrets:      deps.Secrets,
 		logger:       logger.With("app", "jellyfin"),
 		assets:       deps.Assets,
@@ -68,7 +68,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		if c.baseURL != "" {
 			return c.baseURL
 		}
-		return fmt.Sprintf("http://localhost:%d", c.Port)
+		return fmt.Sprintf("http://localhost:%d", c.port)
 	})
 	return c
 }
@@ -83,6 +83,11 @@ const defaultPort = 8096
 func (c *Configurator) Name() string {
 	return nodeName
 }
+
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *Configurator) Port() int { return c.port }
 
 // resolveAdminPassword returns the durable, per-deployment bootstrap admin
 // password from the secrets manager (generated on first call, then stable across

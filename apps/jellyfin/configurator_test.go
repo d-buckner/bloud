@@ -73,8 +73,8 @@ func TestNewConfigurator(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := NewConfigurator(tt.port, configurator.Deps{Secrets: fakeJellyfinSecrets()})
-			if c.Port != tt.wantPort {
-				t.Errorf("NewConfigurator(%d).Port = %d, want %d", tt.port, c.Port, tt.wantPort)
+			if c.port != tt.wantPort {
+				t.Errorf("NewConfigurator(%d).Port = %d, want %d", tt.port, c.port, tt.wantPort)
 			}
 		})
 	}

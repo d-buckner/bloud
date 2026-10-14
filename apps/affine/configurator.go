@@ -141,6 +141,11 @@ func (c *Configurator) Name() string {
 	return nodeName
 }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *Configurator) Port() int { return c.port }
+
 // restartContainer stops and starts the server container through the host
 // runtime so AFFiNE re-reads config.json, which it loads once at process start.
 // It mirrors the Home Assistant pattern: the configurator owns the restart

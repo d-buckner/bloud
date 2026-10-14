@@ -96,6 +96,11 @@ func (c *Configurator) Name() string {
 	return nodeName
 }
 
+// Port is the app port this node was constructed with, which is the catalog
+// `port:` when registration passed 0. The conformance harness compares it
+// against metadata.yaml, because only one of the two routes traffic.
+func (c *Configurator) Port() int { return c.port }
+
 // appExternalURL returns the public URL the browser uses to reach Vaultwarden,
 // e.g. "http://vaultwarden.localhost:8080". It is the app's DOMAIN, from which
 // Vaultwarden derives its OIDC redirect URI, so it must match the redirect URI
