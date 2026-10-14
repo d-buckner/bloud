@@ -1172,3 +1172,124 @@ func TestPublishAgentModelNameSkipsEmptyAndNilStore(t *testing.T) {
 		t.Fatalf("empty default published %q, want no write", got)
 	}
 }
+
+// TestPrepareInboxCreatesAndWidensTheSharedTree: the attachment inbox is the one
+// tree Hermes does not own but must share. The orchestrator creates every mount
+// source 0755 owned by the host agent, which is readable by Hermes and unwritable
+// by hermes-webui, so the mode has to be raised here for uploads to land at all.
+func TestPrepareInboxCreatesAndWidensTheSharedTree(t *testing.T) {
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	state := &configurator.AppState{DataPath: t.TempDir(), BloudDataPath: t.TempDir()}
+
+	if err := c.prepareInbox(state); err != nil {
+		t.Fatalf("prepareInbox: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(state.BloudDataPath, sharedInboxRel))
+	if err != nil {
+		t.Fatalf("stat inbox: %v", err)
+	}
+	// Asserted against the literal, not against sharedInboxMode: the constant is
+	// duplicated in apps/hermes-webui, and this is what fails if either half drifts.
+	if got := inboxMode(info); got != 0o1777 {
+		t.Errorf("inbox mode = %o, want 1777. The world bits are the only ones that "+
+			"reach the other container's uid, and the sticky bit is what stops that "+
+			"from letting either side unlink an upload it does not own", got)
+	}
+}
+
+// TestPrepareInboxRepairsANarrowedInbox is the assertion the steady-state case
+// cannot make. A chmod does not move mtime, so "it did not chmod again" is not
+// observable from a test; what matters and is observable is that a directory that
+// lost its bits gets them back. The orchestrator creates every mount source 0755
+// (orchestrator/execution.go, ensureMountDirs), so this is not a hypothetical.
+func TestPrepareInboxRepairsANarrowedInbox(t *testing.T) {
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	state := &configurator.AppState{DataPath: t.TempDir(), BloudDataPath: t.TempDir()}
+
+	if err := c.prepareInbox(state); err != nil {
+		t.Fatalf("first prepareInbox: %v", err)
+	}
+	dir := filepath.Join(state.BloudDataPath, sharedInboxRel)
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("narrowing the inbox: %v", err)
+	}
+
+	if err := c.prepareInbox(state); err != nil {
+		t.Fatalf("second prepareInbox: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := inboxMode(info); got != 0o1777 {
+		t.Errorf("inbox mode after repair = %o, want 1777", got)
+	}
+}
+
+// inboxMode folds the permission bits and the sticky bit into one number, because
+// FileInfo.Mode().Perm() masks the sticky bit away and a test that compares only
+// Perm() cannot tell 0777 from 1777.
+func inboxMode(info os.FileInfo) os.FileMode {
+	m := info.Mode().Perm()
+	if info.Mode()&os.ModeSticky != 0 {
+		m |= 0o1000
+	}
+	return m
+}
+
+// TestPrepareInboxWithoutASharedRootIsNotFatal pins the degraded-but-alive shape.
+// With no shared root the pass must still succeed: Hermes is the reader of this
+// tree, and an ERROR node would take the dashboard, the gateway, and every MCP
+// wiring down with it. What it must not do is fall back to a relative path and
+// scatter a shared-trees/hermes/inbox directory into the host agent's working directory.
+func TestPrepareInboxWithoutASharedRootIsNotFatal(t *testing.T) {
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+
+	if err := c.prepareInbox(&configurator.AppState{DataPath: t.TempDir()}); err != nil {
+		t.Fatalf("prepareInbox with no shared root: %v", err)
+	}
+	if _, err := os.Stat(sharedInboxRel); !os.IsNotExist(err) {
+		t.Errorf("an empty shared root created %q relative to the working directory", sharedInboxRel)
+	}
+}
+
+// TestMetadata_DeclaresTheSharedInbox pins the configurator's constant to the
+// mount metadata declares. The Go side builds the host path from the constant and
+// the YAML side is what podman mounts, so a drift means the configurator widens a
+// directory nobody mounts while the real inbox stays 0755.
+func TestMetadata_DeclaresTheSharedInbox(t *testing.T) {
+	raw, err := os.ReadFile("metadata.yaml")
+	if err != nil {
+		t.Fatalf("reading metadata.yaml: %v", err)
+	}
+	var m struct {
+		Containers []struct {
+			Name    string `yaml:"name"`
+			Volumes []struct {
+				Source      string `yaml:"source"`
+				Destination string `yaml:"destination"`
+			} `yaml:"volumes"`
+		} `yaml:"containers"`
+	}
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parsing metadata.yaml: %v", err)
+	}
+
+	var found int
+	for _, c := range m.Containers {
+		for _, v := range c.Volumes {
+			if v.Source == "{{dataDir}}/"+sharedInboxRel {
+				found++
+				if v.Destination != "/bloud-hermes/inbox" {
+					t.Errorf("inbox destination = %q, want %q; hermes-webui must mount "+
+						"the same tree at the same path or the agent cannot open an upload",
+						v.Destination, "/bloud-hermes/inbox")
+				}
+			}
+		}
+	}
+	if found != 1 {
+		t.Fatalf("expected exactly one mount of {{dataDir}}/%s, got %d", sharedInboxRel, found)
+	}
+}

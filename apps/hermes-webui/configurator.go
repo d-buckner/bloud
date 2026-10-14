@@ -53,6 +53,30 @@ const clientPasswordBytes = 24
 // the app cannot link the identity.
 const oidcScopes = "openid email profile"
 
+// sharedInboxRel is the attachment inbox's path relative to the shared Bloud
+// data root. It is the same tree Hermes mounts, and the two declarations are
+// pinned together by TestSharedInboxMountsAgree: the whole point of the inbox is
+// that both containers address it identically, so a drift here from
+// metadata.yaml or from the Hermes side is the original bug back again.
+const sharedInboxRel = "shared-trees/hermes/inbox"
+
+// sharedInboxMode is the inbox's directory mode: world-writable plus the sticky
+// bit. The world bits are what reach across, because this app's runtime user
+// (uid 1024) and Hermes' (uid 10000) are unrelated subordinate uids with no shared
+// group, so an upload is only readable by the agent if its other-read bit is set.
+// The sticky bit keeps that from meaning anyone may delete anyone's upload: this
+// app ships /api/file/delete, and the agent has shell access, so without it every
+// signed-in user and the agent itself could unlink someone else's file. With it an
+// owner still removes its own uploads, so the app's own delete API is unaffected.
+//
+// The literal is duplicated in apps/hermes and each package's own test asserts
+// this exact value, so a drift in either half fails a test.
+//
+// Written as os.ModeSticky rather than os.FileMode(0o1777): FileMode's sticky flag
+// is its own high bit, not the 0o1000 bit of a stat mode, so the octal literal
+// silently produces a plain 0777.
+const sharedInboxMode = os.FileMode(0o777) | os.ModeSticky
+
 type Configurator struct {
 	port       int
 	ssoBaseURL func() string
@@ -98,6 +122,10 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	}
 
 	if err := c.prepareDataDir(state); err != nil {
+		return configurator.NoRestart(), err
+	}
+
+	if err := c.prepareInbox(state); err != nil {
 		return configurator.NoRestart(), err
 	}
 
@@ -212,6 +240,50 @@ func (c *Configurator) prepareDataDir(state *configurator.AppState) error {
 	}
 	if err := managedfile.EnsureWritable(dir, 0o777); err != nil {
 		return fmt.Errorf("%s: make data dir writable: %w", appName, err)
+	}
+	return nil
+}
+
+// prepareInbox creates the shared attachment inbox and makes it writable by this
+// app's runtime user.
+//
+// The orchestrator creates every mount source at 0755 owned by the host agent
+// (orchestrator/execution.go, ensureMountDirs). That is readable by Hermes and
+// unwritable here: this app's runtime uid is a subordinate uid, not the owner and
+// not a group member, so only the world-write bit lets it create the per-session
+// directory an upload needs. Without this the mount exists and every upload fails
+// with EACCES instead of the ENOENT it had before the mount.
+//
+// Unlike prepareDataDir this needs no EPERM tolerance: the host agent creates and
+// therefore owns this directory, so the chmod always succeeds. It is idempotent,
+// so the periodic resync stays a read-only diff (invariant 2).
+//
+// A missing shared root is a WARN, not a failure, for the same reason the client
+// password is: offline and CLI contexts have none, and a pass that still writes the
+// app's real config beats an ERROR node. The warning is what keeps a genuine
+// misconfiguration from being invisible.
+func (c *Configurator) prepareInbox(state *configurator.AppState) error {
+	if state.BloudDataPath == "" {
+		c.logger.Warn("no shared data root; the attachment inbox is not prepared")
+		return nil
+	}
+	dir := filepath.Join(state.BloudDataPath, sharedInboxRel)
+	if err := os.MkdirAll(dir, sharedInboxMode); err != nil {
+		return fmt.Errorf("%s: create attachment inbox: %w", appName, err)
+	}
+	// managedfile.EnsureWritable cannot be used here: it compares only .Perm(), so
+	// it returns early on a directory that is already 0777 and never adds the sticky
+	// bit, which would leave fresh installs sticky and upgraded installs not. The host
+	// agent creates and owns this directory, so a plain chmod always succeeds and
+	// needs none of the foreign-uid tolerance prepareDataDir above does provide.
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("%s: stat attachment inbox: %w", appName, err)
+	}
+	if info.Mode().Perm() != sharedInboxMode.Perm() || info.Mode()&os.ModeSticky == 0 {
+		if err := os.Chmod(dir, sharedInboxMode); err != nil {
+			return fmt.Errorf("%s: set attachment inbox mode: %w", appName, err)
+		}
 	}
 	return nil
 }

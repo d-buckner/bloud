@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -339,4 +341,103 @@ func TestGatewayRootStripsTheOpenAIPath(t *testing.T) {
 	assert.Equal(t, "https://hermes.example.com", gatewayRoot("https://hermes.example.com"))
 	// A bare origin with a port must not have the port mistaken for a path.
 	assert.Equal(t, "https://hermes.example.com:8080", gatewayRoot("https://hermes.example.com:8080"))
+}
+
+// TestPrepareInboxCreatesAndWidensTheSharedTree: the orchestrator creates every
+// mount source 0755 owned by the host agent. This app's runtime user is uid 1024,
+// which is neither that owner nor a group member, so without the world-write bit
+// every upload fails with EACCES inside a mount that exists.
+func TestPrepareInboxCreatesAndWidensTheSharedTree(t *testing.T) {
+	cfg := NewConfigurator(0, testDeps(nil, nil))
+	state := &configurator.AppState{DataPath: t.TempDir(), BloudDataPath: t.TempDir()}
+
+	require.NoError(t, cfg.prepareInbox(state))
+
+	info, err := os.Stat(filepath.Join(state.BloudDataPath, sharedInboxRel))
+	require.NoError(t, err)
+	// Asserted against the literal, not against sharedInboxMode: the constant is
+	// duplicated in apps/hermes, and this is what fails if either half drifts.
+	assert.Equal(t, os.FileMode(0o1777), inboxMode(info),
+		"the world bits are the only ones that reach the agent's uid, and the sticky "+
+			"bit is what stops this app's own delete API from unlinking someone else's upload")
+}
+
+// TestPrepareInboxRepairsANarrowedInbox is the assertion the steady-state case
+// cannot make. A chmod does not move mtime, so "it did not chmod again" is not
+// observable from a test; what matters and is observable is that a directory that
+// lost its bits gets them back. The orchestrator creates every mount source 0755
+// (orchestrator/execution.go, ensureMountDirs), so this is not a hypothetical.
+func TestPrepareInboxRepairsANarrowedInbox(t *testing.T) {
+	cfg := NewConfigurator(0, testDeps(nil, nil))
+	state := &configurator.AppState{DataPath: t.TempDir(), BloudDataPath: t.TempDir()}
+
+	require.NoError(t, cfg.prepareInbox(state))
+	dir := filepath.Join(state.BloudDataPath, sharedInboxRel)
+	require.NoError(t, os.Chmod(dir, 0o755))
+
+	require.NoError(t, cfg.prepareInbox(state))
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o1777), inboxMode(info))
+}
+
+// inboxMode folds the permission bits and the sticky bit into one number, because
+// FileInfo.Mode().Perm() masks the sticky bit away and a test that compares only
+// Perm() cannot tell 0777 from 1777.
+func inboxMode(info os.FileInfo) os.FileMode {
+	m := info.Mode().Perm()
+	if info.Mode()&os.ModeSticky != 0 {
+		m |= 0o1000
+	}
+	return m
+}
+
+// TestPrepareInboxWithoutASharedRootIsNotFatal keeps a pass with no shared root
+// succeeding: a missing root is an offline or CLI context, and a node parked in
+// ERROR over a directory only uploads need is worse than an app whose config was
+// still written. It must not fall back to a relative path, though, or it litters
+// the host agent's working directory.
+func TestPrepareInboxWithoutASharedRootIsNotFatal(t *testing.T) {
+	cfg := NewConfigurator(0, testDeps(nil, nil))
+
+	require.NoError(t, cfg.prepareInbox(&configurator.AppState{DataPath: t.TempDir()}))
+	if _, err := os.Stat(sharedInboxRel); !os.IsNotExist(err) {
+		t.Errorf("an empty shared root created %q relative to the working directory", sharedInboxRel)
+	}
+}
+
+// TestMetadata_DeclaresTheSharedInbox pins this app's constant to the mount it
+// declares. The Go side widens the path built from the constant; the YAML side is
+// what podman mounts. Drift would widen a directory nobody mounts while the real
+// inbox stays unwritable.
+func TestMetadata_DeclaresTheSharedInbox(t *testing.T) {
+	raw, err := os.ReadFile("metadata.yaml")
+	if err != nil {
+		t.Fatalf("reading metadata.yaml: %v", err)
+	}
+	var m struct {
+		Containers []struct {
+			Name    string `yaml:"name"`
+			Volumes []struct {
+				Source      string `yaml:"source"`
+				Destination string `yaml:"destination"`
+			} `yaml:"volumes"`
+		} `yaml:"containers"`
+	}
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parsing metadata.yaml: %v", err)
+	}
+
+	var found int
+	for _, c := range m.Containers {
+		for _, v := range c.Volumes {
+			if v.Source == "{{dataDir}}/"+sharedInboxRel {
+				found++
+				assert.Equal(t, "/bloud-hermes/inbox", v.Destination,
+					"the inbox must mount where Hermes mounts it, or the path this app "+
+						"hands the agent resolves to nothing in the agent's container")
+			}
+		}
+	}
+	require.Equal(t, 1, found, "expected exactly one mount of {{dataDir}}/%s", sharedInboxRel)
 }

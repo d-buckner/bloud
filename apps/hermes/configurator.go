@@ -57,6 +57,33 @@ const (
 	// what makes the host-agent attach those scopes to the provider (a test
 	// pins the two together).
 	managedScopes = "openid profile email offline_access"
+
+	// sharedInboxRel is the attachment inbox's path relative to the shared Bloud
+	// data root, mounted at /bloud-hermes/inbox in this container and in
+	// hermes-webui. Hermes is the reader here: the web UI writes an upload and
+	// puts this path into the message, and the agent opens it with its own file
+	// tools. The three declarations (this constant, both metadata.yaml files) are
+	// pinned together by TestSharedInboxMountsAgree.
+	sharedInboxRel = "shared-trees/hermes/inbox"
+
+	// sharedInboxMode is 1777: world-writable, plus the sticky bit.
+	//
+	// The world bits are what reach across. The two containers run as unrelated
+	// subordinate uids with no shared group, so a file hermes-webui writes is only
+	// readable by Hermes if its other-read bit is set. The sticky bit is what stops
+	// that from meaning "anyone may delete anyone's upload": the agent has shell
+	// access and every signed-in web UI user reaches this tree through the app's own
+	// file API, and without it either can unlink a file they do not own. With it an
+	// owner still deletes and renames its own uploads, so the web UI's delete API
+	// keeps working.
+	//
+	// The literal is duplicated in apps/hermes-webui and each package's own test
+	// asserts this exact value, so a drift in either half fails a test.
+	//
+	// Written as os.ModeSticky rather than os.FileMode(0o1777): FileMode's sticky
+	// flag is its own high bit, not the 0o1000 bit of a stat mode, so the octal
+	// literal silently produces a plain 0777.
+	sharedInboxMode = os.FileMode(0o777) | os.ModeSticky
 )
 
 // Configurator handles the Hermes node lifecycle. Hermes owns most of
@@ -240,6 +267,50 @@ const containerReadUnavailable = " (Hermes' container init chowns config.yaml to
 	"every start, which under rootless podman is a host uid in the subuid range the agent is not; the file can only " +
 	"be read through the running container - see apps/hermes/INTEGRATION.md)"
 
+// prepareInbox creates the shared attachment inbox and widens it to the mode both
+// containers can use.
+//
+// The orchestrator creates every mount source at 0755 owned by the host agent
+// (orchestrator/execution.go, ensureMountDirs). Hermes can read that but
+// hermes-webui cannot write it, and an upload that cannot be written is the bug
+// this tree exists to fix. The host agent owns the directory, so the chmod always
+// succeeds and, unlike the app's own data directory, there is no foreign-uid EPERM
+// to tolerate.
+//
+// Idempotent and a no-op once the mode is right, so the periodic resync stays a
+// read-only diff (invariant 2).
+//
+// A missing shared root is a WARN, not a failure. Offline and CLI contexts have
+// none, and Hermes is the reader of this tree rather than the writer: parking the
+// node in ERROR over a directory only uploads need would take the dashboard, the
+// gateway, and every MCP wiring down with it. Saying so out loud is what keeps a
+// real misconfiguration from being invisible.
+func (c *Configurator) prepareInbox(state *configurator.AppState) error {
+	if state == nil || state.BloudDataPath == "" {
+		c.logger.Warn("no shared data root; the attachment inbox is not prepared")
+		return nil
+	}
+	dir := filepath.Join(state.BloudDataPath, sharedInboxRel)
+	if err := os.MkdirAll(dir, sharedInboxMode); err != nil {
+		return fmt.Errorf("%s: create attachment inbox: %w", appName, err)
+	}
+	// managedfile.EnsureWritable cannot be used here: it compares only .Perm(), so
+	// it returns early on a directory that is already 0777 and never adds the sticky
+	// bit, which would leave fresh installs sticky and upgraded installs not. The host
+	// agent creates and owns this directory, so a plain chmod always succeeds and
+	// needs none of the foreign-uid tolerance EnsureWritable exists to provide.
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("%s: stat attachment inbox: %w", appName, err)
+	}
+	if info.Mode().Perm() != sharedInboxMode.Perm() || info.Mode()&os.ModeSticky == 0 {
+		if err := os.Chmod(dir, sharedInboxMode); err != nil {
+			return fmt.Errorf("%s: set attachment inbox mode: %w", appName, err)
+		}
+	}
+	return nil
+}
+
 // PreStart merges Bloud's SSO keys into Hermes' config.yaml so the
 // dashboard boots with the self-hosted OIDC provider configured. Returns
 // changed=true only when the managed keys differ from what is on disk, which
@@ -251,6 +322,13 @@ const containerReadUnavailable = " (Hermes' container init chowns config.yaml to
 // SSO is disabled the managed keys are stripped instead, so a leftover
 // provider never points at a dead issuer.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
+	// Before the config merge, which can bail out on a stopped container: the inbox
+	// has to exist for an upload to land at all, and a pass that returns early must
+	// not be the reason it never gets created.
+	if err := c.prepareInbox(state); err != nil {
+		return configurator.NoRestart(), err
+	}
+
 	cfgPath := filepath.Join(state.DataPath, "data", configFileName)
 
 	existing, err := c.readConfig(ctx, cfgPath)

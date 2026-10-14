@@ -858,7 +858,11 @@ combined with instance/SSH-target env vars). Instance overrides:
     that app's data directory (`dataDir/<app>`), not a config file, whatever its
     format. The shared trees Bloud owns for the whole stack (`media/`,
     `downloads/`) are declared as volumes in metadata; they are not an app's
-    private state. It also **never** probes a provider's port to decide whether
+    private state. `shared-trees/<name>/` is the same mechanism for one
+    directory two named apps must address by the same path (the Hermes agent's
+    attachment inbox: hermes-webui writes it, the agent opens it); unlike the
+    media library that tree is app state and belongs in a backup. It also
+    **never** probes a provider's port to decide whether
     it is installed: `Installed` is that answer, and it is the same condition as
     the graph edge. A probe cannot separate "not installed" from "restarting",
     so keying a prune off it deletes wiring that is still wanted. The bindings

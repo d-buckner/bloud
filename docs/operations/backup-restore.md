@@ -11,7 +11,8 @@ Bloud keeps all of its state in one directory, `BLOUD_DATA_DIR`
 ├── traefik/                 generated proxy config
 ├── apps/                    every app's private tree
 ├── media/                   shared: movies, shows, music
-└── downloads/               shared: the media stack's drop area
+├── downloads/               shared: the media stack's drop area
+└── shared-trees/            shared: two named apps mount one directory
 ```
 
 Three scripts at the repository root operate on that directory. They are
@@ -52,6 +53,16 @@ and the image store is reproducible from the image tags in the catalog. Pass
 `--include-shared` to archive the library too. `--keep N` deletes all but the
 newest `N` archives; the default keeps every one.
 
+`shared-trees/` is **not** what `--include-shared` refers to, and it is always
+archived. Those directories hold app state that two apps share by path (the
+Hermes agent's attachment inbox today), so losing one would restore an app
+whose uploaded files had vanished. The flag's name predates it and refers to
+the media library only.
+
+Note the retention: uninstalling an app does not remove a shared tree. Neither
+app's uninstall can reach it, so an archive keeps growing until a restore point
+predates uploads nobody can point at an app for.
+
 `--no-stop` skips the stop and takes a crash-consistent archive instead;
 `--keep-stopped` restarts the containers but leaves the host-agent down.
 
@@ -70,7 +81,8 @@ paths the archive carries, and start them back. A truncated or foreign archive
 therefore fails without stopping the running instance or changing anything.
 
 Restore is destructive for the paths in the archive. `apps/`, `traefik/`,
-`bloud.db`, `secrets.json`, and `host-agent-api-token` are replaced wholesale.
+`shared-trees/`, `bloud.db`, `secrets.json`, and `host-agent-api-token` are
+replaced wholesale.
 `.local/`, `.cache/`, and `lost+found/` are never touched, and `media/` and
 `downloads/` are left alone unless the archive was made with
 `--include-shared`. A stale `bloud.db-wal`, `bloud.db-shm`, or
