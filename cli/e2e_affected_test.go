@@ -32,6 +32,8 @@ func TestAffectedE2EProjects(t *testing.T) {
 		{"top-level apps file", []string{"apps/registry.go"}, all},
 		{"markdown only", []string{"README.md", "docs/specs/spec.md"}, []string{}},
 		{"markdown in app dir", []string{"apps/jellyfin/INTEGRATION.md"}, []string{}},
+		{"non-markdown in docs", []string{"docs/images/bootstrap-page.png"}, []string{}},
+		{"non-markdown in an app dir", []string{"apps/jellyfin/icon.png"}, []string{"jellyfin"}},
 		{"empty change set", nil, all},
 	}
 

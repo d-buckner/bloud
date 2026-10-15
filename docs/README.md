@@ -33,10 +33,10 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Handing app credentials to third-party clients (reveal vs provision) | [features/client-credentials.md](features/client-credentials.md) (shipped); the design record is [plans/archive/client-credentials.md](plans/archive/client-credentials.md) |
 | Pilot: hermes-webui, OIDC for browsers plus a minted password for Hermex | [plans/archive/client-credentials-hermes-webui-pilot.md](plans/archive/client-credentials-hermes-webui-pilot.md) (shipped) |
 | Tools an agent asks Bloud itself, and where wrappers stop | [plans/native-mcp-endpoint.md](plans/native-mcp-endpoint.md) |
-| One MCP provider over Seerr and the arr stack, with many optional integrations | [plans/arr-mcp-provider.md](plans/arr-mcp-provider.md) |
-| A standalone MCP container for Home Assistant, and the token it has to mint | [plans/home-assistant-mcp.md](plans/home-assistant-mcp.md) |
-| Why adding an app touches 53% of its files outside `apps/`, and the six derivations that fix it | [plans/app-add-tax.md](plans/app-add-tax.md) |
-| A smaller, clearer app-SDK surface: group `Deps`, one `Secret` type, a binder table, then extract the SDK | [plans/configurator-sdk-surface.md](plans/configurator-sdk-surface.md) |
+| One MCP provider over Seerr and the arr stack, with many optional integrations | [plans/archive/arr-mcp-provider.md](plans/archive/arr-mcp-provider.md) (shipped) |
+| A standalone MCP container for Home Assistant, and the token it has to mint | [plans/archive/home-assistant-mcp.md](plans/archive/home-assistant-mcp.md) (shipped) |
+| Why adding an app touches 53% of its files outside `apps/`, and the six derivations that fix it | [plans/archive/app-add-tax.md](plans/archive/app-add-tax.md) (landed) |
+| A smaller, clearer app-SDK surface: group `Deps`, one `Secret` type, a binder table, then extract the SDK | [plans/archive/configurator-sdk-surface.md](plans/archive/configurator-sdk-surface.md) (landed) |
 | Putting the media library on a NAS: storage roots, and how an unprivileged host agent mounts one | [plans/storage-roots.md](plans/storage-roots.md) |
 | In-flight designs | [plans/](plans/) |
 | Finished plans, kept for the reasoning | [plans/archive/](plans/archive/) |
