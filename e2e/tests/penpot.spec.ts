@@ -164,6 +164,9 @@ describeApp('penpot', (app) => {
       const config = await response.text();
       expect(config).toContain('enable-mcp');
       expect(config).toContain('enable-login-with-oidc');
+      // A home install shows its user no first-run survey, so the flag that
+      // removes it has to reach the browser, not just the container.
+      expect(config).toContain('disable-onboarding');
       expect(config).toContain('Bloud SSO');
       expect(config).toContain(`var penpotPublicURI = "${PENPOT_URL}";`);
     } finally {

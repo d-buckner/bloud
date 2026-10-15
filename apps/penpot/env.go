@@ -91,6 +91,12 @@ type publicSettings struct {
 //     admin console reachable through the frontend at all: the frontend's
 //     entrypoint installs or removes those nginx location blocks by grepping
 //     this string, so the containers existing is not enough.
+//   - disable-onboarding drops the modals Penpot shows right after a profile is
+//     created. :onboarding is in Penpot's default flag set, and what comes with
+//     it is a first-run survey and a prompt to create a team (the profile props
+//     onboarding-questions and onboarding-team-id exist for them). On Bloud the
+//     first sign-in already came from an identity provider the operator wired up
+//     in Settings, so those modals narrate a first run nobody is having.
 //
 // Secure session cookies are deliberately not set here. Penpot's own config
 // adds disable-secure-session-cookies whenever the public URI is plain http on a
@@ -122,7 +128,8 @@ func renderAdminEnv(s publicSettings) (string, error) {
 func envSettings(s publicSettings) [][2]string {
 	settings := [][2]string{
 		{"PENPOT_FLAGS", "disable-email-verification disable-registration " +
-			"enable-oidc-registration enable-login-with-oidc enable-mcp enable-admin-console"},
+			"enable-oidc-registration enable-login-with-oidc enable-mcp enable-admin-console " +
+			"disable-onboarding"},
 		{"PENPOT_PUBLIC_URI", s.publicURL},
 		// The signing key for sessions and for the tokens Penpot mints. It is
 		// read back out of the previous file rather than regenerated (see

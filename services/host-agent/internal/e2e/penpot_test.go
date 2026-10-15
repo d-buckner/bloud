@@ -72,6 +72,7 @@ func TestPenpotServesTheConfigurationBloudGenerated(t *testing.T) {
 			"enable-login-with-oidc",
 			"enable-mcp",
 			"enable-admin-console",
+			"disable-onboarding",
 			"Bloud SSO",
 			`var penpotPublicURI = "` + penpotPublicURL() + `"`,
 		} {
