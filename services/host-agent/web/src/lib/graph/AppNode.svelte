@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 	import { Handle, Position } from '@xyflow/svelte';
 	import { statusColor } from '$lib/utils/statusColor';
-	import { phaseWord, isFailure, isUnprobed, isWorking, showsPhase } from './phase';
+	import { phaseWord, isFailure, isWorking, showsPhase } from './phase';
 
 	interface NodeData {
 		displayName: string;
@@ -24,7 +24,6 @@
 	const phase = $derived(phaseWord(data.phase, data.status));
 	const failed = $derived(isFailure(phase));
 	const working = $derived(isWorking(data.inFlight, phase));
-	const unprobed = $derived(isUnprobed(data.phase));
 	const resync = $derived(data.resyncRestarts ?? 0);
 
 	// The reason is the engine's own words about why a node stopped. There is no
@@ -69,7 +68,7 @@
 		{/if}
 	</div>
 	<div class="node-footer">
-		<span class="status-dot" class:unprobed style:background={unprobed ? 'transparent' : statusColor(phase)}></span>
+		<span class="status-dot" style:background={statusColor(phase)}></span>
 		{#if showsPhase(phase)}
 			<span class="status-text" class:failed>{phase}</span>
 		{/if}
@@ -139,14 +138,6 @@
 		height: 7px;
 		border-radius: 50%;
 		flex-shrink: 0;
-	}
-
-	/* Nothing reconciles this node, so the dot is an outline: filled means the
-	   engine has a state for it, hollow means the card is only reporting what the
-	   catalog said. */
-	.status-dot.unprobed {
-		box-sizing: border-box;
-		border: 1.5px solid var(--color-text-secondary, #57534e);
 	}
 
 	.status-text {

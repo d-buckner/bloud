@@ -13,19 +13,6 @@ export function phaseWord(phase: string | undefined, status: string): string {
 	return phase && phase.length > 0 ? phase : status;
 }
 
-/**
- * Whether the engine tracks this node at all.
- *
- * An external provider, the public address, and an app the catalog knows but has
- * never installed all send no phase: nothing reconciles them, so there is no
- * state to report. They get a hollow dot rather than a filled one, because a
- * filled dot on the public address is a claim that something checked it, and
- * nothing did.
- */
-export function isUnprobed(phase: string | undefined): boolean {
-	return !phase;
-}
-
 /** A phase that means the node stopped on a problem rather than progressing. */
 export function isFailure(phase: string): boolean {
 	return phase === 'failed' || phase === 'error';

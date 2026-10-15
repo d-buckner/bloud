@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { isFailure, isUnprobed, isWorking, phaseWord, showsPhase } from '../phase';
+import { isFailure, isWorking, phaseWord, showsPhase } from '../phase';
 
-// These five functions are the whole vocabulary of the page: what a card says,
+// These four functions are the whole vocabulary of the page: what a card says,
 // what a dot means, and when neither is a lie.
 
 describe('phaseWord', () => {
@@ -48,15 +48,5 @@ describe('isWorking', () => {
 		// ERROR is terminal until something resets it, so a pulse here would send
 		// the reader to the one node nobody is touching.
 		expect(isWorking(true, 'failed')).toBe(false);
-	});
-});
-
-describe('isUnprobed', () => {
-	it('is true only when the engine sent no phase', () => {
-		expect(isUnprobed('')).toBe(true);
-		expect(isUnprobed(undefined)).toBe(true);
-		expect(isUnprobed('running')).toBe(false);
-		// Queued is a reading, not the absence of one: the engine has the node.
-		expect(isUnprobed('queued')).toBe(false);
 	});
 });

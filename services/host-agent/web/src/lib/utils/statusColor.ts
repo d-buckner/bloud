@@ -21,6 +21,12 @@ const DEFAULT_COLOR = 'var(--color-text-secondary)';
 const STATUS_COLORS: Record<string, string> = {
 	running: 'var(--color-success)',
 	active: 'var(--color-success)',
+	// A node the engine never reconciles: an external provider, the public
+	// address, or a catalog entry with no install. It is settled, so it reads
+	// settled. The hollow ring these used to draw looked like a state that went
+	// missing, and every reader stopped to look for the state that was never there.
+	external: 'var(--color-success)',
+	catalog: 'var(--color-success)',
 	error: 'var(--color-error)',
 	failed: 'var(--color-error)',
 	exited: 'var(--color-error)',
