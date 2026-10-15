@@ -5,6 +5,7 @@
 	import Icon from './Icon.svelte';
 	import type { CatalogApp } from '$lib/types';
 	import { getAppUrl } from '$lib/utils/appUrl';
+	import { formatSizeMB } from '$lib/utils/format';
 	import { catalogCardLabel, catalogCardState } from '$lib/utils/catalogCard';
 
 	interface Props {
@@ -30,12 +31,6 @@
 
 	function formatAppName(name: string): string {
 		return name.charAt(0).toUpperCase() + name.slice(1);
-	}
-
-	function formatSizeMB(mb?: number): string {
-		if (!mb || mb <= 0) return '';
-		if (mb >= 1024) return `~${(mb / 1024).toFixed(1)} GB`;
-		return `~${mb} MB`;
 	}
 </script>
 
@@ -183,21 +178,12 @@
 		cursor: default;
 	}
 
-	.app-card:hover :global(.app-icon img) {
-		filter: grayscale(0%);
-		opacity: 1;
-	}
-
-	.app-card.installed :global(.app-icon img) {
-		filter: grayscale(0%);
-		opacity: 1;
-	}
-
-	.app-card :global(.app-icon img) {
-		filter: grayscale(100%);
-		opacity: 0.8;
-		transition: filter 0.2s ease, opacity 0.2s ease;
-	}
+	/* Brand marks render as delivered. The card used to desaturate every icon that
+	   was not installed and bring the colour back on hover, which read the brand
+	   as decoration rather than as the thing you scan the grid for: greyscale
+	   Jellyfin and greyscale Jellyfin MCP are one grey square, and the icon is the
+	   only difference between them. The letter fallback in AppIcon is the one
+	   treatment an app without an icon gets, so both paths now look the same. */
 
 	.app-content {
 		/* min-content as the basis is what makes the wrap decision honest: the

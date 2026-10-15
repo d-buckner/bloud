@@ -59,6 +59,19 @@ export interface CatalogApp {
 	// Approximate total image download size, for pull expectations. Absent
 	// when unknown (no declared estimate and no local images to measure).
 	estimatedSizeMB?: number;
+	// The contracts this app consumes, keyed by contract name. The modal reads it
+	// to say which other apps an install wires up; see lib/utils/installBrief.ts.
+	integrations?: Record<string, IntegrationDecl>;
+	// One entry per container this app runs, so the modal can state the size of
+	// what gets created. The graph treats each entry as one node.
+	containers?: { name: string }[];
+}
+
+/** One `integrations:` entry of an app's metadata. */
+export interface IntegrationDecl {
+	required: boolean;
+	multi: boolean;
+	compatible: { app?: string; default?: boolean }[];
 }
 
 export interface Resources {
@@ -68,8 +81,11 @@ export interface Resources {
 }
 
 export interface SSO {
-	enabled?: boolean;
-	provider?: string;
+	// Exactly one of native-oidc, ldap, forward-auth, none (invariant 6).
+	strategy?: string;
+	providerName?: string;
+	// Bloud creates the app's own account for each Bloud user at first sign-in.
+	userCreation?: boolean;
 }
 
 export interface HealthCheck {
