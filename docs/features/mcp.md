@@ -1,8 +1,9 @@
 # Bloud MCP
 
-**Status:** Shipped. Five providers today: `apps/affine-mcp`, `apps/dav-mcp`,
-`apps/arr-mcp`, `apps/ha-mcp`, and `apps/penpot` (the app's own server), all
-consumed by Hermes. AFFiNE's own MCP server is deliberately not exposed.
+**Status:** Shipped. Six providers today: `apps/affine-mcp`, `apps/dav-mcp`,
+`apps/arr-mcp`, `apps/ha-mcp`, `apps/navidrome-mcp`, and `apps/penpot` (the app's
+own server), all consumed by Hermes. AFFiNE's own MCP server is deliberately not
+exposed.
 **Last updated:** 2026-10-14
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md),
 [plans/arr-mcp-provider.md](../plans/arr-mcp-provider.md) for a provider that
@@ -25,6 +26,7 @@ affine-mcp  (provides mcp)  <──┐
 dav-mcp  (provides mcp)    <──┼──  hermes (integrates mcp, optional + multi)
 arr-mcp  (provides mcp)    <──┤
 ha-mcp   (provides mcp)    <──┤
+navidrome-mcp  (provides mcp) <──┤
 penpot   (provides mcp)    <──┘
 ```
 
@@ -161,6 +163,32 @@ One property improved as a side effect. Because the key belongs to a specific
 profile, a Penpot tool call is attributable to a person in Penpot's own audit
 log, which is the attribution the [Open Questions](#open-questions) section says
 no other provider can offer.
+
+### What the sixth provider changed about the shape
+
+`apps/navidrome-mcp` wraps Navidrome, and it put pressure on two things the first
+five took for granted.
+
+- **A provider's credential does not have to be traded for a key.** The four
+  wrappers before it each held something the target's own sign-in validates, and
+  three of them spent it once: Jellyfin hands out an API key, Home Assistant a
+  long-lived token, and the wrapper caches what it minted. Navidrome speaks the
+  Subsonic protocol, which signs each request with the password itself and has no
+  key to mint. It reuses `mediaServer` anyway, because that contract carries a
+  login and never promised it would be spent: the key-minting step is
+  `apps/jellyfin`'s `EnsureAPIKey` helper, which a consumer reaches for only when
+  its provider offers one. What decides which providers arrive is the consumer's
+  `compatible:` list, so a music wrapper is never handed the video server's login.
+- **The bearer is enforced by the target image, so no gate container appeared.**
+  `ha-mcp` needed one because its image has no bearer concept. This image compares
+  the token Bloud publishes in constant time and answers 401 to anything else, so
+  the published port has no way around the check and one container is the whole
+  app.
+- **Its provider may be a machine Bloud does not run.** Navidrome now provides
+  `mediaServer`, which makes it registrable as an external app. An operator with
+  a Navidrome on another box registers it once, and the wrapper binds that origin
+  and that account with no branch in its configurator. See
+  [apps/navidrome-mcp/INTEGRATION.md](../../apps/navidrome-mcp/INTEGRATION.md).
 
 ### What removing the built-in server also removed
 
