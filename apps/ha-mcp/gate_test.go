@@ -13,7 +13,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // TestRenderNginxConfigIsDefaultDeny pins the three properties the gate is for:
@@ -104,7 +105,7 @@ func TestGatePostStartRequiresTheHandshake(t *testing.T) {
 	secrets := newFakeSecrets()
 	secrets.values[httpTokenKey] = bearer
 	c := NewGateConfigurator(0, configurator.Deps{Secrets: secrets})
-	c.api = newAPI(configurator.ClientFactory{}, func() string { return srv.URL })
+	c.api = newAPI(appclient.Factory{}, func() string { return srv.URL })
 
 	require.NoError(t, c.PostStart(context.Background(), nil))
 	require.Contains(t, got, "POST "+mcpPublicPath)
@@ -120,7 +121,7 @@ func TestGatePostStartFailsOnAGateThatCannotReachTheServer(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := NewGateConfigurator(0, configurator.Deps{})
-	c.api = newAPI(configurator.ClientFactory{}, func() string { return srv.URL })
+	c.api = newAPI(appclient.Factory{}, func() string { return srv.URL })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

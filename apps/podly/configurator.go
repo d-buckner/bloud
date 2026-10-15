@@ -30,8 +30,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 const appName = "podly"
@@ -105,12 +105,15 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Configurator{
+	c := &Configurator{
 		port:    port,
 		secrets: deps.Secrets,
-		api:     newAPI(deps.HTTP, func() string { return fmt.Sprintf("http://localhost:%d", port) }),
 		logger:  logger.With("app", appName),
 	}
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, func() string { return fmt.Sprintf("http://localhost:%d", port) })
+	}
+	return c
 }
 
 func (c *Configurator) Name() string {

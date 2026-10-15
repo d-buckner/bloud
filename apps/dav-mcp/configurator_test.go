@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -267,7 +268,7 @@ func TestWaitServingPresentsTheBearer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	api := newAPI(configurator.ClientFactory{}, func() string { return srv.URL })
+	api := newAPI(appclient.Factory{}, func() string { return srv.URL })
 	require.NoError(t, api.waitServing(context.Background(), "the-bearer"))
 	assert.Equal(t, "Bearer the-bearer", gotAuth)
 }
@@ -283,7 +284,7 @@ func TestWaitServingSendsNoAuthHeaderWithoutABearer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	api := newAPI(configurator.ClientFactory{}, func() string { return srv.URL })
+	api := newAPI(appclient.Factory{}, func() string { return srv.URL })
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 )
 
 // LDAP Infrastructure constants

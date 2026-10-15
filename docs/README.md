@@ -39,6 +39,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | A standalone MCP container for Home Assistant, and the token it has to mint | [plans/home-assistant-mcp.md](plans/home-assistant-mcp.md) |
 | Why adding an app touches 53% of its files outside `apps/`, and the six derivations that fix it | [plans/app-add-tax.md](plans/app-add-tax.md) |
 | A smaller, clearer app-SDK surface: group `Deps`, one `Secret` type, a binder table, then extract the SDK | [plans/configurator-sdk-surface.md](plans/configurator-sdk-surface.md) |
+| Putting the media library on a NAS: storage roots, and who may mount NFS | [plans/storage-roots.md](plans/storage-roots.md) |
 | In-flight designs | [plans/](plans/) |
 
 ## Sections

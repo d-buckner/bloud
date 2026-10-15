@@ -5,7 +5,7 @@ package jellyfin
 import (
 	"path/filepath"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
+	"codeberg.org/d-buckner/bloud/pkg/xmlutil"
 )
 
 // jellyfinNetworkConfig returns the desired XML config for network.xml.

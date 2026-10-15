@@ -12,9 +12,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 // The download-client provider every Servarr instance wires.
@@ -96,7 +96,7 @@ type PVRConfigurator struct {
 	// clients builds the provider client. The provider's address is only known
 	// once the binding is resolved, so the client is built per reconciliation
 	// rather than in the constructor.
-	clients configurator.ClientFactory
+	clients configurator.HTTPFactory
 
 	// secrets is where this instance publishes its own ApiKey for its
 	// consumers. Nil in degraded contexts (no secret store), which only skips
@@ -124,8 +124,10 @@ func NewPVRConfigurator(app PVRApp, port int, deps configurator.Deps) *PVRConfig
 		clients: deps.HTTP,
 		secrets: deps.Secrets,
 	}
-	c.api = NewClient(deps.HTTP, app.Name, app.APIPath, c.ownBaseURL)
-	c.own = deps.HTTP.New(appclient.Spec{Name: app.Name, BaseURLFn: c.ownBaseURL})
+	if deps.HTTP != nil {
+		c.api = NewClient(deps.HTTP, app.Name, app.APIPath, c.ownBaseURL)
+		c.own = deps.HTTP.New(appclient.Spec{Name: app.Name, BaseURLFn: c.ownBaseURL})
+	}
 	return c
 }
 

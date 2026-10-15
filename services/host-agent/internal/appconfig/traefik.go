@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // TraefikConfigurator manages the Traefik reverse proxy lifecycle.

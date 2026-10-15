@@ -3,7 +3,7 @@
 package hermes
 
 import (
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // registration is intentionally minimal: the host-agent registry instantiates

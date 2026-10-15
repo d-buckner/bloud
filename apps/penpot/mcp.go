@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // mcpStreamPath is the frontend's proxied MCP endpoint. Penpot's own nginx maps

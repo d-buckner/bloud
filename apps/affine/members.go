@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // memberPageLimit is how many member rows the diff reads. The AFFiNE resolver

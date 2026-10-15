@@ -12,7 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -231,7 +232,7 @@ func sseMessage(w http.ResponseWriter, payload string) {
 func TestPostStartToleratesStatelessServer(t *testing.T) {
 	secrets := newFakeSecrets()
 	secrets.values[seerrAPIKeyKey] = "derived-key"
-	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: configurator.ClientFactory{}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: appclient.Factory{}})
 	state := &configurator.AppState{
 		DataPath: t.TempDir(),
 		Integrations: configurator.Integrations{
@@ -286,7 +287,7 @@ func TestPostStartToleratesStatelessServer(t *testing.T) {
 // empty state, not a fault.
 func TestPostStartPassesWithNothingWired(t *testing.T) {
 	secrets := newFakeSecrets()
-	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: configurator.ClientFactory{}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: appclient.Factory{}})
 	state := &configurator.AppState{DataPath: t.TempDir()}
 	_, err := c.PreStart(t.Context(), state)
 	require.NoError(t, err)

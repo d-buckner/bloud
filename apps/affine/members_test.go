@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // graphqlMembers answers the shared-workspace membership surface of the fake:

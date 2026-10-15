@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 // The gate is the app's front door, in the literal sense: it is the container
@@ -49,9 +49,11 @@ func NewGateConfigurator(port int, deps configurator.Deps) *GateConfigurator {
 		secrets: deps.Secrets,
 		logger:  logger.With("app", appName, "node", gateNodeName),
 	}
-	c.api = newAPI(deps.HTTP, func() string {
-		return fmt.Sprintf("http://localhost:%d", c.port)
-	})
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, func() string {
+			return fmt.Sprintf("http://localhost:%d", c.port)
+		})
+	}
 	return c
 }
 

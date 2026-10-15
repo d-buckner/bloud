@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // fakeSecrets implements configurator.AppSecretsProvider with an in-memory map,

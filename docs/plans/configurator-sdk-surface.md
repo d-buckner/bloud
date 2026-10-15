@@ -240,13 +240,9 @@ incomplete; name the missing derivation here rather than absorbing it.
 
 ## Open questions
 
-1. Step 2's churn: is the `Secret` defined type worth the `string(...)`
-   conversions across consumers, or is the doc-only fallback the right call?
-   Decide by measuring the diff; the rule consolidation is the goal, not the
-   type.
-2. The SDK module's import path and its relationship to `internal/`: does it
-   live under a new `services/app-sdk/` (earning its own directory under the
-   invariant 13 rule), or stay under `pkg/` and only gain its own `go.mod`?
-   Invariant 13 says a new `services/<name>` requires shipping to a machine
-   where host-agent does not run, so the app-SDK is arguably not that; resolve
-   the wording in step 4's plan.
+1. **Resolved** (#333, 2026-10-14): the typed `Secret` shipped. It carries a
+   `String()` method, so a consumer hands a credential to a string-typed API
+   with `s.String()`.
+2. **Resolved** ([app-sdk-module.md](app-sdk-module.md)): the SDK is a
+   top-level `pkg/` module (`codeberg.org/d-buckner/bloud/pkg`). It is not a
+   `services/` directory, so invariant 13 does not apply.

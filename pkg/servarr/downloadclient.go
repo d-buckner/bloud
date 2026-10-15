@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 )
 
 const (

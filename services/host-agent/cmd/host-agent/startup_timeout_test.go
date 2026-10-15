@@ -5,8 +5,8 @@ package main
 import (
 	"testing"
 
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 )
 
 // TestStartupGateExceedsNodePhaseBudget pins the coupling that keeps one bad

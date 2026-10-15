@@ -10,7 +10,7 @@ package orchestrator
 import (
 	"context"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
 )
 
 // ── Dependency interfaces ─────────────────────────────────────────────────

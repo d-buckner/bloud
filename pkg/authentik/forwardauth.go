@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 )
 
 // EnsureForwardAuthApplication creates or verifies the Authentik proxy provider and

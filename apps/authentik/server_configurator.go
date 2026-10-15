@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	authentikClient "codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	authentikClient "codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 // appName is the catalog ID this node belongs to. It is the name the host

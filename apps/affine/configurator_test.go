@@ -19,7 +19,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 func quietLogger() *slog.Logger {
@@ -58,7 +59,7 @@ func configuratorForServer(t *testing.T, handler http.Handler, secrets configura
 	require.NoError(t, err)
 	_, err = fmt.Sscanf(portStr, "%d", &port)
 	require.NoError(t, err)
-	c := NewConfigurator(port, configurator.Deps{Secrets: secrets, Logger: quietLogger()})
+	c := NewConfigurator(port, configurator.Deps{Secrets: secrets, Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = fmt.Sprintf("http://localhost:%d", port)
 	return c
 }
@@ -386,6 +387,7 @@ func TestEnsureBootstrapAdmin_UsesOperatorEmail(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{
 		Secrets: &fakeSecrets{password: "test-password-123"},
 		Logger:  quietLogger(),
+		HTTP:    appclient.Factory{},
 		Identity: configurator.IdentityDeps{
 			OperatorEmail: "admin@localhost.local",
 		},

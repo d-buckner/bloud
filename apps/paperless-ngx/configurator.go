@@ -18,9 +18,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/bootstrap"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/bootstrap"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 const appName = "paperless-ngx"
@@ -124,12 +124,14 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		secrets:    deps.Secrets,
 		logger:     logger.With("app", appName),
 	}
-	c.api = newAPI(deps.HTTP, func() string {
-		if c.baseURL != "" {
-			return c.baseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", c.port)
-	})
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, func() string {
+			if c.baseURL != "" {
+				return c.baseURL
+			}
+			return fmt.Sprintf("http://localhost:%d", c.port)
+		})
+	}
 	return c
 }
 

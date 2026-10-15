@@ -11,10 +11,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/servarr"
 )
 
 const (
@@ -167,7 +167,7 @@ type Configurator struct {
 	// clients builds the host-side clients for the resolved providers. A
 	// provider's address is only known once its binding is resolved, so they
 	// are built per reconciliation rather than in the constructor.
-	clients configurator.ClientFactory
+	clients configurator.HTTPFactory
 
 	// baseURL is a test seam: when set, the API client resolves to it instead
 	// of localhost:port. Never used to build request URLs by hand.
@@ -189,12 +189,14 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger:  logger.With("app", appName),
 		clients: deps.HTTP,
 	}
-	c.api = newAPI(deps.HTTP, func() string {
-		if c.baseURL != "" {
-			return c.baseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", c.port)
-	})
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, func() string {
+			if c.baseURL != "" {
+				return c.baseURL
+			}
+			return fmt.Sprintf("http://localhost:%d", c.port)
+		})
+	}
 	return c
 }
 

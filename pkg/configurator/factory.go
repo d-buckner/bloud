@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appasset"
 )
 
 // Deps carries the host-side inputs app configurator factories need.
@@ -27,15 +25,16 @@ type Deps struct {
 	// degraded/CLI contexts; factories must tolerate nil).
 	Secrets AppSecretsProvider
 
-	// HTTP builds app HTTP clients for this process: shared transport,
-	// default retry policy, shared logger. The zero value is usable (lazy
-	// defaults), so a configurator can always call deps.HTTP.New(...).
-	HTTP ClientFactory
+	// HTTP builds app HTTP clients. The host injects the concrete
+	// appclient.Factory. It is nil in CLI and test contexts, and a
+	// configurator that needs one must treat nil as "not available".
+	HTTP HTTPFactory
 
-	// Assets installs static/downloaded files with the shared content
-	// cache. The zero value is usable. Populated by the host runtime; see
-	// pkg/appasset.
-	Assets appasset.Installer
+	// Assets installs static or downloaded files with the shared content
+	// cache. The host injects the concrete appasset.Installer. It is nil in
+	// CLI and test contexts, and a configurator that installs assets must
+	// treat nil as "cannot apply now".
+	Assets AssetInstaller
 
 	// Identity is the person who runs the instance, as the identity provider
 	// knows them.

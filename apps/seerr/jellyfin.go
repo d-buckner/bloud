@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"os"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // Seerr's Jellyfin coupling: the API key Seerr mints *into Jellyfin* while it

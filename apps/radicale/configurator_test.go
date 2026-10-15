@@ -15,7 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +32,7 @@ func quietLogger() *slog.Logger {
 // which is how the unreachable case is exercised.
 func newTestConfigurator(t *testing.T, app http.Handler) (*Configurator, string) {
 	t.Helper()
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	if app != nil {
 		server := httptest.NewServer(app)
 		t.Cleanup(server.Close)

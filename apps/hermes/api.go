@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // hermesAPI is the typed surface over the Hermes dashboard HTTP API.
@@ -20,7 +20,7 @@ type hermesAPI struct {
 
 // newAPI builds the typed client against a base-URL resolver using the
 // shared HTTP factory.
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *hermesAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *hermesAPI {
 	return &hermesAPI{cl: f.New(appclient.Spec{Name: "hermes", BaseURLFn: baseURLFn})}
 }
 

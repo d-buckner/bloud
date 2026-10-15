@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"slices"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // buildAppState constructs a configurator.AppState for the given app ID

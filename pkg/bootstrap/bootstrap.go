@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // Account is the internal admin identity a configurator drives an app's own

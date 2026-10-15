@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // affineAPI is the typed surface over AFFiNE's HTTP API.
@@ -34,7 +34,10 @@ type affineAPI struct {
 }
 
 // newAPI builds the typed client against a base-URL resolver.
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *affineAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *affineAPI {
+	if f == nil {
+		return nil
+	}
 	// The only error case is a nil cookie-jar option, which this call does
 	// not pass.
 	jar, _ := cookiejar.New(nil)

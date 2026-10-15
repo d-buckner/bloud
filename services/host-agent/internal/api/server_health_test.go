@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 func newMinimalOrchestrator(t *testing.T) *orchestrator.Orchestrator {

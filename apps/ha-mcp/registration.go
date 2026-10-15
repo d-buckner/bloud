@@ -3,7 +3,7 @@
 package hamcp
 
 import (
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // Both nodes of this app get their own configurator, the same way Radicale's

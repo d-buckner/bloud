@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // realCatalogDir points at the checked-in catalog. Tests using it load the real

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // personalPrefix namespaces a personal collection by name rather than by path,

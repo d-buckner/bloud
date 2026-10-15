@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // DeriveAPIKey logs into Seerr with the Jellyfin credentials its admin account
@@ -25,7 +25,7 @@ import (
 // independent local account for its admin, so this login-and-read is the only
 // way to hand a consumer the key without asking an operator to copy it out of
 // the UI.
-func DeriveAPIKey(ctx context.Context, f configurator.ClientFactory, baseURLFn func() string, username, password string) (string, error) {
+func DeriveAPIKey(ctx context.Context, f configurator.HTTPFactory, baseURLFn func() string, username, password string) (string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return "", fmt.Errorf("creating the Seerr session cookie jar: %w", err)

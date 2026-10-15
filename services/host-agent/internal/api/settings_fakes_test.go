@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
 )
 
 // FakeSettingsAuthentikClient implements AuthentikUserManagerInterface for testing.

@@ -3,7 +3,7 @@
 package hermeswebui
 
 import (
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // The host-agent registry instantiates this factory lazily on the first lookup

@@ -5,8 +5,8 @@ package inference
 import (
 	"log/slog"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // MigrateUpstreamsToExternal moves the AI upstreams out of the settings KV and

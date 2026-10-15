@@ -13,11 +13,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // aiSettingsModule owns the AI settings surface: the upstream list, the instance

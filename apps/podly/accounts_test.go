@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // newAppConfigurator wires a configurator to a running fake instead of to the
@@ -20,7 +21,7 @@ func newAppConfigurator(t *testing.T, secrets configurator.AppSecretsProvider, s
 	return &Configurator{
 		port:    defaultPort,
 		secrets: secrets,
-		api:     newAPI(configurator.ClientFactory{}, func() string { return srv.URL }),
+		api:     newAPI(appclient.Factory{}, func() string { return srv.URL }),
 		logger:  quietLogger(),
 	}
 }

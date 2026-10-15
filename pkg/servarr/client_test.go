@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 )
 
 const (
@@ -127,7 +127,7 @@ func clientForServer(t *testing.T, fake *fakeHostConfig) *Client {
 	t.Helper()
 	server := httptest.NewServer(fake.handler())
 	t.Cleanup(server.Close)
-	return NewClient(configurator.ClientFactory{}, testApp, testAPI, staticBaseURL(server.URL))
+	return NewClient(appclient.Factory{}, testApp, testAPI, staticBaseURL(server.URL))
 }
 
 // staticBaseURL adapts a fixed URL to the client's func() string seam.
@@ -305,7 +305,7 @@ func TestNewClient_NormalizesAPIPath(t *testing.T) {
 		server := httptest.NewServer(fake.handler())
 		t.Cleanup(server.Close)
 
-		c := NewClient(configurator.ClientFactory{}, "prowlarr", apiPath, staticBaseURL(server.URL))
+		c := NewClient(appclient.Factory{}, "prowlarr", apiPath, staticBaseURL(server.URL))
 		if _, err := c.EnsureExternalAuth(context.Background(), testAPIKey); err != nil {
 			t.Fatalf("EnsureExternalAuth(%q) error = %v", apiPath, err)
 		}

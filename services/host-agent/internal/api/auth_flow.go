@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"net/url"
 
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 )
 
 // LoginHandler initiates the OIDC login flow.

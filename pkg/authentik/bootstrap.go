@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 )
 
 // Bloud's own identity inside Authentik: the admin account the setup wizard

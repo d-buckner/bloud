@@ -15,7 +15,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // fakeCompanionHA is the slice of Home Assistant the companion token needs: the
@@ -229,7 +230,7 @@ func (s *companionSecrets) DeleteAppSecrets(string) error               { return
 
 // newCompanionConfigurator wires a configurator at the fake instance.
 func newCompanionConfigurator(t *testing.T, fake *fakeCompanionHA, secrets *companionSecrets) *Configurator {
-	c := NewConfigurator(0, configurator.Deps{Secrets: secrets})
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: appclient.Factory{}})
 	c.baseURLOverride = fake.server().URL
 	return c
 }

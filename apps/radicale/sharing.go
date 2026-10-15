@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 const (

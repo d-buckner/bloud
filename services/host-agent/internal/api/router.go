@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
@@ -22,8 +24,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"

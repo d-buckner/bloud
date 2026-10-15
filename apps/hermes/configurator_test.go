@@ -19,7 +19,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 func quietLogger() *slog.Logger {
@@ -27,14 +28,14 @@ func quietLogger() *slog.Logger {
 }
 
 func TestName(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	if got := c.Name(); got != "apps-hermes" {
 		t.Fatalf("Name() = %q, want apps-hermes", got)
 	}
 }
 
 func TestDefaultPort(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	if c.port != 9119 {
 		t.Fatalf("default port = %d, want 9119", c.port)
 	}
@@ -53,7 +54,7 @@ func TestAppExternalURL(t *testing.T) {
 }
 
 func TestAppExternalURLEmptyFallsBack(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	if got := c.appExternalURL(); got != "http://hermes.localhost:8080" {
 		t.Fatalf("appExternalURL() with no base = %q, want fallback", got)
 	}
@@ -148,7 +149,7 @@ func TestPreStartPreservesOtherKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
 		ClientID:  "hermes-client",
 		IssuerURL: "http://sso.local/application/o/hermes/",
@@ -185,7 +186,7 @@ func TestPreStartSSOOffStripsOIDC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	state := &configurator.AppState{DataPath: dir, SSOEnabled: false}
 	changed, err := c.PreStart(context.Background(), state)
 	if err != nil {
@@ -217,7 +218,7 @@ func TestPreStartSSOOffStripsOIDC(t *testing.T) {
 // own first-boot seeding) and must report changed=false.
 func TestPreStartSSOOffNoWriteWhenNothingToDo(t *testing.T) {
 	dir := t.TempDir()
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: dir, SSOEnabled: false})
 	if err != nil {
 		t.Fatalf("PreStart: %v", err)
@@ -241,7 +242,7 @@ func TestPreStartRejectsCorruptConfig(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte("dashboard: [unclosed\n  bad: : :\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	_, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: dir, SSOEnabled: true,
 		OIDC: &configurator.OIDCOutput{ClientID: "x", IssuerURL: "http://i"}})
 	if err == nil {
@@ -264,7 +265,7 @@ func TestPostStartSucceedsWhenServing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = srv.URL
 	err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: true,
 		OIDC: &configurator.OIDCOutput{ClientID: "c", IssuerURL: "http://i"}})
@@ -289,7 +290,7 @@ func TestPostStartFailsWhenProviderNotSelfHosted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = srv.URL
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -313,7 +314,7 @@ func TestPostStartSkipsSSOCheckWhenSSOOff(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = srv.URL
 	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
 		t.Fatalf("PostStart (SSO off): %v", err)
@@ -894,7 +895,7 @@ func TestReadConfig_NoRuntimeNamesTheCause(t *testing.T) {
 	}
 	unreadableByHost(t, cfgPath)
 
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	_, err := c.readConfig(context.Background(), cfgPath)
 	if err == nil {
 		t.Fatal("expected an error with no Exec available")
@@ -1222,7 +1223,7 @@ func TestPublishAgentModelName(t *testing.T) {
 
 func TestPublishAgentModelNameSkipsEmptyAndNilStore(t *testing.T) {
 	// No store: a publish is skipped, not a panic.
-	NewConfigurator(0, configurator.Deps{Logger: quietLogger()}).publishAgentModelName("anything")
+	NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}}).publishAgentModelName("anything")
 
 	// Empty default: the contract marks modelName optional, so an agent with
 	// no preference leaves the consumer's own default standing.
@@ -1238,7 +1239,7 @@ func TestPublishAgentModelNameSkipsEmptyAndNilStore(t *testing.T) {
 // source 0755 owned by the host agent, which is readable by Hermes and unwritable
 // by hermes-webui, so the mode has to be raised here for uploads to land at all.
 func TestPrepareInboxCreatesAndWidensTheSharedTree(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	state := &configurator.AppState{DataPath: t.TempDir(), BloudDataPath: t.TempDir()}
 
 	if err := c.prepareInbox(state); err != nil {
@@ -1264,7 +1265,7 @@ func TestPrepareInboxCreatesAndWidensTheSharedTree(t *testing.T) {
 // lost its bits gets them back. The orchestrator creates every mount source 0755
 // (orchestrator/execution.go, ensureMountDirs), so this is not a hypothetical.
 func TestPrepareInboxRepairsANarrowedInbox(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	state := &configurator.AppState{DataPath: t.TempDir(), BloudDataPath: t.TempDir()}
 
 	if err := c.prepareInbox(state); err != nil {
@@ -1304,7 +1305,7 @@ func inboxMode(info os.FileInfo) os.FileMode {
 // wiring down with it. What it must not do is fall back to a relative path and
 // scatter a shared-trees/hermes/inbox directory into the host agent's working directory.
 func TestPrepareInboxWithoutASharedRootIsNotFatal(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 
 	if err := c.prepareInbox(&configurator.AppState{DataPath: t.TempDir()}); err != nil {
 		t.Fatalf("prepareInbox with no shared root: %v", err)

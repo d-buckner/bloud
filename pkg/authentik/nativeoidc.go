@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 )
 
 // defaultAccessTokenValidity is the access token lifetime of a native-oidc

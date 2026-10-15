@@ -12,7 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/slug"
+	"codeberg.org/d-buckner/bloud/pkg/slug"
 )
 
 // Loader handles loading app definitions from YAML files

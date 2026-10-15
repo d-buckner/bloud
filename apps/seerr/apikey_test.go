@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 )
 
 // TestDeriveAPIKey pins the login-and-read flow: the Jellyfin login sets a
@@ -34,7 +34,7 @@ func TestDeriveAPIKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	key, err := DeriveAPIKey(context.Background(), configurator.ClientFactory{}, func() string { return srv.URL }, "daniel", "pw")
+	key, err := DeriveAPIKey(context.Background(), appclient.Factory{}, func() string { return srv.URL }, "daniel", "pw")
 	if err != nil {
 		t.Fatalf("DeriveAPIKey() error = %v", err)
 	}
@@ -58,7 +58,7 @@ func TestDeriveAPIKeyRejectsBadLogin(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := DeriveAPIKey(context.Background(), configurator.ClientFactory{}, func() string { return srv.URL }, "daniel", "wrong"); err == nil {
+	if _, err := DeriveAPIKey(context.Background(), appclient.Factory{}, func() string { return srv.URL }, "daniel", "wrong"); err == nil {
 		t.Fatal("DeriveAPIKey() succeeded with a refused login, want error")
 	}
 }
@@ -80,7 +80,7 @@ func TestDeriveAPIKeyRejectsMissingKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := DeriveAPIKey(context.Background(), configurator.ClientFactory{}, func() string { return srv.URL }, "daniel", "pw"); err == nil {
+	if _, err := DeriveAPIKey(context.Background(), appclient.Factory{}, func() string { return srv.URL }, "daniel", "pw"); err == nil {
 		t.Fatal("DeriveAPIKey() succeeded with no apiKey in settings, want error")
 	}
 }

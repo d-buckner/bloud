@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
+	"codeberg.org/d-buckner/bloud/pkg/xmlutil"
 )
 
 // apiKeyPattern is the shape Servarr itself generates: 32 lowercase hex chars.

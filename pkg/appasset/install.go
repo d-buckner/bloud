@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 )
 
 // Installer installs Assets with a shared content cache. The zero value is

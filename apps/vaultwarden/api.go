@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 const (
@@ -54,7 +54,7 @@ type vaultwardenAPI struct {
 
 // newAPI builds the typed clients against a base-URL resolver using the shared
 // HTTP factory.
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *vaultwardenAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *vaultwardenAPI {
 	return &vaultwardenAPI{
 		cl: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn}),
 		noRedirect: f.New(appclient.Spec{

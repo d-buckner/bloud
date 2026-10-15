@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +35,7 @@ func logSink(t *testing.T) (*slog.Logger, *bytes.Buffer) {
 func newTestConfigurator(t *testing.T, app http.Handler) *Configurator {
 	t.Helper()
 	logger, _ := logSink(t)
-	c := NewConfigurator(0, configurator.Deps{Logger: logger})
+	c := NewConfigurator(0, configurator.Deps{Logger: logger, HTTP: appclient.Factory{}})
 	if app != nil {
 		server := httptest.NewServer(app)
 		t.Cleanup(server.Close)

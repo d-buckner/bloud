@@ -5,11 +5,11 @@ package orchestrator
 import (
 	"fmt"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // providerSource identifies one provider of one contract: either an installed

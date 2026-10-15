@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 const appName = "qbittorrent"
@@ -112,15 +112,17 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger:       logger.With("app", appName),
 		pollInterval: 2 * time.Second,
 	}
-	c.api = deps.HTTP.New(appclient.Spec{
-		Name: appName,
-		BaseURLFn: func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		},
-	})
+	if deps.HTTP != nil {
+		c.api = deps.HTTP.New(appclient.Spec{
+			Name: appName,
+			BaseURLFn: func() string {
+				if c.baseURL != "" {
+					return c.baseURL
+				}
+				return fmt.Sprintf("http://localhost:%d", c.port)
+			},
+		})
+	}
 	return c
 }
 

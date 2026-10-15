@@ -11,7 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // inferenceConfigurator wires a configurator to a fake AFFiNE and a recording
@@ -20,7 +21,7 @@ func inferenceConfigurator(t *testing.T, fake *fakeAffine, secrets *storeSecrets
 	t.Helper()
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
-	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = server.URL
 	return c
 }

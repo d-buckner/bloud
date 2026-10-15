@@ -17,7 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 func quietLogger() *slog.Logger {
@@ -83,7 +84,7 @@ func configPath(dataDir string) string {
 
 func configuratorForServer(t *testing.T, url string) *Configurator {
 	t.Helper()
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = url
 	return c
 }
@@ -172,7 +173,7 @@ func TestPreStart_WithoutWorkspaceScopeOmitsThePin(t *testing.T) {
 }
 
 func TestPreStart_NilSecretsSafeAndConverges(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	dir := t.TempDir()
 
 	first, err := c.PreStart(context.Background(), stateWithAffine(dir))

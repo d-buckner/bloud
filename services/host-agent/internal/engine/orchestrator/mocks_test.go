@@ -7,12 +7,12 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // MockAppStore implements store.AppStoreInterface for testing

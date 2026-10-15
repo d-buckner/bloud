@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // configJSPath is the file the frontend image renders from its environment at
@@ -48,7 +48,7 @@ type penpotAPI struct {
 	cl *appclient.Client
 }
 
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *penpotAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *penpotAPI {
 	return &penpotAPI{cl: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn})}
 }
 

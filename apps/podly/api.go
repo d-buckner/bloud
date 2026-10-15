@@ -8,8 +8,8 @@ import (
 	"net/http/cookiejar"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // Podly's own HTTP surface, as far as Bloud needs it. Everything here is the
@@ -53,7 +53,7 @@ type podlyAPI struct {
 	sess *appclient.Client
 }
 
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *podlyAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *podlyAPI {
 	// The only error case is a nil cookie-jar option, which this call does not
 	// pass.
 	jar, _ := cookiejar.New(nil)

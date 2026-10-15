@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

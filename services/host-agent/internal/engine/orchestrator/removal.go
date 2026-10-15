@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"os"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // deprovisionAppSSO removes the identity-provider objects Bloud created for

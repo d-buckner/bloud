@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // Client provides access to the Authentik API. It wraps a single
@@ -64,7 +64,7 @@ func NewClient(baseURL, token string) *Client {
 // client's appclient spec, so the Authentik client reuses the host's connection
 // pool instead of owning one. Fields already set on the spec (retry, timeout,
 // auth) win over the factory defaults.
-func (c *Client) WithClientFactory(f configurator.ClientFactory) *Client {
+func (c *Client) WithClientFactory(f configurator.HTTPFactory) *Client {
 	c.cl = f.New(c.spec)
 	return c
 }

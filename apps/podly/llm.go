@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 // llmStateFileName records what Bloud last applied to the app's llm section.

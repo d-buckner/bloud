@@ -19,10 +19,10 @@ import (
 	"sync"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/servarr"
+	"codeberg.org/d-buckner/bloud/pkg/xmlutil"
 )
 
 const (
@@ -530,7 +530,7 @@ func configuratorForServerWith(t *testing.T, fake *fakeProwlarr, retry appclient
 	t.Cleanup(server.Close)
 
 	c := NewConfigurator(0, configurator.Deps{
-		HTTP:   configurator.ClientFactory{Retry: retry},
+		HTTP:   appclient.Factory{Retry: retry},
 		Logger: quietLogger(),
 	})
 	c.baseURL = server.URL
@@ -543,7 +543,7 @@ func applicationsForServer(t *testing.T, fake *fakeProwlarr, apiKey string) *app
 	t.Helper()
 	server := httptest.NewServer(fake.handler())
 	t.Cleanup(server.Close)
-	return newApplicationsAPI(configurator.ClientFactory{}, func() string { return server.URL }, apiKey)
+	return newApplicationsAPI(appclient.Factory{}, func() string { return server.URL }, apiKey)
 }
 
 // wantApplicationJSON is the exact document Bloud must send for one PVR. It is

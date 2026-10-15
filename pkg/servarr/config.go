@@ -35,7 +35,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
+	"codeberg.org/d-buckner/bloud/pkg/xmlutil"
 )
 
 const (

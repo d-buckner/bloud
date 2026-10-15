@@ -5,7 +5,7 @@ package jellyfin
 import (
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 )
 
 // Jellyfin's first-run behavior needs specific poll shapes; each is declared

@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 const (
@@ -40,7 +40,7 @@ type Client struct {
 
 // NewClient builds the client. apiPath is the versioned API root without
 // slashes: "api/v3" (Sonarr/Radarr) or "api/v1" (Prowlarr).
-func NewClient(f configurator.ClientFactory, name, apiPath string, baseURLFn func() string) *Client {
+func NewClient(f configurator.HTTPFactory, name, apiPath string, baseURLFn func() string) *Client {
 	return &Client{
 		name:    name,
 		apiPath: strings.Trim(apiPath, "/"),

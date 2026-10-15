@@ -44,7 +44,7 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/sonarr"
 	_ "codeberg.org/d-buckner/bloud/apps/vaultwarden"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // NodeNames returns the node name each user app registers a configurator

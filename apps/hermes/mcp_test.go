@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // mcpState builds an app state carrying the given MCP bindings, with no

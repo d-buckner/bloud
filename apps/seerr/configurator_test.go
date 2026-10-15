@@ -22,7 +22,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 func quietLogger() *slog.Logger {
@@ -514,7 +515,7 @@ func newConfigurator(t *testing.T, fake *fakeSeerr, secrets configurator.AppSecr
 	server := httptest.NewServer(http.HandlerFunc(fake.serveHTTP))
 	t.Cleanup(server.Close)
 
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Secrets: secrets})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Secrets: secrets, HTTP: appclient.Factory{}})
 	c.baseURL = server.URL
 	return c
 }

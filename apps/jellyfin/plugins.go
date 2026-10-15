@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appasset"
+	"codeberg.org/d-buckner/bloud/pkg/appasset"
 )
 
 // ensureLDAPPlugin installs the LDAP-Auth plugin via the shared asset
@@ -17,6 +17,9 @@ import (
 // callback asserts the archive actually contains the expected DLL before
 // anything lands in the destination.
 func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (bool, error) {
+	if c.assets == nil {
+		return false, nil
+	}
 	pluginDir := filepath.Join(dataPath, "config", "plugins", "LDAP-Auth")
 	return c.assets.Install(ctx, appasset.Asset{
 		Name:     "jellyfin-ldap-auth",

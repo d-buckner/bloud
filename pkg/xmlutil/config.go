@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 	"github.com/beevik/etree"
 )
 

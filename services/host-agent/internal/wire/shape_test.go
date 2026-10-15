@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/apps"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // repoAppsDir locates the catalog directory at the repo root by walking up

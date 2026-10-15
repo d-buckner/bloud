@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // mediaBrowserIdentity is the unauthenticated MediaBrowser auth header Jellyfin
@@ -65,7 +65,7 @@ type jellyfinAPI struct {
 
 // newAPI builds the typed client against a base-URL resolver using the shared
 // HTTP factory.
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *jellyfinAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *jellyfinAPI {
 	return &jellyfinAPI{cl: f.New(appclient.Spec{Name: "jellyfin", BaseURLFn: baseURLFn})}
 }
 
@@ -103,7 +103,7 @@ type apiKeyList struct {
 // not. Lookup before create, because create is not idempotent: Jellyfin appends
 // a new key every time, so a configurator that minted without looking would
 // stack identical keys on every database reset that re-ran the pass.
-func EnsureAPIKey(ctx context.Context, f configurator.ClientFactory, baseURLFn func() string, username, password, keyName string) (string, error) {
+func EnsureAPIKey(ctx context.Context, f configurator.HTTPFactory, baseURLFn func() string, username, password, keyName string) (string, error) {
 	return newAPI(f, baseURLFn).ensureAPIKey(ctx, username, password, keyName)
 }
 
