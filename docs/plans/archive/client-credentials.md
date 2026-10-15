@@ -10,7 +10,7 @@
 > the auth bypass, which closed on 2026-09-19.
 >
 > This answers open questions 3 and 4 of
-> [`../hermes-gateway.md`](../hermes-gateway.md) at the platform level rather than
+> [`hermes-gateway.md`](hermes-gateway.md) at the platform level rather than
 > per app. Facts below were verified against the tree and the pinned Hermes image
 > on 2026-10-06.
 >

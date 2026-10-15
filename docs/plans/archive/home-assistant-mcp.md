@@ -326,7 +326,7 @@ needs cleanup, which the data wipe covers.
   automation and config writes.
 - The published port is on `0.0.0.0` of the Bloud host, like every app today. The
   gate is what makes that survivable. Loopback-only publishing is already tracked
-  as Phase 4 of `docs/plans/mcp-integrations.md`.
+  as Phase 4 of `docs/plans/archive/mcp-integrations.md`.
 - `READ_ONLY_MODE` exists upstream and is off by default. Leave it off: an agent
   that can only read Home Assistant is not worth a container. Document it as the
   opt-in for a household that wants a read-only agent.

@@ -16,7 +16,7 @@
 # Plan: Tech-Debt Repayment
 
 **Sources:** `docs/operations/tech-debt.md` (the ledger; re-ranked 2026-09-19) and
-`docs/specs/review-2026-09-19.md` (the audit that added PRs 6-11).
+`docs/reviews/2026-09-19.md` (the audit that added PRs 6-11).
 
 **Goal:** execute the ledger's open inventory as small, independently mergeable
 PRs, ordered so each one builds only on what already landed.

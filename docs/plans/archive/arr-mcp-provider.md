@@ -255,6 +255,6 @@ bump as a review of the tool surface rather than a dependency refresh.
 - [plans/native-mcp-endpoint.md](../native-mcp-endpoint.md): the tools no wrapper can
   write. Orthogonal to this one; installing apps grows that surface, installing
   this grows its own.
-- [plans/media-stack-integration.md](../media-stack-integration.md): the app-side
+- [plans/archive/media-stack-integration.md](media-stack-integration.md): the app-side
   wiring this provider reads rather than duplicates.
 - [guides/contributing-apps.md](../../guides/contributing-apps.md).
