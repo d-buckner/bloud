@@ -12,6 +12,15 @@
 #
 # Everything else is identical to the Authentik upstream file.
 #
+# The file also declares one flow upstream does not ship: bloud-ldap-bind, the
+# flow the LDAP outpost runs for a bind. It reuses this flow's stages but ends
+# in its own login stage with a one hour session, because in cached bind mode
+# the outpost keeps a successful bind until that session expires. Through the
+# 90-day stage above, a changed password or a deactivated user would keep
+# binding over LDAP for 90 days. It lives in this file so the stages it shares
+# are referenced by key and land in the same apply. See the "LDAP Bind Cache"
+# section of integration.md.
+#
 # The session duration belongs here rather than in a PostStart PATCH because the
 # login stage is what authentik's own session expiry reads
 # (UserLoginStageView.set_session_duration), and the blueprint is re-applied by
@@ -129,3 +138,38 @@ entries:
     policy: !KeyOf default-authentication-flow-authenticator-validate-optional
   attrs:
     failure_result: true
+- attrs:
+    designation: authentication
+    name: Bloud LDAP bind
+    title: Bloud LDAP bind
+    authentication: none
+  identifiers:
+    slug: bloud-ldap-bind
+  model: authentik_flows.flow
+  id: ldap-bind-flow
+- attrs:
+    session_duration: hours=1
+  identifiers:
+    name: bloud-ldap-bind-login
+  id: bloud-ldap-bind-login
+  model: authentik_stages_user_login.userloginstage
+- identifiers:
+    order: 10
+    stage: !KeyOf default-authentication-identification
+    target: !KeyOf ldap-bind-flow
+  model: authentik_flows.flowstagebinding
+- identifiers:
+    order: 20
+    stage: !KeyOf default-authentication-password
+    target: !KeyOf ldap-bind-flow
+  model: authentik_flows.flowstagebinding
+- identifiers:
+    order: 30
+    stage: !KeyOf default-authentication-mfa-validation
+    target: !KeyOf ldap-bind-flow
+  model: authentik_flows.flowstagebinding
+- identifiers:
+    order: 100
+    stage: !KeyOf bloud-ldap-bind-login
+    target: !KeyOf ldap-bind-flow
+  model: authentik_flows.flowstagebinding

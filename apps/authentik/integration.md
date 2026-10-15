@@ -79,6 +79,49 @@ What this does not change:
 - **Existing sessions.** A session issued before the change keeps its old
   expiry; the new duration applies to logins from that point on.
 
+## LDAP Bind Cache
+
+The LDAP provider runs in **cached** bind mode through its own flow,
+`bloud-ldap-bind`, declared in `auth.yaml` next to the default flow. A bind is
+remembered for **one hour**.
+
+In direct mode every bind ran the whole authentication flow against
+authentik-server: eight HTTP requests, one of them a PBKDF2 password check.
+Measured on a dev instance, a bind cost 1.7 to 2.3s, and Radicale binds twice per
+CalDAV request, so every authenticated calendar request took about 4s (issue
+#237). Cached mode answers a repeat bind from the outpost's memory in about 0.1s.
+
+Direct mode also stored an Authentik session for every bind, and through the
+default flow's login stage each one lived 90 days. 13 test binds left 13
+sessions. A calendar client syncing every few minutes would leave thousands.
+
+The cache is keyed on the bind DN and password, and an entry lives as long as
+the session the bind flow issued. That lifetime is why the provider cannot run
+cached mode on the default flow: there it would be 90 days. `bloud-ldap-bind`
+reuses the default flow's identification, password, and MFA stages and ends in
+its own login stage with `session_duration: hours=1`.
+
+What one hour costs, verified against the live outpost:
+
+- **A changed password keeps working over LDAP until its entry expires.** The
+  new password works at once (it misses the cache and runs the flow), but the
+  old one is still answered from memory.
+- **A deactivated user keeps binding** with any password already cached.
+  Deleting the user denies the bind at once.
+- Nothing evicts an entry early. Authentik's session-end event closes open LDAP
+  connections but leaves the bind cache alone. Restarting `apps-authentik-ldap`
+  is the only flush. Bloud's own user management can create, delete, and change
+  roles, but password changes and deactivation happen in Authentik, so Bloud has
+  no point at which to flush.
+
+The outpost also caches a failed bind, which is harmless for a wrong password. A
+bind made while authentik-server is fully down returns an operations error and is
+not cached, so an outage does not lock a correct password out afterwards.
+
+`ensureLDAPProvider` (`pkg/authentik/ldap.go`) moves an
+existing provider onto the bind flow and cached mode in one PATCH, and writes
+nothing once it matches. It never sets cached mode without the bind flow.
+
 ## SSO Integration for Other Apps
 
 1. Add to app's `metadata.yaml`:
