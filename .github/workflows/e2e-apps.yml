@@ -166,12 +166,15 @@ jobs:
             echo "--- $c (errors) ---"
             podman logs "$c" 2>&1 | grep -iE "error|warn|unable|refused|denied|exception" | tail -30 || true
           done
-          echo "=== Identity provider's view of the last logins ==="
-          # The app's server-side half of a login is a request to Authentik that
-          # the browser never sees, and Authentik names the reason it refused
-          # (invalid client secret, unknown code, unregistered redirect URI).
-          podman logs --since 30m apps-authentik-server 2>&1 \
-            | grep -iE "invalid|token|authorize|penpot" | tail -60 || true
+          echo "=== Identity provider's view of the token exchanges ==="
+          # The app's server-side half of a login is a request to Authentik that no
+          # browser can see, and Authentik logs one named warning per reason it
+          # refused: unknown client_id, wrong client secret, unknown or expired
+          # code. The single generic invalid_client that reaches the app does not
+          # say which of them it was.
+          podman logs --since 40m apps-authentik-server 2>&1 \
+            | grep -aE "OAuth2Provider does not exist|Invalid client secret|Code does not exist|is expired|Invalid HTTP|/application/o/" \
+            | tail -40 || true
           echo "=== Podman containers ==="
           podman ps -a 2>&1 || true
           echo "=== Podman socket ==="
