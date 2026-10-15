@@ -4,6 +4,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"codeberg.org/d-buckner/bloud/cli/portspec"
 )
 
 // fakeQEMUBackend builds a QEMUBackend with a faked command factory. sshReadyResults
@@ -22,7 +25,7 @@ func fakeQEMUBackend(t *testing.T, recorded *[][]string, sshReadyResults []bool)
 	var call int
 	b := &QEMUBackend{
 		instance:     "bloud-qemu",
-		projectDir:   "/repo",
+		projectDir:   writeFixtureProject(t),
 		dir:          t.TempDir(),
 		pollInterval: 0,
 		pollTimeout:  50 * time.Millisecond,
@@ -36,6 +39,29 @@ func fakeQEMUBackend(t *testing.T, recorded *[][]string, sshReadyResults []bool)
 		return exec.Command("true")
 	}
 	return b
+}
+
+// writeFixtureProject makes a project dir whose apps/ catalog is two apps with
+// known ports, so a test can assert what the launch args forward. The port
+// forwards are derived from the catalog, so the fixture is the input to that
+// assertion.
+func writeFixtureProject(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	apps := map[string]string{
+		"jellyfin": "name: jellyfin\ndisplayName: Jellyfin\nport: 8096\n",
+		"immich":   "name: immich\ndisplayName: Immich\nport: 2283\ncontainers:\n  - name: apps-immich-ml\n    ports:\n      - host: 32283\n      - container: 5001\n",
+	}
+	for name, body := range apps {
+		dir := filepath.Join(root, "apps", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "metadata.yaml"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write metadata for %s: %v", name, err)
+		}
+	}
+	return root
 }
 
 // fakeSSHProbe answers the two kinds of ssh calls the backend makes: the
@@ -216,13 +242,35 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 	}
 	joined := strings.Join(launch, " ")
 	for _, wantArg := range []string{"q35,accel=kvm", "-cpu max", "-m 4G", "-smp 4",
-		"-daemonize", "-pidfile", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
-		"hostfwd=tcp::3389-:3389", "hostfwd=tcp::8080-:80", "hostfwd=tcp::8096-:8096",
-		"hostfwd=tcp::9001-:9001", "hostfwd=tcp::2283-:2283", "hostfwd=tcp::4533-:4533",
-		"hostfwd=tcp::3010-:3010", "seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {
+		"-daemonize", "-pidfile", "seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {
 		if !strings.Contains(joined, wantArg) {
 			t.Errorf("launch args missing %q: %s", wantArg, joined)
 		}
+	}
+	// Every port the derivation produces must be forwarded, and nothing else.
+	// The old list was hand-written and had already lost two ports that the port
+	// map still advertised, so the assertion is against the derivation, not
+	// against a second copy of the numbers.
+	list, err := portspec.Derive(filepath.Join(b.projectDir, "apps"), portspec.KindQEMU)
+	if err != nil {
+		t.Fatalf("Derive() error = %v", err)
+	}
+	if len(list.Forwards) == 0 {
+		t.Fatal("Derive() produced no forwards; the fixture catalog is not being read")
+	}
+	for _, f := range list.Forwards {
+		want := fmt.Sprintf("hostfwd=tcp::%d-:%d", f.Host, f.Guest)
+		if !strings.Contains(joined, want) {
+			t.Errorf("launch args missing %q: %s", want, joined)
+		}
+	}
+	for _, want := range []string{"hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000", "hostfwd=tcp::8080-:80", "hostfwd=tcp::8096-:8096", "hostfwd=tcp::32283-:32283"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("launch args missing %q: %s", want, joined)
+		}
+	}
+	if n := strings.Count(joined, "hostfwd="); n != len(list.Forwards) {
+		t.Errorf("launch args forward %d ports, derivation produced %d", n, len(list.Forwards))
 	}
 }
 
@@ -260,10 +308,13 @@ func TestQEMUBackendHost(t *testing.T) {
 	if h.Executor() == nil {
 		t.Error("Host().Executor() = nil")
 	}
-	for name, want := range map[string]string{"traefik": "8080", "host-agent": "3000", "ldap": "3389", "jellyfin": "8096", "authentik": "9001", "immich": "2283", "navidrome": "4533"} {
+	for name, want := range map[string]string{"traefik": "8080", "host-agent": "3000"} {
 		if got := h.Ports()[name]; got != want {
 			t.Errorf("Ports()[%s] = %q, want %s", name, got, want)
 		}
+	}
+	if len(h.Ports()) != 2 {
+		t.Errorf("Ports() = %v, want only the two ports the CLI dials", h.Ports())
 	}
 	dirs := h.DataDirs()
 	if dirs.HostAgentDir != "/var/tmp/bloud-qemu-runtime/host-agent" {
@@ -272,8 +323,8 @@ func TestQEMUBackendHost(t *testing.T) {
 	if dirs.DataDir != "/var/tmp/bloud-qemu-runtime/data" {
 		t.Errorf("DataDir = %q, want /var/tmp/bloud-qemu-runtime/data", dirs.DataDir)
 	}
-	if dirs.AppsDir != "/repo/apps" {
-		t.Errorf("AppsDir = %q, want /repo/apps", dirs.AppsDir)
+	if dirs.AppsDir != filepath.Join(b.projectDir, "apps") {
+		t.Errorf("AppsDir = %q, want %q", dirs.AppsDir, filepath.Join(b.projectDir, "apps"))
 	}
 }
 

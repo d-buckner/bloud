@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/cli/executor"
+	"codeberg.org/d-buckner/bloud/cli/portspec"
 )
 
 const (
@@ -121,17 +122,13 @@ func (b *QEMUBackend) Host() executor.Host {
 			User:    qemuSSHUser,
 			KeyFile: filepath.Join(b.dir, "id_ed25519"),
 		}),
+		// Only the two ports the CLI itself dials. The app debug ports come from
+		// the list the catalog derives, not from a map here: a second copy of
+		// that list is how a port ended up advertised on a VM that never
+		// forwarded it.
 		map[string]string{
-			"host-agent":    "3000",
-			"traefik":       "8080",
-			"ldap":          "3389",
-			"jellyfin":      "8096",
-			"authentik":     "9001",
-			"immich":        "2283",
-			"navidrome":     "4533",
-			"affine":        "3010",
-			"paperless-ngx": "8000",
-			"vaultwarden":   "8222",
+			"host-agent": "3000",
+			"traefik":    "8080",
 		},
 		executor.DataDirs{
 			HostAgentDir: qemuRemoteDir + "/host-agent",
@@ -197,7 +194,11 @@ func (b *QEMUBackend) ensureSeed(ctx context.Context) error {
 func (b *QEMUBackend) ensureRunning(ctx context.Context) error {
 	ready := b.guestReady(ctx)
 	alive := b.vmAlive()
-	if ready && alive && !b.launchArgsChanged() {
+	changed, err := b.launchArgsChanged()
+	if err != nil {
+		return err
+	}
+	if ready && alive && !changed {
 		return nil
 	}
 	if alive {
@@ -211,7 +212,11 @@ func (b *QEMUBackend) ensureRunning(ctx context.Context) error {
 // pidfile lock). A change to the recorded launch args means the VM has to be
 // restarted to pick them up; otherwise the guest only has to be waited for.
 func (b *QEMUBackend) relaunchIfChanged(ctx context.Context) error {
-	if !b.launchArgsChanged() {
+	changed, err := b.launchArgsChanged()
+	if err != nil {
+		return err
+	}
+	if !changed {
 		if err := b.waitReady(ctx); err != nil {
 			return fmt.Errorf("QEMU guest %q did not become ready: %w", b.instance, err)
 		}
@@ -257,13 +262,16 @@ func (b *QEMUBackend) hasLaunchRecord() bool {
 // differ from the current ones (e.g. the host-forward port list changed). A
 // VM started with older args must be restarted to pick them up; VMs without a
 // recorded file (created before this check) count as changed.
-func (b *QEMUBackend) launchArgsChanged() bool {
+func (b *QEMUBackend) launchArgsChanged() (bool, error) {
 	saved, err := os.ReadFile(filepath.Join(b.dir, b.instance+".launch-args"))
 	if err != nil {
-		return true
+		return true, nil
 	}
-	want := strings.Join(b.launchArgs(filepath.Join(b.dir, b.instance+".pid")), "\n")
-	return string(saved) != want
+	want, err := b.launchArgs(filepath.Join(b.dir, b.instance+".pid"))
+	if err != nil {
+		return false, err
+	}
+	return string(saved) != strings.Join(want, "\n"), nil
 }
 
 // stop stops the running VM (SIGTERM to the recorded pid, wait for exit).
@@ -309,29 +317,28 @@ func (b *QEMUBackend) vmAlive() bool {
 // launchArgs builds the QEMU argument list. pidFile is where the daemonized
 // process writes its pid. The args are recorded at launch (see
 // launchArgsChanged) so an existing VM is restarted when they change.
-func (b *QEMUBackend) launchArgs(pidFile string) []string {
+//
+// The port forwards come from the catalog, not from a list kept here. The old
+// list was hand-written and had already fallen behind it: it omitted guest 8000
+// and 8222, which the port map advertised, and every app added after those were
+// written was missing from it entirely.
+func (b *QEMUBackend) launchArgs(pidFile string) ([]string, error) {
 	disk := filepath.Join(b.dir, b.instance+".qcow2")
 	seed := filepath.Join(b.dir, "seed.iso")
-	// Host-side forward ports. Each guest port can be remapped to a different
-	// host port via BLOUD_QEMU_FWD_<guestport> (e.g. BLOUD_QEMU_FWD_9001=9101)
-	// so the VM can run on hosts that already occupy a default port. The guest
-	// ports themselves never change; only the host port QEMU binds changes.
+	// Each guest port can be remapped to a different host port via
+	// BLOUD_QEMU_FWD_<guestport> (e.g. BLOUD_QEMU_FWD_9001=9101) so the VM can
+	// run on hosts that already occupy a default port. The guest ports
+	// themselves never change; only the host port QEMU binds changes.
 	// Traefik's canonical entrypoint is guest :80, exposed on the host as 8080
 	// so dev/e2e URLs stay on http://localhost:8080.
-	fwds := make([]string, 0, 9)
-	fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:22", hostForwardPort("22", strconv.Itoa(qemuSSHPort))))
-	for _, f := range []struct{ guestPort, hostPort string }{
-		{"3000", "3000"},
-		{"3389", "3389"},
-		{"80", "8080"},
-		{"8096", "8096"},
-		{"9001", "9001"},
-		{"2283", "2283"},
-		{"4533", "4533"},
-		{"3010", "3010"},
-	} {
-		hp := hostForwardPort(f.guestPort, f.hostPort)
-		fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:%s", hp, f.guestPort))
+	list, err := portspec.Derive(filepath.Join(b.projectDir, "apps"), portspec.KindQEMU)
+	if err != nil {
+		return nil, err
+	}
+	fwds := make([]string, 0, len(list.Forwards))
+	for _, f := range list.Forwards {
+		hp := hostForwardPort(strconv.Itoa(f.Guest), strconv.Itoa(f.Host))
+		fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:%d", hp, f.Guest))
 	}
 	netdev := "user,id=net0," + strings.Join(fwds, ",")
 	return []string{
@@ -346,14 +353,17 @@ func (b *QEMUBackend) launchArgs(pidFile string) []string {
 		"-device", "virtio-net-pci,netdev=net0",
 		"-display", "none",
 		"-daemonize", "-pidfile", pidFile,
-	}
+	}, nil
 }
 
 // launch starts the headless QEMU VM in the background (daemonized) and
 // records the launch args for the restart-on-change check.
 func (b *QEMUBackend) launch(ctx context.Context) error {
 	pid := filepath.Join(b.dir, b.instance+".pid")
-	args := b.launchArgs(pid)
+	args, err := b.launchArgs(pid)
+	if err != nil {
+		return err
+	}
 	if _, err := b.run(ctx, "qemu-system-x86_64", args...); err != nil {
 		return fmt.Errorf("failed to launch QEMU VM: %w", err)
 	}
