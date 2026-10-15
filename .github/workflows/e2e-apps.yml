@@ -112,6 +112,18 @@ jobs:
           sudo rm -rf /var/tmp/bloud-e2e-runtime
           sudo chown -R "$USER" /var/tmp
 
+      # Penpot's server-side half of the login fails in a way no log can name:
+      # the identity provider reports an empty client_id, which means the form
+      # body it reads is not the one Penpot built, and neither side says what
+      # went out. This records the wire bytes for the leg that needs it; every
+      # other app's token exchange is Bloud's own Go client, which works.
+      - name: Record the token exchange on the wire
+        if: matrix.app == 'penpot'
+        run: |
+          sudo tcpdump -i any -s 0 -w /tmp/penpot-http.pcap 'tcp port 8080' \
+            >/tmp/tcpdump.log 2>&1 &
+          sleep 1
+
       - name: Run E2E for ${{ matrix.app }} (native backend)
         id: e2e
         env:
@@ -144,6 +156,15 @@ jobs:
           name: e2e-${{ matrix.app }}-results
           path: e2e/test-results
           retention-days: 7
+
+      - name: Print the token exchange as it went out
+        if: failure() && matrix.app == 'penpot'
+        run: |
+          sudo pkill -INT tcpdump 2>/dev/null || true
+          sleep 2
+          echo "=== the token POST, as it reached the proxy ==="
+          sudo tcpdump -r /tmp/penpot-http.pcap -A -nn 2>/dev/null \
+            | grep -a -A 22 "POST /application/o/token" | head -140 || true
 
       - name: Debug on failure
         if: failure()

@@ -469,6 +469,32 @@ func TestPenpotMcpStaysUnpublishedUntilTheOperatorEnablesIt(t *testing.T) {
 	}
 }
 
+// TestPenpotMCPLookupQueryRunsAgainstTheRealDatabase runs Bloud's operator MCP
+// key read against Penpot's own Postgres.
+//
+// The unit test pins the query's shape; only Postgres can say it parses. A
+// previous revision asked psql to interpolate a -v variable inside a -c command
+// string, which psql does not do, and every reconciliation pass failed with
+// "syntax error at or near :" while the app itself looked healthy: the read is a
+// deliberate soft failure, so the only symptom was a contract that never
+// appeared. An empty result here is the expected answer (no operator in this
+// environment has created an MCP key); a psql error is the failure.
+func TestPenpotMCPLookupQueryRunsAgainstTheRealDatabase(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	query := penpot.MCPKeyQuery("operator@example.com")
+	if query == "" {
+		t.Fatal("Bloud refuses to build its own MCP key query, so it can never publish the contract")
+	}
+
+	out, err := exec.Command("podman", "exec", "apps-penpot-postgres", "psql",
+		"-U", "penpot", "-d", "penpot", "-At", "-v", "ON_ERROR_STOP=1", "-c", query).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the MCP key read does not run against Penpot's database: %v\n%s", err, out)
+	}
+	t.Logf("the query runs; the key read returned %q", strings.TrimSpace(string(out)))
+}
+
 // TestPenpotUninstallCleanup uninstalls Penpot through the API and asserts the
 // full cleanup: store entry, all seven containers, data directory, routes, and
 // the identity-provider objects Bloud created for it on install.
@@ -552,30 +578,4 @@ func httpGet(t *testing.T, url string) string {
 		t.Fatalf("GET %s: status %d: %s", url, resp.StatusCode, body)
 	}
 	return string(body)
-}
-
-// TestPenpotMCPLookupQueryRunsAgainstTheRealDatabase runs Bloud's operator MCP
-// key read against Penpot's own Postgres.
-//
-// The unit test pins the query's shape; only Postgres can say it parses. A
-// previous revision asked psql to interpolate a -v variable inside a -c command
-// string, which psql does not do, and every reconciliation pass failed with
-// "syntax error at or near :" while the app itself looked healthy: the read is a
-// deliberate soft failure, so the only symptom was a contract that never
-// appeared. An empty result here is the expected answer (no operator in this
-// environment has created an MCP key); a psql error is the failure.
-func TestPenpotMCPLookupQueryRunsAgainstTheRealDatabase(t *testing.T) {
-	waitAppRunning(t, "penpot", 2*time.Minute)
-
-	query := penpot.MCPKeyQuery("operator@example.com")
-	if query == "" {
-		t.Fatal("Bloud refuses to build its own MCP key query, so it can never publish the contract")
-	}
-
-	out, err := exec.Command("podman", "exec", "apps-penpot-postgres", "psql",
-		"-U", "penpot", "-d", "penpot", "-At", "-v", "ON_ERROR_STOP=1", "-c", query).CombinedOutput()
-	if err != nil {
-		t.Fatalf("the MCP key read does not run against Penpot's database: %v\n%s", err, out)
-	}
-	t.Logf("the query runs; the key read returned %q", strings.TrimSpace(string(out)))
 }
