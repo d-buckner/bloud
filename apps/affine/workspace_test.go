@@ -9,7 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // The first pass on an instance with no workspaces creates the shared
@@ -98,7 +99,7 @@ func TestEnsureSharedWorkspace_SendsCSRFToken(t *testing.T) {
 // A missing secrets store must not panic: the node is the knowledge base itself
 // and the value is only meaningful to a companion.
 func TestEnsureSharedWorkspace_NilSecretsSafe(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	assert.NotPanics(t, func() { c.ensureSharedWorkspace(context.Background()) })
 }
 
@@ -106,7 +107,7 @@ func TestEnsureSharedWorkspace_NilSecretsSafe(t *testing.T) {
 // half-written scope. The companion reads an absent scope as "not pinned".
 func TestEnsureSharedWorkspace_SignInFailurePublishesNothing(t *testing.T) {
 	secrets := newStoreSecrets("owner-pass")
-	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = "http://127.0.0.1:1"
 
 	assert.NotPanics(t, func() { c.ensureSharedWorkspace(context.Background()) })

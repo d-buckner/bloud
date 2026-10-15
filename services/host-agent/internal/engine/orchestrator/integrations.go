@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"slices"
 
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // buildAppState constructs a configurator.AppState for the given app ID
@@ -70,8 +71,8 @@ func (o *Orchestrator) buildAppState(id string) *configurator.AppState {
 // computeAppDeps). Providers that are not installed are bound too, with
 // Installed false: a consumer needs their address to prune the entry Bloud wrote
 // for them.
-func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) configurator.Integrations {
-	var out configurator.Integrations
+func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) bindings.Integrations {
+	var out bindings.Integrations
 	if o.appStore == nil || len(catalogApp.Integrations) == 0 {
 		return out
 	}
@@ -159,11 +160,11 @@ func installedSet(apps []*store.InstalledApp) map[string]bool {
 // bindAppProviders binds every declared provider of one contract that is a
 // real, non-self app: a local install, or an external record standing in for
 // one.
-func (o *Orchestrator) bindAppProviders(out *configurator.Integrations, contract string, integration catalog.Integration, installed map[string]bool, app string, external externalRegistry) {
+func (o *Orchestrator) bindAppProviders(out *bindings.Integrations, contract string, integration catalog.Integration, installed map[string]bool, app string, external externalRegistry) {
 	for _, src := range resolveProviders(contract, integration, external) {
 		// An app cannot be its own provider: a self-edge would also make
 		// the graph order the node after itself.
-		if src.kind == configurator.ProviderKindApp && src.id == app {
+		if src.kind == bindings.ProviderKindApp && src.id == app {
 			continue
 		}
 		if src.isSetting() {
@@ -186,7 +187,7 @@ func (o *Orchestrator) bindAppProviders(out *configurator.Integrations, contract
 // refFor answers where one resolved provider is reachable. An external record
 // short-circuits the container-address computation entirely: there is no node
 // to name and no port to compose, only the endpoint the operator gave.
-func (o *Orchestrator) refFor(src providerSource, provider *catalog.App, installed bool) configurator.ProviderRef {
+func (o *Orchestrator) refFor(src providerSource, provider *catalog.App, installed bool) bindings.ProviderRef {
 	if src.isExternal() {
 		return externalAppProviderRef(src.id, src.external.URL)
 	}
@@ -207,7 +208,7 @@ func (o *Orchestrator) refFor(src providerSource, provider *catalog.App, install
 // One binding, not several: a consumer dialing two inference endpoints has no
 // defined meaning, so the multi case is resolved here rather than pushed onto
 // every configurator.
-func (o *Orchestrator) resolveInference(integration catalog.Integration, installed map[string]bool, consumer string, external externalRegistry) (configurator.InferenceBinding, bool) {
+func (o *Orchestrator) resolveInference(integration catalog.Integration, installed map[string]bool, consumer string, external externalRegistry) (bindings.InferenceBinding, bool) {
 	for _, src := range resolveProviders(inference.ContractName, integration, external) {
 		if src.isSetting() || src.id == consumer || (!installed[src.id] && !src.isExternal()) {
 			continue
@@ -216,7 +217,7 @@ func (o *Orchestrator) resolveInference(integration catalog.Integration, install
 		if !ok {
 			continue
 		}
-		return configurator.InferenceBinding{
+		return bindings.InferenceBinding{
 			ProviderRef:  ref,
 			Endpoint:     ref.BaseURL + offer.Values["path"],
 			APIKey:       o.publishedSecret(src, "inference", offer, integration.Requires),
@@ -231,7 +232,7 @@ func (o *Orchestrator) resolveInference(integration catalog.Integration, install
 
 	from, sources := o.promotedSources("inference", installed)
 	if from == "" {
-		return configurator.InferenceBinding{}, false
+		return bindings.InferenceBinding{}, false
 	}
 	for _, src := range sources {
 		if src.id == consumer {
@@ -241,7 +242,7 @@ func (o *Orchestrator) resolveInference(integration catalog.Integration, install
 		if !ok {
 			continue
 		}
-		return configurator.InferenceBinding{
+		return bindings.InferenceBinding{
 			ProviderRef:  ref,
 			Endpoint:     ref.BaseURL + offer.Values["path"],
 			DefaultModel: o.defaultModel(),
@@ -251,25 +252,25 @@ func (o *Orchestrator) resolveInference(integration catalog.Integration, install
 		}, true
 	}
 
-	return configurator.InferenceBinding{}, false
+	return bindings.InferenceBinding{}, false
 }
 
 // usableInferenceProvider resolves one source to an inference provider that
 // actually has an address to hand out. Anything else reports false so the
 // caller falls through to the next candidate rather than binding a provider
 // nothing can dial.
-func (o *Orchestrator) usableInferenceProvider(contract string, src providerSource) (configurator.ProviderRef, catalog.ContractProvides, bool) {
+func (o *Orchestrator) usableInferenceProvider(contract string, src providerSource) (bindings.ProviderRef, catalog.ContractProvides, bool) {
 	provider, err := o.catalog.Get(src.id)
 	if err != nil || provider == nil {
-		return configurator.ProviderRef{}, catalog.ContractProvides{}, false
+		return bindings.ProviderRef{}, catalog.ContractProvides{}, false
 	}
 	offer, ok := provider.Provides[contract]
 	if !ok {
-		return configurator.ProviderRef{}, catalog.ContractProvides{}, false
+		return bindings.ProviderRef{}, catalog.ContractProvides{}, false
 	}
 	ref := o.refFor(src, provider, true)
 	if ref.BaseURL == "" {
-		return configurator.ProviderRef{}, catalog.ContractProvides{}, false
+		return bindings.ProviderRef{}, catalog.ContractProvides{}, false
 	}
 	return ref, offer, true
 }
@@ -278,7 +279,7 @@ func (o *Orchestrator) usableInferenceProvider(contract string, src providerSour
 // the only contract-specific code in the resolver: a provider of an existing
 // contract is pure metadata, and adding a contract means adding a registry
 // entry, a payload type, and (for a genuinely new wire shape) one entry below.
-type contractBinder func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string)
+type contractBinder func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string)
 
 // contractBinders is the one place a consumer-facing contract is wired to its
 // typed binding. The keys are data, so TestContractBindersComplete can prove
@@ -297,42 +298,42 @@ type contractBinder func(o *Orchestrator, out *configurator.Integrations, ref co
 // named. `proxy` and `database` are absent because they are address-only: no
 // payload means nothing to bind.
 var contractBinders = map[string]contractBinder{
-	"pvr": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
-		out.PVRs = append(out.PVRs, configurator.PVRBinding{ProviderRef: ref, APIKey: o.publishedSecret(src, "pvr", offer, requires)})
+	"pvr": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.PVRs = append(out.PVRs, bindings.PVRBinding{ProviderRef: ref, APIKey: o.publishedSecret(src, "pvr", offer, requires)})
 	},
-	"requestManager": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+	"requestManager": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		out.RequestManagers = append(out.RequestManagers, o.requestManagerBinding(ref, "requestManager", offer, src, requires))
 	},
-	"mediaServer": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+	"mediaServer": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		out.MediaServers = append(out.MediaServers, o.mediaServerBinding(ref, "mediaServer", offer, src, requires))
 	},
-	"sso": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
-		out.SSO = append(out.SSO, configurator.SSOBinding{ProviderRef: ref, APIToken: o.publishedSecret(src, "sso", offer, requires)})
+	"sso": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.SSO = append(out.SSO, bindings.SSOBinding{ProviderRef: ref, APIToken: o.publishedSecret(src, "sso", offer, requires)})
 	},
-	"downloadClient": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
-		out.DownloadClients = append(out.DownloadClients, configurator.DownloadClientBinding{ProviderRef: ref})
+	"downloadClient": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.DownloadClients = append(out.DownloadClients, bindings.DownloadClientBinding{ProviderRef: ref})
 	},
-	"modelSource": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+	"modelSource": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// An app provider of modelSource (Ollama) is keyless by contract: the
 		// credential a gateway needs for the operator's external server comes
 		// from the instance scope, not from this provider.
-		out.ModelSources = append(out.ModelSources, configurator.ModelSourceBinding{
+		out.ModelSources = append(out.ModelSources, bindings.ModelSourceBinding{
 			ProviderRef: ref,
 			Endpoint:    ref.BaseURL + offer.Values["path"],
 		})
 	},
-	"mcp": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+	"mcp": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// The path may be one the provider minted at runtime (an endpoint under
 		// an id the app generated on first boot), so it resolves through the
 		// published-value channel with the static metadata as the fallback.
-		out.MCPServers = append(out.MCPServers, configurator.MCPBinding{
+		out.MCPServers = append(out.MCPServers, bindings.MCPBinding{
 			ProviderRef: ref,
 			ServerName:  o.contractValue(src, "mcp", offer, "serverName"),
 			Path:        o.contractValue(src, "mcp", offer, "path"),
 			Token:       o.publishedSecret(src, "mcp", offer, requires),
 		})
 	},
-	"appApi": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+	"appApi": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// The username is a non-secret value the provider mints at runtime (the
 		// account it bootstrapped), so it resolves through the published-value
 		// channel; the password is the ordinary single-secret payload. A consumer
@@ -341,36 +342,36 @@ var contractBinders = map[string]contractBinder{
 		// For an external provider the same three reads answer the operator
 		// instead of a local boot, which is the whole mechanism: the consumer's
 		// configurator cannot tell the two apart, and does not need to.
-		out.AppAPIs = append(out.AppAPIs, configurator.AppAPIBinding{
+		out.AppAPIs = append(out.AppAPIs, bindings.AppAPIBinding{
 			ProviderRef: ref,
 			Username:    o.contractValue(src, "appApi", offer, "username"),
 			Password:    o.publishedSecret(src, "appApi", offer, requires),
 			WorkspaceID: o.contractValue(src, "appApi", offer, "workspaceId"),
 		})
 	},
-	"agentApi": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+	"agentApi": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		out.AgentAPIs = append(out.AgentAPIs, o.agentAPIBinding(ref, "agentApi", offer, src, requires))
 	},
-	"transcription": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+	"transcription": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		out.Transcription = append(out.Transcription, o.transcriptionBinding(ref, "transcription", offer, src, requires))
 	},
-	"caldav": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+	"caldav": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// No secret arm: the `caldav` contract publishes none, because the
 		// credential is the person's own password and it never crosses an app
 		// boundary. The address is the whole payload, and the browser-facing
 		// half of it is the part a consumer cannot derive for itself.
-		out.CalDAVServers = append(out.CalDAVServers, configurator.CalDAVBinding{
+		out.CalDAVServers = append(out.CalDAVServers, bindings.CalDAVBinding{
 			ProviderRef: ref,
 			PublicURL:   o.providerPublicURL(src),
 			Path:        offer.Values["path"],
 		})
 	},
-	"icsFeed": func(o *Orchestrator, out *configurator.Integrations, ref configurator.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+	"icsFeed": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// The consumer (Radicale's ics-sync storage) composes the feed URL from
 		// the provider's address, the declared path, and the key as a query
 		// parameter. The Servarr feed endpoint accepts no header auth, which is
 		// the whole reason the key travels in the URL.
-		out.ICSFeeds = append(out.ICSFeeds, configurator.ICSFeedBinding{
+		out.ICSFeeds = append(out.ICSFeeds, bindings.ICSFeedBinding{
 			ProviderRef:  ref,
 			APIKey:       o.publishedSecret(src, "icsFeed", offer, requires),
 			Path:         offer.Values["path"],
@@ -384,9 +385,9 @@ var contractBinders = map[string]contractBinder{
 // (proxy, database) or an error (a payload-bearing contract whose binder was
 // forgotten), and warnUnboundPayload says which.
 func (o *Orchestrator) bindContract(
-	out *configurator.Integrations,
+	out *bindings.Integrations,
 	contract string,
-	ref configurator.ProviderRef,
+	ref bindings.ProviderRef,
 	offer catalog.ContractProvides,
 	src providerSource,
 	requires []string,
@@ -411,13 +412,13 @@ func (o *Orchestrator) warnUnboundPayload(contract string, src providerSource) {
 // mediaServerBinding builds one media-server binding: the bootstrap credential
 // the consumer signs in with, plus the username it was minted for.
 func (o *Orchestrator) mediaServerBinding(
-	ref configurator.ProviderRef,
+	ref bindings.ProviderRef,
 	contract string,
 	offer catalog.ContractProvides,
 	src providerSource,
 	requires []string,
-) configurator.MediaServerBinding {
-	return configurator.MediaServerBinding{
+) bindings.MediaServerBinding {
+	return bindings.MediaServerBinding{
 		ProviderRef:   ref,
 		AdminUsername: o.contractValue(src, contract, offer, "adminUsername"),
 		AdminPassword: o.publishedSecret(src, contract, offer, requires),
@@ -427,13 +428,13 @@ func (o *Orchestrator) mediaServerBinding(
 // requestManagerBinding builds one request-manager binding: the credentials the
 // provider's login is built on, from which the consumer derives the API key.
 func (o *Orchestrator) requestManagerBinding(
-	ref configurator.ProviderRef,
+	ref bindings.ProviderRef,
 	contract string,
 	offer catalog.ContractProvides,
 	src providerSource,
 	requires []string,
-) configurator.RequestManagerBinding {
-	return configurator.RequestManagerBinding{
+) bindings.RequestManagerBinding {
+	return bindings.RequestManagerBinding{
 		ProviderRef: ref,
 		Username:    o.contractValue(src, contract, offer, "username"),
 		Password:    o.publishedSecret(src, contract, offer, requires),
@@ -448,13 +449,13 @@ func (o *Orchestrator) requestManagerBinding(
 // app network, so ProviderRef's container-DNS BaseURL is the one address that
 // cannot work; the routed public origin is the one that can.
 func (o *Orchestrator) agentAPIBinding(
-	ref configurator.ProviderRef,
+	ref bindings.ProviderRef,
 	contract string,
 	offer catalog.ContractProvides,
 	src providerSource,
 	requires []string,
-) configurator.AgentAPIBinding {
-	return configurator.AgentAPIBinding{
+) bindings.AgentAPIBinding {
+	return bindings.AgentAPIBinding{
 		ProviderRef: ref,
 		Endpoint:    o.routedEndpoint(src, offer),
 		APIKey:      o.publishedSecret(src, contract, offer, requires),
@@ -472,13 +473,13 @@ func (o *Orchestrator) agentAPIBinding(
 // one, and guessing an address is how a consumer ends up dialing a port that
 // speaks something else.
 func (o *Orchestrator) transcriptionBinding(
-	ref configurator.ProviderRef,
+	ref bindings.ProviderRef,
 	contract string,
 	offer catalog.ContractProvides,
 	src providerSource,
 	requires []string,
-) configurator.TranscriptionBinding {
-	return configurator.TranscriptionBinding{
+) bindings.TranscriptionBinding {
+	return bindings.TranscriptionBinding{
 		ProviderRef: ref,
 		Endpoint:    ref.BaseURL,
 		APIKey:      o.publishedSecret(src, contract, offer, requires),
@@ -540,7 +541,7 @@ func (o *Orchestrator) providerPublicURL(src providerSource) string {
 // two are the same empty field on purpose: a consumer has to tell "not ready"
 // from an empty credential, and "I did not ask for it" is a metadata mistake it
 // can see in its own `requires`.
-func (o *Orchestrator) publishedSecret(src providerSource, contract string, offer catalog.ContractProvides, requires []string) configurator.Secret {
+func (o *Orchestrator) publishedSecret(src providerSource, contract string, offer catalog.ContractProvides, requires []string) bindings.Secret {
 	spec, ok := catalog.ContractFor(contract)
 	if !ok || len(spec.Secrets) != 1 {
 		return ""
@@ -555,12 +556,12 @@ func (o *Orchestrator) publishedSecret(src providerSource, contract string, offe
 		return ""
 	}
 	if src.isExternal() {
-		return configurator.Secret(o.secrets.GetAppSecret(store.ExternalSecretScope(src.external.ID), contract))
+		return bindings.Secret(o.secrets.GetAppSecret(store.ExternalSecretScope(src.external.ID), contract))
 	}
 	if len(offer.Secrets) == 0 {
 		return ""
 	}
-	return configurator.Secret(o.secrets.GetAppSecret(src.id, spec.Secrets[0]))
+	return bindings.Secret(o.secrets.GetAppSecret(src.id, spec.Secrets[0]))
 }
 
 // contractValue resolves one non-secret contract value: the runtime-published one
@@ -596,10 +597,10 @@ func (o *Orchestrator) contractValue(src providerSource, contract string, offer 
 // providerRef resolves where a provider is reachable: its node on the app
 // network, its published port, and the two URLs a consumer needs (what its app
 // stores, and what its configurator calls).
-func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installed bool) configurator.ProviderRef {
+func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installed bool) bindings.ProviderRef {
 	node := o.primaryContainerNode(appID)
-	ref := configurator.ProviderRef{
-		Kind:      configurator.ProviderKindApp,
+	ref := bindings.ProviderRef{
+		Kind:      bindings.ProviderKindApp,
 		App:       appID,
 		Installed: installed,
 		Node:      node,
@@ -637,7 +638,7 @@ func resolveProviders(contract string, integration catalog.Integration, external
 		if declared.IsSetting() {
 			for _, rec := range external.externalForContract(contract) {
 				out = append(out, providerSource{
-					kind:     configurator.ProviderKindSetting,
+					kind:     bindings.ProviderKindSetting,
 					id:       catalog.SettingProviderSource,
 					external: rec,
 				})

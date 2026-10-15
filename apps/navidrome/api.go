@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // navidromeUser is a Navidrome user record.
@@ -35,7 +35,7 @@ type navidromeAPI struct {
 }
 
 // newNavidromeAPI builds the own-API client against a base-URL resolver.
-func newNavidromeAPI(f configurator.ClientFactory, baseURLFn func() string) *navidromeAPI {
+func newNavidromeAPI(f configurator.HTTPFactory, baseURLFn func() string) *navidromeAPI {
 	return &navidromeAPI{cl: f.New(appclient.Spec{Name: "navidrome", BaseURLFn: baseURLFn})}
 }
 
@@ -111,7 +111,7 @@ type authentikAPI struct {
 }
 
 // newAuthentikAPI builds the Authentik client against a base-URL resolver.
-func newAuthentikAPI(f configurator.ClientFactory, baseURLFn func() string) *authentikAPI {
+func newAuthentikAPI(f configurator.HTTPFactory, baseURLFn func() string) *authentikAPI {
 	return &authentikAPI{cl: f.New(appclient.Spec{Name: "navidrome-authentik", BaseURLFn: baseURLFn})}
 }
 

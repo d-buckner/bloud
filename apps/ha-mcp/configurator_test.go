@@ -11,7 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // fakeSecrets implements configurator.AppSecretsProvider with an in-memory map,
@@ -43,9 +44,9 @@ func (f *fakeSecrets) DeleteAppSecrets(string) error               { return nil 
 func boundState(dataDir string) *configurator.AppState {
 	return &configurator.AppState{
 		DataPath: dataDir,
-		Integrations: configurator.Integrations{
-			AppAPIs: []configurator.AppAPIBinding{{
-				ProviderRef: configurator.ProviderRef{
+		Integrations: bindings.Integrations{
+			AppAPIs: []bindings.AppAPIBinding{{
+				ProviderRef: bindings.ProviderRef{
 					App:       "homeassistant",
 					Installed: true,
 					BaseURL:   "http://apps-homeassistant:8123",

@@ -17,7 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 func quietLogger() *slog.Logger {
@@ -58,10 +60,10 @@ func (s *storeSecrets) DeleteAppSecrets(string) error                     { retu
 func stateWithAffine(dataDir string) *configurator.AppState {
 	return &configurator.AppState{
 		DataPath: dataDir,
-		Integrations: configurator.Integrations{
-			AppAPIs: []configurator.AppAPIBinding{{
-				ProviderRef: configurator.ProviderRef{
-					Kind:      configurator.ProviderKindApp,
+		Integrations: bindings.Integrations{
+			AppAPIs: []bindings.AppAPIBinding{{
+				ProviderRef: bindings.ProviderRef{
+					Kind:      bindings.ProviderKindApp,
 					App:       "affine",
 					Installed: true,
 					Node:      "apps-affine",
@@ -83,7 +85,7 @@ func configPath(dataDir string) string {
 
 func configuratorForServer(t *testing.T, url string) *Configurator {
 	t.Helper()
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = url
 	return c
 }
@@ -172,7 +174,7 @@ func TestPreStart_WithoutWorkspaceScopeOmitsThePin(t *testing.T) {
 }
 
 func TestPreStart_NilSecretsSafeAndConverges(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	dir := t.TempDir()
 
 	first, err := c.PreStart(context.Background(), stateWithAffine(dir))
@@ -185,7 +187,7 @@ func TestPreStart_NilSecretsSafeAndConverges(t *testing.T) {
 }
 
 func TestRenderConfig_RejectsLineBreakInValue(t *testing.T) {
-	_, err := renderConfig(configurator.AppAPIBinding{Username: "a\nB", Password: "p"}, true, "t")
+	_, err := renderConfig(bindings.AppAPIBinding{Username: "a\nB", Password: "p"}, true, "t")
 	require.Error(t, err, "a value containing a newline would inject a second config setting")
 }
 

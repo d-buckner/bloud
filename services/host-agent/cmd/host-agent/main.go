@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/api"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/appconfig"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
@@ -25,9 +28,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/wire"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // systemConvergenceTimeout bounds how long the control plane waits for the

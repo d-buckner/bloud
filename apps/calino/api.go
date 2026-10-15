@@ -6,8 +6,8 @@ import (
 	"bytes"
 	"context"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // indexPath is the SPA shell. Calino makes no server-side calls of its own and
@@ -28,7 +28,7 @@ type calinoAPI struct {
 	cl *appclient.Client
 }
 
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *calinoAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *calinoAPI {
 	return &calinoAPI{cl: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn})}
 }
 

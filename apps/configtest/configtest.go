@@ -27,7 +27,8 @@ import (
 	"sync"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"gopkg.in/yaml.v3"
 )
 
@@ -205,7 +206,7 @@ func OfflineDeps(t *testing.T) (configurator.Deps, *Recorder) {
 	}
 	deps := configurator.Deps{
 		Logger: quietLogger(),
-		HTTP: configurator.ClientFactory{
+		HTTP: appclient.Factory{
 			Transport: transport,
 			Logger:    quietLogger(),
 		},

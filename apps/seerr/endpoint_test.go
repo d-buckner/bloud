@@ -5,7 +5,7 @@ package seerr
 import (
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,9 +57,9 @@ func TestDvrSettingsForRemotePVRCarriesTheRegisteredAddress(t *testing.T) {
 		service:         dvrSonarr,
 		name:            "Sonarr",
 		activeDirectory: showsDirectory,
-		binding: configurator.PVRBinding{
-			ProviderRef: configurator.ProviderRef{
-				Kind:      configurator.ProviderKindExternalApp,
+		binding: bindings.PVRBinding{
+			ProviderRef: bindings.ProviderRef{
+				Kind:      bindings.ProviderKindExternalApp,
 				App:       "sonarr",
 				Installed: true,
 				BaseURL:   "https://sonarr.lan.example:6789",
@@ -84,9 +84,9 @@ func TestDvrSettingsForLocalPVRStillUsesTheContainerAddress(t *testing.T) {
 	local := pvrTarget{
 		service: dvrSonarr,
 		name:    "Sonarr",
-		binding: configurator.PVRBinding{
-			ProviderRef: configurator.ProviderRef{
-				Kind:      configurator.ProviderKindApp,
+		binding: bindings.PVRBinding{
+			ProviderRef: bindings.ProviderRef{
+				Kind:      bindings.ProviderKindApp,
 				App:       "sonarr",
 				Node:      "apps-sonarr",
 				Port:      8989,

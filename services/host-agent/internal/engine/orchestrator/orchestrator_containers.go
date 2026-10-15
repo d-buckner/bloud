@@ -10,12 +10,12 @@ import (
 	"fmt"
 	"strings"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // SyncContainerState aligns DB state and the lifecycle graph with actual

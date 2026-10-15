@@ -21,12 +21,12 @@ import (
 
 	"codeberg.org/d-buckner/bloud/apps"
 	"codeberg.org/d-buckner/bloud/apps/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/appasset"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appasset"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/web/static"
 )
 
@@ -118,7 +118,7 @@ func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, rest
 			Exec:             exec,
 			ContainerRunning: containerRunning,
 		},
-		HTTP: configurator.ClientFactory{
+		HTTP: appclient.Factory{
 			Transport: transport,
 			Retry:     appclient.DefaultRetry,
 			Logger:    logger,

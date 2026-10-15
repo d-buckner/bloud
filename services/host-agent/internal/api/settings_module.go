@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"github.com/go-chi/chi/v5"
 )
 

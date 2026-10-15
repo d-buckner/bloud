@@ -15,7 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +33,7 @@ func quietLogger() *slog.Logger {
 // which is how the unreachable case is exercised.
 func newTestConfigurator(t *testing.T, app http.Handler) (*Configurator, string) {
 	t.Helper()
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	if app != nil {
 		server := httptest.NewServer(app)
 		t.Cleanup(server.Close)
@@ -334,7 +336,7 @@ func TestPostStartRestartsWhenSharesChange(t *testing.T) {
 
 	// A feed provider appears, which changes who the shares cover, so the
 	// resync rewrites sharing.csv and restarts.
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 	require.NoError(t, c.PostStart(context.Background(), state))
 	assert.Equal(t, []string{nodeName}, restarted)
 
@@ -365,7 +367,7 @@ func TestPostStartRestartFailureIsAnError(t *testing.T) {
 	state.Integrations.SSO = ssoState(t, directory.URL).Integrations.SSO
 	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 
 	err = c.PostStart(context.Background(), state)
 	require.Error(t, err)
@@ -374,10 +376,10 @@ func TestPostStartRestartFailureIsAnError(t *testing.T) {
 
 // ---- ICS feed sync ----
 
-func feedBinding() configurator.ICSFeedBinding {
-	return configurator.ICSFeedBinding{
-		ProviderRef: configurator.ProviderRef{
-			Kind:      configurator.ProviderKindApp,
+func feedBinding() bindings.ICSFeedBinding {
+	return bindings.ICSFeedBinding{
+		ProviderRef: bindings.ProviderRef{
+			Kind:      bindings.ProviderKindApp,
 			App:       "radarr",
 			Installed: true,
 			Node:      "apps-radarr",

@@ -20,7 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 func quietLogger() *slog.Logger {
@@ -111,6 +112,7 @@ func testConfigurator(t *testing.T, app http.Handler) (*Configurator, string) {
 	t.Helper()
 	c := NewConfigurator(0, configurator.Deps{
 		Logger: quietLogger(),
+		HTTP:   appclient.Factory{},
 		Address: configurator.AddressDeps{
 			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
 		},

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 )
 
 type Config struct {

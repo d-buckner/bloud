@@ -22,7 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appasset"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 type fakeSecrets struct{ pw string }
@@ -84,7 +86,7 @@ func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configura
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}, HTTP: appclient.Factory{}, Assets: appasset.Installer{}})
 	c.componentURL = srv.URL + "/hass-oidc-auth.zip"
 	c.componentSHA = zipSHA
 	c.pollInterval = 10 * time.Millisecond
@@ -100,7 +102,7 @@ func testCtx(t *testing.T, d time.Duration) (context.Context, context.CancelFunc
 }
 
 func TestPreStartCreatesDirs(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
 	data := t.TempDir()
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
 	require.NoError(t, err)
@@ -442,7 +444,7 @@ func (s *apiServer) restartContainer() func(context.Context, string) error {
 
 func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 	srv := newAPIServer(t, false)
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 3*time.Second)
@@ -482,7 +484,7 @@ func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 	data := t.TempDir()
 	writeOnboardedFile(t, filepath.Join(data, "config"))
 
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 2*time.Second)
@@ -516,7 +518,7 @@ func TestPostStartSkipsWhenOnboardedWithNoOwnerUser(t *testing.T) {
 			`{"id":"1","is_owner":false,"system_generated":true},`+
 			`{"id":"2","is_owner":false,"system_generated":false}]}}`), 0o600))
 
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 2*time.Second)
@@ -559,7 +561,7 @@ func writeOnboardedFile(t *testing.T, cfgDir string) {
 
 func TestPostStartFailsWhenProviderNeverLives(t *testing.T) {
 	srv := newAPIServer(t, false)
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 200*time.Millisecond)
@@ -575,7 +577,7 @@ func TestPostStartNoSSOSkipsOIDCProbe(t *testing.T) {
 	srv.mu.Lock()
 	srv.onboarded = true
 	srv.mu.Unlock()
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 300*time.Millisecond)
@@ -641,7 +643,7 @@ const storageJSON = `{
 // A fresh install must not get a hand-written config entry: HA rejects foreign
 // entries and takes the whole web stack down with it.
 func TestPreStartDoesNotCreateConfigFile(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
 	data := t.TempDir()
 
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
@@ -653,7 +655,7 @@ func TestPreStartDoesNotCreateConfigFile(t *testing.T) {
 // Against a real-shaped stored file the configurator flips trust on, leaves
 // unrelated values alone, and settles on the second cycle.
 func TestPreStartPatchesStoredConfig(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
 	data := t.TempDir()
 	path := writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
@@ -676,7 +678,7 @@ func TestPreStartPatchesStoredConfig(t *testing.T) {
 
 // A corrupt stored file must surface as an error, not be silently ignored.
 func TestPreStartRejectsCorruptConfigFile(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
 	data := t.TempDir()
 	writeConfig(t, filepath.Join(data, "config"), "{ nope")
 
@@ -696,7 +698,7 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 	data := t.TempDir()
 	storedPath := writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
-	cfg := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}})
+	cfg := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}, HTTP: appclient.Factory{}})
 	cfg.baseURLOverride = fakeSrv.srv.URL
 	cfg.restartContainerFn = fakeSrv.restartContainer()
 	cfg.pollInterval = 10 * time.Millisecond
@@ -729,7 +731,7 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 // token, and the exchange must actually hit /auth/token.
 func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
 	srv := newAPIServer(t, false)
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 
@@ -757,7 +759,7 @@ func TestPostStartAlreadyOnboardedAppliesTrustViaContainerRestart(t *testing.T) 
 	data := t.TempDir()
 	storedPath := writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
-	cfg := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}})
+	cfg := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}, HTTP: appclient.Factory{}})
 	cfg.baseURLOverride = srv.srv.URL
 	cfg.restartContainerFn = srv.restartContainer()
 	cfg.pollInterval = 10 * time.Millisecond
@@ -815,7 +817,7 @@ func TestPostStartWaitsForTrustReloadAfterRestart(t *testing.T) {
 	data := t.TempDir()
 	writeConfig(t, filepath.Join(data, "config"), storageJSON) // untrusted on disk
 
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = srv.srv.URL
 	c.restartContainerFn = srv.restartContainer()
 	c.pollInterval = 10 * time.Millisecond
@@ -843,7 +845,7 @@ func TestPostStartFailsWhenRestartNeverAppliesTrust(t *testing.T) {
 	data := t.TempDir()
 	writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = srv.srv.URL
 	c.restartContainerFn = srv.restartContainer()
 	c.pollInterval = 10 * time.Millisecond
@@ -876,7 +878,7 @@ func TestPreStartForcesRecreateWhenRunningProcessStale(t *testing.T) {
 	data := t.TempDir()
 	storedPath := writeConfig(t, filepath.Join(data, "config"), trustedStorageJSON)
 
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 
@@ -907,7 +909,7 @@ func TestPreStartDoesNotForceWhenProcessUnreachable(t *testing.T) {
 	data := t.TempDir()
 	writeConfig(t, filepath.Join(data, "config"), trustedStorageJSON)
 
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = url
 	c.pollInterval = 10 * time.Millisecond
 
@@ -924,7 +926,7 @@ func TestProbeProxyTrustStates(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer live.Close()
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
 	c.baseURLOverride = live.URL
 	ok, reachable, status, perr := c.probeProxyTrust(context.Background())
 	assert.True(t, ok)

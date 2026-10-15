@@ -17,7 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // wantPreferences are the conf values PreStart must leave behind, spelled out
@@ -55,7 +56,7 @@ func newTestConfigurator(t *testing.T, handler http.Handler) *Configurator {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	return c
@@ -75,14 +76,14 @@ func readSection(t *testing.T, path, section string) *configurator.INISection {
 }
 
 func TestConfigurator_Name(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	assert.Equal(t, "apps-qbittorrent", c.Name())
 	assert.Equal(t, webUIPort, c.port, "port 0 must select the published WebUI port")
 }
 
 func TestPreStartFreshConfWritesManagedKeys(t *testing.T) {
 	state := testState(t)
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
@@ -119,7 +120,7 @@ func TestPreStartFreshConfWritesManagedKeys(t *testing.T) {
 // and a PreStart failure is terminal for the node.
 func TestPreStartMakesItsWritablePathsWorldWritable(t *testing.T) {
 	state := testState(t)
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	confPath := filepath.Join(state.DataPath, confRelPath)
 
 	// A conf the daemon already wrote, and directories an earlier run left
@@ -167,7 +168,7 @@ Session\DefaultSavePath=/config/session
 WebUI\Username=someone
 `)
 
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
 	assert.True(t, changed.RestartNeeded, "correcting drifted keys must report a change")
@@ -199,7 +200,7 @@ WebUI\Username=someone
 
 func TestPreStartSecondRunReportsNoChange(t *testing.T) {
 	state := testState(t)
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	confPath := filepath.Join(state.DataPath, confRelPath)
 
 	changed, err := c.PreStart(context.Background(), state)

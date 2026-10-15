@@ -13,7 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 func quietLogger() *slog.Logger {
@@ -39,7 +40,7 @@ func TestNavidromeLoginAndCreateUser(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.baseURL = srv.URL
 
 	tok, err := c.navi.login(context.Background(), "bloud-admin", "pw")
@@ -56,7 +57,7 @@ func TestAuthentikListActiveUsers(t *testing.T) {
 		_, _ = w.Write([]byte("{\"results\":[{\"username\":\"carol\",\"name\":\"Carol\",\"email\":\"c@x.io\"}]}"))
 	}))
 	t.Cleanup(srv.Close)
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	c.authentikURL = srv.URL
 	users, err := c.ak.listActiveUsers(context.Background(), "aktok")
 	require.NoError(t, err)

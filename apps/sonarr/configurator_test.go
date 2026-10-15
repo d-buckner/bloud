@@ -20,10 +20,11 @@ import (
 	"sync"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/servarr"
+	"codeberg.org/d-buckner/bloud/pkg/xmlutil"
 )
 
 // rootFolderResource is the endpoint the fake serves, taken from the same
@@ -449,7 +450,7 @@ func configuratorFor(t *testing.T, instance *fakeInstance, qb *fakeQBittorrent) 
 		Logger: quietLogger(),
 		// One attempt per call: the fakes answer deterministically, so a
 		// failure path must not sleep through the retry backoff.
-		HTTP: configurator.ClientFactory{Retry: appclient.RetryPolicy{MaxAttempts: 1}},
+		HTTP: appclient.Factory{Retry: appclient.RetryPolicy{MaxAttempts: 1}},
 	})
 	c.SetBaseURL(server.URL)
 	if qb != nil {
@@ -470,8 +471,8 @@ func configuratorFor(t *testing.T, instance *fakeInstance, qb *fakeQBittorrent) 
 // wrote, and it is the only thing that means "not installed": a provider that is
 // installed but not answering keeps its binding and is retried.
 func withDownloadClient(state *configurator.AppState, qb *fakeQBittorrent, installed bool) {
-	state.Integrations.DownloadClients = []configurator.DownloadClientBinding{{
-		ProviderRef: configurator.ProviderRef{
+	state.Integrations.DownloadClients = []bindings.DownloadClientBinding{{
+		ProviderRef: bindings.ProviderRef{
 			App:       qbittorrentAppID,
 			Installed: installed,
 			Node:      "apps-qbittorrent",

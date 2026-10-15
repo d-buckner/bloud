@@ -10,8 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,7 +66,7 @@ func TestScfgQuoteRefusesControlCharacters(t *testing.T) {
 // ---- config rendering ----
 
 func TestRenderPimsyncConfProjectsEachFeedIntoTheTarget(t *testing.T) {
-	got, err := renderPimsyncConf(pimsyncTargetForTest(), []configurator.ICSFeedBinding{feedBinding()})
+	got, err := renderPimsyncConf(pimsyncTargetForTest(), []bindings.ICSFeedBinding{feedBinding()})
 	require.NoError(t, err)
 
 	// The CalDAV target: the shared calendar account inside this Radicale.
@@ -100,7 +101,7 @@ func TestRenderPimsyncConfParksWithoutAnOwnerCredential(t *testing.T) {
 	target := pimsyncTargetForTest()
 	target.Password = ""
 
-	got, err := renderPimsyncConf(target, []configurator.ICSFeedBinding{feedBinding()})
+	got, err := renderPimsyncConf(target, []bindings.ICSFeedBinding{feedBinding()})
 	require.NoError(t, err)
 	assert.NotContains(t, got, "pair ")
 	assert.NotContains(t, got, "storage radarr")
@@ -108,17 +109,17 @@ func TestRenderPimsyncConfParksWithoutAnOwnerCredential(t *testing.T) {
 }
 
 func TestRenderPimsyncConfSkipsIncompleteFeeds(t *testing.T) {
-	cases := map[string]func(*configurator.ICSFeedBinding){
-		"not installed": func(f *configurator.ICSFeedBinding) { f.Installed = false },
-		"no key":        func(f *configurator.ICSFeedBinding) { f.APIKey = "" },
-		"no path":       func(f *configurator.ICSFeedBinding) { f.Path = "" },
-		"no address":    func(f *configurator.ICSFeedBinding) { f.BaseURL = "" },
+	cases := map[string]func(*bindings.ICSFeedBinding){
+		"not installed": func(f *bindings.ICSFeedBinding) { f.Installed = false },
+		"no key":        func(f *bindings.ICSFeedBinding) { f.APIKey = "" },
+		"no path":       func(f *bindings.ICSFeedBinding) { f.Path = "" },
+		"no address":    func(f *bindings.ICSFeedBinding) { f.BaseURL = "" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			feed := feedBinding()
 			mutate(&feed)
-			got, err := renderPimsyncConf(pimsyncTargetForTest(), []configurator.ICSFeedBinding{feed})
+			got, err := renderPimsyncConf(pimsyncTargetForTest(), []bindings.ICSFeedBinding{feed})
 			require.NoError(t, err)
 			assert.NotContains(t, got, "pair ")
 		})
@@ -131,9 +132,9 @@ func TestRenderPimsyncConfIsDeterministic(t *testing.T) {
 	sonarr.App = "sonarr"
 	sonarr.Path = "/feed/v3/calendar/Sonarr.ics"
 
-	first, err := renderPimsyncConf(pimsyncTargetForTest(), []configurator.ICSFeedBinding{radarr, sonarr})
+	first, err := renderPimsyncConf(pimsyncTargetForTest(), []bindings.ICSFeedBinding{radarr, sonarr})
 	require.NoError(t, err)
-	second, err := renderPimsyncConf(pimsyncTargetForTest(), []configurator.ICSFeedBinding{sonarr, radarr})
+	second, err := renderPimsyncConf(pimsyncTargetForTest(), []bindings.ICSFeedBinding{sonarr, radarr})
 	require.NoError(t, err)
 
 	assert.Equal(t, first, second, "block order must not depend on binding order")
@@ -166,7 +167,7 @@ func TestPimsyncPreStartWritesTheConfigTheSidecarMounts(t *testing.T) {
 	dataPath := t.TempDir()
 	c := newPimsyncConfigurator(t, pimsyncOwnerSecrets("owner-secret"))
 	state := &configurator.AppState{DataPath: dataPath}
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 
 	result, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
@@ -182,7 +183,7 @@ func TestPimsyncPreStartIsIdempotent(t *testing.T) {
 	dataPath := t.TempDir()
 	c := newPimsyncConfigurator(t, pimsyncOwnerSecrets("owner-secret"))
 	state := &configurator.AppState{DataPath: dataPath}
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 
 	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
@@ -202,7 +203,7 @@ func TestPimsyncPreStartRestartsWhenAFeedIsAdded(t *testing.T) {
 	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
 
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 	result, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
 	assert.True(t, result.RestartNeeded, "a new feed means a new pair, which the daemon only reads at boot")
@@ -232,7 +233,7 @@ func TestPimsyncPreStartWithoutASecretRendersAParkedConfig(t *testing.T) {
 	dataPath := t.TempDir()
 	c := newPimsyncConfigurator(t, nil)
 	state := &configurator.AppState{DataPath: dataPath}
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 
 	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
@@ -276,7 +277,7 @@ func TestPimsyncPostStartResyncRendersFeedsThatArrivedAfterPreStart(t *testing.T
 	require.NotContains(t, string(parked), "pair ")
 
 	// The providers land. Only PostStart runs from here on.
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 	require.NoError(t, c.PostStart(context.Background(), state))
 
 	after, err := os.ReadFile(filepath.Join(dataPath, pimsyncConfigDirName, pimsyncConfigFileName))
@@ -298,7 +299,7 @@ func TestPimsyncPostStartDoesNotRestartAnUnchangedDaemon(t *testing.T) {
 		return nil
 	}
 	state := &configurator.AppState{DataPath: dataPath}
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 
 	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
@@ -321,7 +322,7 @@ func TestPimsyncPostStartFailsWhenTheRestartFails(t *testing.T) {
 	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
 
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 	err = c.PostStart(context.Background(), state)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "could not be restarted")
@@ -336,7 +337,7 @@ func TestPimsyncPostStartWithoutARestartCallbackIsAnError(t *testing.T) {
 	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
 
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	state.Integrations.ICSFeeds = []bindings.ICSFeedBinding{feedBinding()}
 	require.Error(t, c.PostStart(context.Background(), state))
 }
 

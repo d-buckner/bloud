@@ -3,7 +3,7 @@
 package penpot
 
 import (
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // Two nodes of one install get configurators, and the other five do not: the

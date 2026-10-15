@@ -11,8 +11,8 @@
 package radarr
 
 import (
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/servarr"
 )
 
 // appName is the catalog id and the identity the API client logs under.

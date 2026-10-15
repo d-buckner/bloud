@@ -4,16 +4,13 @@ go 1.25.0
 
 require (
 	codeberg.org/d-buckner/bloud/apps v0.0.0
-	github.com/beevik/etree v1.6.0
+	codeberg.org/d-buckner/bloud/pkg v0.0.0
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-chi/cors v1.2.2
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.7.2
-	github.com/miekg/dns v1.1.73
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.54.0
-	golang.org/x/net v0.57.0
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
@@ -21,7 +18,10 @@ require (
 
 replace codeberg.org/d-buckner/bloud/apps => ../../apps
 
+replace codeberg.org/d-buckner/bloud/pkg => ../../pkg
+
 require (
+	github.com/beevik/etree v1.6.0 // indirect
 	github.com/bitfield/gotestdox v0.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dnephin/pflag v1.0.7 // indirect
@@ -31,8 +31,6 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/jackc/pgpassfile v1.0.0 // indirect
-	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect

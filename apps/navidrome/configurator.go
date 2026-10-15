@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/bootstrap"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bootstrap"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 const appName = "navidrome"
@@ -51,13 +51,15 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		secrets:      deps.Secrets,
 		logger:       logger.With("app", "navidrome"),
 	}
-	c.navi = newNavidromeAPI(deps.HTTP, func() string {
-		if c.baseURL != "" {
-			return c.baseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", c.port)
-	})
-	c.ak = newAuthentikAPI(deps.HTTP, func() string { return c.authentikURL })
+	if deps.HTTP != nil {
+		c.navi = newNavidromeAPI(deps.HTTP, func() string {
+			if c.baseURL != "" {
+				return c.baseURL
+			}
+			return fmt.Sprintf("http://localhost:%d", c.port)
+		})
+		c.ak = newAuthentikAPI(deps.HTTP, func() string { return c.authentikURL })
+	}
 	return c
 }
 

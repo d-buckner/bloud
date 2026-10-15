@@ -8,8 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 const (
@@ -76,8 +77,8 @@ func shareRecipients(users []string) []string {
 // database depends on which feeds exist and not on the order the resolver
 // happened to put them in. Without this a reshuffle of the binding list
 // rewrites sharing.csv and restarts Radicale for no reason.
-func sortedFeeds(feeds []configurator.ICSFeedBinding) []configurator.ICSFeedBinding {
-	out := make([]configurator.ICSFeedBinding, 0, len(feeds))
+func sortedFeeds(feeds []bindings.ICSFeedBinding) []bindings.ICSFeedBinding {
+	out := make([]bindings.ICSFeedBinding, 0, len(feeds))
 	for _, f := range feeds {
 		if feedComplete(f) {
 			out = append(out, f)
@@ -114,7 +115,7 @@ func sortedRecipients(recipients []string) []string {
 // collection. The calendar name is part of that: it is the collection's path,
 // so a binding without one names nothing and must render no share rather than
 // one pointing at an empty path.
-func feedComplete(feed configurator.ICSFeedBinding) bool {
+func feedComplete(feed bindings.ICSFeedBinding) bool {
 	return feed.Installed && feed.APIKey.Published() && feed.Path != "" && feed.BaseURL != "" && feed.CalendarName != ""
 }
 
@@ -194,16 +195,16 @@ func usableUsername(name string) bool {
 // identityProvider picks the resolved `sso` binding that carries an API token,
 // which is the one the user list can be read with. Declaring the contract alone
 // gets the provider's address; `apiToken` is what opens the directory.
-func identityProvider(state *configurator.AppState) (configurator.SSOBinding, bool) {
+func identityProvider(state *configurator.AppState) (bindings.SSOBinding, bool) {
 	if state == nil {
-		return configurator.SSOBinding{}, false
+		return bindings.SSOBinding{}, false
 	}
 	for _, s := range state.Integrations.SSO {
 		if s.APIToken.Published() {
 			return s, true
 		}
 	}
-	return configurator.SSOBinding{}, false
+	return bindings.SSOBinding{}, false
 }
 
 // calendarOwnerPassword reads the shared-calendar owner credential out of this

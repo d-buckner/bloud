@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // Everything Seerr-specific about Bloud's HTTP conversation with the app lives
@@ -158,7 +158,7 @@ type seerrAPI struct {
 }
 
 // newAPI builds the typed client against a base-URL resolver.
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *seerrAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *seerrAPI {
 	return &seerrAPI{cl: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn})}
 }
 

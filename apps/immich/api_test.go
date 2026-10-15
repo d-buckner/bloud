@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,7 +19,7 @@ func newTestAPI(t *testing.T, handler http.HandlerFunc) *immichAPI {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return newAPI(configurator.ClientFactory{}, func() string { return srv.URL })
+	return newAPI(appclient.Factory{}, func() string { return srv.URL })
 }
 
 // TestCreateAdmin_AdminSetupNotAvailableIsAlreadyDone pins issue #183: current

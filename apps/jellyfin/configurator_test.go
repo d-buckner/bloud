@@ -18,8 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
+	"codeberg.org/d-buckner/bloud/pkg/appasset"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/xmlutil"
 )
 
 const fakeAdminPassword = "test-jellyfin-admin-pw"
@@ -47,7 +49,7 @@ func fakeJellyfinSecrets() configurator.AppSecretsProvider {
 // covered without sleeping through the production policy in policies.go.
 func newTestConfigurator(t *testing.T, port int) *Configurator {
 	t.Helper()
-	c := NewConfigurator(port, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := NewConfigurator(port, configurator.Deps{Secrets: fakeJellyfinSecrets(), HTTP: appclient.Factory{}, Assets: appasset.Installer{}})
 	c.api.cl.WithSleeper(func(time.Duration) {})
 	return c
 }

@@ -15,7 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -214,7 +215,7 @@ func TestBothNodesAgreeOnTheFile(t *testing.T) {
 	state.DataPath = dir
 
 	backend := newEnvWriter(configurator.Deps{})
-	frontend := newFrontendConfigurator(configurator.Deps{})
+	frontend := newFrontendConfigurator(configurator.Deps{HTTP: appclient.Factory{}})
 
 	_, err := backend.PreStart(context.Background(), state)
 	require.NoError(t, err)
@@ -353,7 +354,7 @@ func TestPostStartWaitsForTheBackendToServe(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := newFrontendConfigurator(configurator.Deps{})
+	c := newFrontendConfigurator(configurator.Deps{HTTP: appclient.Factory{}})
 	c.baseURL = server.URL
 
 	// Bounded so the test proves the gate rejects without sitting out the wait
@@ -372,7 +373,7 @@ func TestPostStartVerifiesServedFlags(t *testing.T) {
 			"enable-oidc-registration enable-login-with-oidc enable-mcp enable-admin-console")
 		defer server.Close()
 
-		c := newFrontendConfigurator(configurator.Deps{})
+		c := newFrontendConfigurator(configurator.Deps{HTTP: appclient.Factory{}})
 		c.baseURL = server.URL
 		require.NoError(t, c.PostStart(context.Background(), oidcState()))
 	})
@@ -383,7 +384,7 @@ func TestPostStartVerifiesServedFlags(t *testing.T) {
 		server := configJSServer("disable-registration enable-login-with-oidc enable-oidc-registration")
 		defer server.Close()
 
-		c := newFrontendConfigurator(configurator.Deps{})
+		c := newFrontendConfigurator(configurator.Deps{HTTP: appclient.Factory{}})
 		c.baseURL = server.URL
 		err := c.PostStart(context.Background(), oidcState())
 		require.Error(t, err)
@@ -394,7 +395,7 @@ func TestPostStartVerifiesServedFlags(t *testing.T) {
 		server := configJSServer("disable-registration enable-mcp enable-admin-console")
 		defer server.Close()
 
-		c := newFrontendConfigurator(configurator.Deps{})
+		c := newFrontendConfigurator(configurator.Deps{HTTP: appclient.Factory{}})
 		c.baseURL = server.URL
 		require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{}))
 	})

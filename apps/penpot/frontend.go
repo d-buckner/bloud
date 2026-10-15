@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // frontendConfigurator owns the routed node: the one the browser and every
@@ -36,12 +36,14 @@ func newFrontendConfigurator(deps configurator.Deps) *frontendConfigurator {
 		ssoBaseURL: deps.Address.PrimaryBaseURL,
 		logger:     logger,
 	}
-	c.api = newAPI(deps.HTTP, func() string {
-		if c.baseURL != "" {
-			return c.baseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", defaultPort)
-	})
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, func() string {
+			if c.baseURL != "" {
+				return c.baseURL
+			}
+			return fmt.Sprintf("http://localhost:%d", defaultPort)
+		})
+	}
 	c.mcp = &mcpPublisher{
 		secrets: deps.Secrets,
 		exec:    deps.Runtime.Exec,

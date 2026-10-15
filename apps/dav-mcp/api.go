@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 const (
@@ -39,7 +39,7 @@ type mcpAPI struct {
 }
 
 // newAPI builds the probe client against the server's own port.
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *mcpAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *mcpAPI {
 	return &mcpAPI{cl: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn})}
 }
 

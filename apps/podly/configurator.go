@@ -30,8 +30,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 const appName = "podly"
@@ -105,12 +106,15 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Configurator{
+	c := &Configurator{
 		port:    port,
 		secrets: deps.Secrets,
-		api:     newAPI(deps.HTTP, func() string { return fmt.Sprintf("http://localhost:%d", port) }),
 		logger:  logger.With("app", appName),
 	}
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, func() string { return fmt.Sprintf("http://localhost:%d", port) })
+	}
+	return c
 }
 
 func (c *Configurator) Name() string {
@@ -333,13 +337,13 @@ func (c *Configurator) reconcileTranscription(ctx context.Context, state *config
 // pickTranscription returns the endpoint to dial. The first installed one wins:
 // the contract is single-provider by construction, so a second is a registry
 // someone edited by hand rather than a choice this app gets to make.
-func pickTranscription(state *configurator.AppState) (configurator.TranscriptionBinding, bool) {
+func pickTranscription(state *configurator.AppState) (bindings.TranscriptionBinding, bool) {
 	for _, b := range state.Integrations.Transcription {
 		if b.Installed && strings.TrimSpace(b.Endpoint) != "" {
 			return b, true
 		}
 	}
-	return configurator.TranscriptionBinding{}, false
+	return bindings.TranscriptionBinding{}, false
 }
 
 func orEndpointDefault(model string) string {

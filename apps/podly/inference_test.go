@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // inferenceState returns an app state carrying one inference endpoint, which is
@@ -18,15 +19,15 @@ import (
 func inferenceState(t *testing.T, endpoint, apiKey, model string) *configurator.AppState {
 	t.Helper()
 	state := testState(t)
-	state.Integrations = configurator.Integrations{
-		Inference: []configurator.InferenceBinding{{
-			ProviderRef: configurator.ProviderRef{
-				Kind:      configurator.ProviderKindSetting,
+	state.Integrations = bindings.Integrations{
+		Inference: []bindings.InferenceBinding{{
+			ProviderRef: bindings.ProviderRef{
+				Kind:      bindings.ProviderKindSetting,
 				App:       "setting",
 				Installed: true,
 			},
 			Endpoint:     endpoint,
-			APIKey:       configurator.Secret(apiKey),
+			APIKey:       bindings.Secret(apiKey),
 			DefaultModel: model,
 		}},
 	}
@@ -73,9 +74,9 @@ func TestPostStartSendsAPlaceholderKeyWhenNoneIsNeeded(t *testing.T) {
 	srv := startFake(t, fake)
 	cfg := newAppConfigurator(t, newStoreSecrets(), srv)
 	state := inferenceState(t, "https://api.example.com/v1", "", "qwen-x")
-	state.Integrations.Transcription = []configurator.TranscriptionBinding{{
-		ProviderRef: configurator.ProviderRef{
-			Kind:      configurator.ProviderKindSetting,
+	state.Integrations.Transcription = []bindings.TranscriptionBinding{{
+		ProviderRef: bindings.ProviderRef{
+			Kind:      bindings.ProviderKindSetting,
 			App:       "setting",
 			Installed: true,
 		},
@@ -143,9 +144,9 @@ func TestPostStartAdClassifierDoesNotClobberTranscription(t *testing.T) {
 	srv := startFake(t, fake)
 	cfg := newAppConfigurator(t, newStoreSecrets(), srv)
 	state := inferenceState(t, "https://api.example.com/v1", "sk-llm-1", "gpt-4o")
-	state.Integrations.Transcription = []configurator.TranscriptionBinding{{
-		ProviderRef: configurator.ProviderRef{
-			Kind:      configurator.ProviderKindSetting,
+	state.Integrations.Transcription = []bindings.TranscriptionBinding{{
+		ProviderRef: bindings.ProviderRef{
+			Kind:      bindings.ProviderKindSetting,
 			App:       "setting",
 			Installed: true,
 		},

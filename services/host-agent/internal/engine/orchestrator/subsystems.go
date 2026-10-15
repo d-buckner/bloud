@@ -5,12 +5,12 @@ package orchestrator
 import (
 	"time"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // TuningConfig groups the tunable parameters and the event bus. Zero values

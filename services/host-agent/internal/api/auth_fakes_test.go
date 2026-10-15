@@ -6,8 +6,8 @@ import (
 	"context"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 )
 
 // FakeAuthentikClient is a fake Authentik client for testing.

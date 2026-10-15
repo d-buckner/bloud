@@ -8,7 +8,8 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/apps/configtest"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -162,7 +163,7 @@ func stateForSpec(spec appSpec) func(dataDir, bloudDataDir string) *configurator
 			}
 		}
 		if spec.WithAgent {
-			st.Integrations.AgentAPIs = []configurator.AgentAPIBinding{
+			st.Integrations.AgentAPIs = []bindings.AgentAPIBinding{
 				{
 					Endpoint:  "http://hermes.localhost:8080/v1",
 					APIKey:    "conformance-agent-key",
@@ -171,9 +172,9 @@ func stateForSpec(spec appSpec) func(dataDir, bloudDataDir string) *configurator
 			}
 		}
 		if spec.WithAppAPI {
-			st.Integrations.AppAPIs = []configurator.AppAPIBinding{
+			st.Integrations.AppAPIs = []bindings.AppAPIBinding{
 				{
-					ProviderRef: configurator.ProviderRef{
+					ProviderRef: bindings.ProviderRef{
 						App:       "homeassistant",
 						Installed: true,
 						BaseURL:   "http://apps-homeassistant:8123",

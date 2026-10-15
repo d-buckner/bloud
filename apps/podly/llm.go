@@ -11,8 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 // llmStateFileName records what Bloud last applied to the app's llm section.
@@ -98,13 +99,13 @@ func litellmModel(model string) string {
 
 // pickInference returns the completion endpoint to dial. The first installed one
 // wins, for the reason in pickTranscription.
-func pickInference(state *configurator.AppState) (configurator.InferenceBinding, bool) {
+func pickInference(state *configurator.AppState) (bindings.InferenceBinding, bool) {
 	for _, b := range state.Integrations.Inference {
 		if b.Installed && strings.TrimSpace(b.Endpoint) != "" {
 			return b, true
 		}
 	}
-	return configurator.InferenceBinding{}, false
+	return bindings.InferenceBinding{}, false
 }
 
 func inferenceApplied(state *configurator.AppState, want llmSection) bool {

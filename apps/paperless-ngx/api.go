@@ -13,8 +13,8 @@ import (
 	"regexp"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // noFollow lets the form clients read a submission's redirect themselves (that
@@ -39,7 +39,7 @@ type paperlessNgxAPI struct {
 
 // newAPI builds the typed clients against a base-URL resolver using the shared
 // HTTP factory.
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *paperlessNgxAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *paperlessNgxAPI {
 	newFormClient := func() *appclient.Client {
 		// The only error case is a nil cookie-jar option, which this call does
 		// not pass.

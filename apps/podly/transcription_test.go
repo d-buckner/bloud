@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // transcriptionState returns an app state whose integration bindings carry one
@@ -19,15 +20,15 @@ import (
 func transcriptionState(t *testing.T, endpoint, apiKey, model string) *configurator.AppState {
 	t.Helper()
 	state := testState(t)
-	state.Integrations = configurator.Integrations{
-		Transcription: []configurator.TranscriptionBinding{{
-			ProviderRef: configurator.ProviderRef{
-				Kind:      configurator.ProviderKindSetting,
+	state.Integrations = bindings.Integrations{
+		Transcription: []bindings.TranscriptionBinding{{
+			ProviderRef: bindings.ProviderRef{
+				Kind:      bindings.ProviderKindSetting,
 				App:       "setting",
 				Installed: true,
 			},
 			Endpoint: endpoint,
-			APIKey:   configurator.Secret(apiKey),
+			APIKey:   bindings.Secret(apiKey),
 			Model:    model,
 		}},
 	}

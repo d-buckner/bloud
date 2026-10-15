@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // probePath is a top-level collection path asked about without credentials.
@@ -32,7 +32,7 @@ type radicaleAPI struct {
 	cl *appclient.Client
 }
 
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *radicaleAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *radicaleAPI {
 	return &radicaleAPI{cl: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn})}
 }
 

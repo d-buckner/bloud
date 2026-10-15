@@ -3,7 +3,7 @@
 package homeassistant
 
 import (
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // init registers the Home Assistant configurator factory. The host-agent

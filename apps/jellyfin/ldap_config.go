@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // LDAPConfig represents the LDAP plugin configuration.

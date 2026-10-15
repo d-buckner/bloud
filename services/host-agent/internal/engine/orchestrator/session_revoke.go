@@ -6,7 +6,7 @@ import (
 	"context"
 	"sync"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // revokeTracker holds the pending session-revoke requests between the drain

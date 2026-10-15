@@ -10,13 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 const maxOrchestratorEvents = 20

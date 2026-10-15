@@ -22,8 +22,9 @@ import (
 	"strconv"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 const appName = "radicale"
@@ -99,12 +100,14 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		secrets:            deps.Secrets,
 		restartContainerFn: deps.Runtime.RestartContainer,
 	}
-	c.api = newAPI(deps.HTTP, func() string {
-		if c.baseURL != "" {
-			return c.baseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", c.port)
-	})
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, func() string {
+			if c.baseURL != "" {
+				return c.baseURL
+			}
+			return fmt.Sprintf("http://localhost:%d", c.port)
+		})
+	}
 	return c
 }
 
@@ -175,7 +178,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 // feedsOf reads the resolved icsFeed bindings off the app state, tolerating
 // the nil state a bare test pass hands over.
-func feedsOf(state *configurator.AppState) []configurator.ICSFeedBinding {
+func feedsOf(state *configurator.AppState) []bindings.ICSFeedBinding {
 	if state == nil {
 		return nil
 	}
@@ -258,7 +261,7 @@ const sharesCSVHeader = "ShareType;PathOrToken;PathMapped;Conversion;Owner;User;
 // feedURL composes the URL the sync dials: the provider's container address
 // plus the declared path, with the key as a query parameter. The Servarr feed
 // endpoint accepts no header auth, which is why the key travels in the URL.
-func feedURL(feed configurator.ICSFeedBinding) string {
+func feedURL(feed bindings.ICSFeedBinding) string {
 	u := strings.TrimSuffix(feed.BaseURL, "/") + feed.Path
 	sep := "?"
 	if strings.Contains(u, "?") {

@@ -21,7 +21,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 func quietLogger() *slog.Logger {
@@ -306,6 +307,7 @@ func testConfigurator(t *testing.T, app http.Handler) (*Configurator, string) {
 	t.Helper()
 	c := NewConfigurator(0, configurator.Deps{
 		Secrets: &fakeSecrets{password: "test-password"},
+		HTTP:    appclient.Factory{},
 		Logger:  quietLogger(),
 		Address: configurator.AddressDeps{
 			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),

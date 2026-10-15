@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // immichAPI is the typed surface over Immich's HTTP API. Each method reads as
@@ -21,7 +21,7 @@ type immichAPI struct {
 
 // newAPI builds the typed client against a base-URL resolver using the shared
 // HTTP factory.
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *immichAPI {
+func newAPI(f configurator.HTTPFactory, baseURLFn func() string) *immichAPI {
 	return &immichAPI{cl: f.New(appclient.Spec{Name: "immich", BaseURLFn: baseURLFn})}
 }
 

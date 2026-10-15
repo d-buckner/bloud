@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // Everything Prowlarr-specific about Bloud's conversation with the instance's
@@ -135,7 +135,7 @@ type applicationsAPI struct {
 }
 
 // newApplicationsAPI builds the client against the instance's own base URL.
-func newApplicationsAPI(f configurator.ClientFactory, baseURLFn func() string, apiKey string) *applicationsAPI {
+func newApplicationsAPI(f configurator.HTTPFactory, baseURLFn func() string, apiKey string) *applicationsAPI {
 	return &applicationsAPI{
 		cl:     f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn}),
 		apiKey: apiKey,

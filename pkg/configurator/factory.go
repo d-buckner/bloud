@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package configurator
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+)
+
+// Deps carries the host-side inputs app configurator factories need.
+// It lives here (rather than an internal package) so app configurators in
+// the separate apps module can accept it.
+//
+// The four leaf fields are the inputs every configurator can use. The three
+// grouped fields are subsystems: a factory declares what it uses by which
+// sub-values it reads, and each group states its own nil contract once instead
+// of repeating it per field.
+type Deps struct {
+	// Logger for configurator logging.
+	Logger *slog.Logger
+
+	// Secrets provides app-specific generated secrets (may be nil in
+	// degraded/CLI contexts; factories must tolerate nil).
+	Secrets AppSecretsProvider
+
+	// HTTP builds app HTTP clients. The host injects the concrete
+	// appclient.Factory. It is nil in CLI and test contexts, and a
+	// configurator that needs one must treat nil as "not available".
+	HTTP HTTPFactory
+
+	// Assets installs static or downloaded files with the shared content
+	// cache. The host injects the concrete appasset.Installer. It is nil in
+	// CLI and test contexts, and a configurator that installs assets must
+	// treat nil as "cannot apply now".
+	Assets AssetInstaller
+
+	// Identity is the person who runs the instance, as the identity provider
+	// knows them.
+	Identity IdentityDeps
+
+	// Address is where the instance is reachable from, which changes at
+	// runtime and is never captured at construction.
+	Address AddressDeps
+
+	// Runtime is the set of container side effects a configurator may ask
+	// the host to perform. The orchestrator stays the single writer of those
+	// effects, so each one arrives as a callback and is nil wherever no
+	// runtime exists.
+	Runtime RuntimeDeps
+}
+
+// IdentityDeps is the operator's own SSO identity.
+type IdentityDeps struct {
+	// OperatorEmail is the operator's SSO identity email (the Authentik admin
+	// email). Apps that bootstrap a first-run admin account use it, not a
+	// synthetic address, so the operator's OIDC login links to that account
+	// (AFFiNE links by email) and the operator owns the workspace the app
+	// provisions. Empty in CLI/tests; factories should fall back to a local
+	// default only there.
+	OperatorEmail string
+
+	// OperatorUsername returns the login name of the user who completed
+	// first-run setup. Apps that must create per-user state on that user's
+	// behalf (Radicale's synced calendar collections) use it as the principal,
+	// because there is no client credential to act as that user with. It is a
+	// function so a user created after the agent started is seen on the next
+	// pass, not captured at construction. Empty before first-run.
+	OperatorUsername func() string
+}
+
+// AddressDeps is the instance's own address, read live rather than captured.
+type AddressDeps struct {
+	// PrimaryBaseURL resolves the current primary host's public base URL.
+	// It is a function so live host-set changes take effect without
+	// re-registering configurators.
+	PrimaryBaseURL func() string
+
+	// TraefikPort is the public Traefik HTTP entrypoint port, used to build
+	// host-local URLs (e.g. API calls made from the host itself).
+	TraefikPort int
+}
+
+// RuntimeDeps is the container side effects the host will perform on a
+// configurator's request. All three are nil when no runtime is available
+// (CLI/tests). A configurator that needs one must treat nil as "cannot apply
+// now", never as "already applied".
+type RuntimeDeps struct {
+	// RestartContainer stops and starts a running container by name through
+	// the host's container runtime, forcing its process to re-exec and re-read
+	// on-disk config. Configurators need this when the app reads config only
+	// at startup and its own in-app restart is unreliable (e.g. Home Assistant
+	// under a container init). The runtime call is executed by the
+	// orchestrator-provided callback so the orchestrator stays the single
+	// writer of side effects.
+	RestartContainer func(ctx context.Context, name string) error
+
+	// Exec runs a command inside a running container and returns its combined
+	// output. env entries are set in the container process, never on the command
+	// line, so secrets do not leak into an argv. Like RestartContainer, the call
+	// goes through the host runtime the orchestrator provides.
+	Exec ExecFunc
+
+	// ContainerRunning reports whether a named container currently exists and
+	// is running. It lets a configurator tell "the container is stopped, so a
+	// read that needs the container is not meaningful yet" from "the container
+	// is up and the read still failed", which is a real fault. A configurator
+	// that needs the distinction must treat nil as "cannot tell" and keep its
+	// hard-error path.
+	ContainerRunning ContainerRunningFunc
+}
+
+// LocalTraefikURL returns the loopback URL of the Traefik HTTP entrypoint.
+// Configurators running on the host call Traefik (and the services behind
+// it) at this URL regardless of the public host set.
+func (d Deps) LocalTraefikURL() string {
+	return fmt.Sprintf("http://localhost:%d", d.Address.TraefikPort)
+}
+
+// Factory constructs a NodeLifecycle for a specific app node.
+// It returns an error when the configurator cannot be built with the given
+// dependencies (e.g. a required dependency is missing in this mode).
+type Factory func(deps Deps) (NodeLifecycle, error)
+
+// ExecFunc runs a command inside a named container and returns its combined
+// output. It is the shape of Deps.Exec (see there for the nil contract).
+type ExecFunc func(ctx context.Context, containerName string, env map[string]string, cmd []string) ([]byte, error)
+
+// ContainerRunningFunc reports whether a named container is currently running.
+// It is the shape of Deps.ContainerRunning (see there for the nil contract).
+type ContainerRunningFunc func(ctx context.Context, containerName string) (bool, error)
+
+var (
+	factoryMu     sync.RWMutex
+	nodeFactories = map[string]Factory{}
+)
+
+// RegisterFactory registers a lazily-instantiated configurator factory for an
+// app/node. App packages call this from their init() (see each app's
+// registration.go), so adding an app never touches central wiring code.
+// The configurator itself is constructed only on the first Registry.Get for
+// that node. Re-registering a name replaces the previous factory.
+func RegisterFactory(nodeName string, f Factory) {
+	factoryMu.Lock()
+	defer factoryMu.Unlock()
+	nodeFactories[nodeName] = f
+}
+
+// lookupFactory returns the registered factory for a node, if any.
+func lookupFactory(nodeName string) (Factory, bool) {
+	factoryMu.RLock()
+	defer factoryMu.RUnlock()
+	f, ok := nodeFactories[nodeName]
+	return f, ok
+}
+
+// factoryNames returns the names of all registered factories (for logging).
+func factoryNames() []string {
+	factoryMu.RLock()
+	defer factoryMu.RUnlock()
+	names := make([]string, 0, len(nodeFactories))
+	for name := range nodeFactories {
+		names = append(names, name)
+	}
+	return names
+}
+
+// MustRegisterFactory is a convenience for app packages: it registers a
+// factory that always succeeds, hiding the error return.
+func MustRegisterFactory(nodeName string, f func(deps Deps) NodeLifecycle) {
+	RegisterFactory(nodeName, func(deps Deps) (NodeLifecycle, error) {
+		c := f(deps)
+		if c == nil {
+			return nil, fmt.Errorf("configurator factory for %q returned nil", nodeName)
+		}
+		return c, nil
+	})
+}

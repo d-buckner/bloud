@@ -19,10 +19,11 @@ import (
 	"sync"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/servarr"
+	"codeberg.org/d-buckner/bloud/pkg/xmlutil"
 )
 
 const (
@@ -81,7 +82,7 @@ func writeConfig(t *testing.T, path, content string) {
 // this PVR there" question now (nothing here probes a PVR's port to find out),
 // and an empty apiKey stands for a PVR that is installed but has not published
 // its secret yet.
-func pvrBinding(t *testing.T, appID string, installed bool, apiKey string) configurator.PVRBinding {
+func pvrBinding(t *testing.T, appID string, installed bool, apiKey string) bindings.PVRBinding {
 	t.Helper()
 
 	var node string
@@ -95,8 +96,8 @@ func pvrBinding(t *testing.T, appID string, installed bool, apiKey string) confi
 		t.Fatalf("unknown PVR %q", appID)
 	}
 
-	return configurator.PVRBinding{
-		ProviderRef: configurator.ProviderRef{
+	return bindings.PVRBinding{
+		ProviderRef: bindings.ProviderRef{
 			App:       appID,
 			Installed: installed,
 			Node:      node,
@@ -110,7 +111,7 @@ func pvrBinding(t *testing.T, appID string, installed bool, apiKey string) confi
 		},
 		// The binding carries the key as a field, empty when the PVR has not
 		// published one yet: no consumer names the secret.
-		APIKey: configurator.Secret(apiKey),
+		APIKey: bindings.Secret(apiKey),
 	}
 }
 
@@ -118,7 +119,7 @@ func pvrBinding(t *testing.T, appID string, installed bool, apiKey string) confi
 // over. The slice carries an entry for every declared-compatible PVR, installed
 // or not: that flag is what tells the reconcile "wire this PVR" from "the PVR
 // is gone, so prune the entry Bloud wrote for it".
-func withPvrs(state *configurator.AppState, bindings ...configurator.PVRBinding) {
+func withPvrs(state *configurator.AppState, bindings ...bindings.PVRBinding) {
 	state.Integrations.PVRs = bindings
 }
 
@@ -530,7 +531,7 @@ func configuratorForServerWith(t *testing.T, fake *fakeProwlarr, retry appclient
 	t.Cleanup(server.Close)
 
 	c := NewConfigurator(0, configurator.Deps{
-		HTTP:   configurator.ClientFactory{Retry: retry},
+		HTTP:   appclient.Factory{Retry: retry},
 		Logger: quietLogger(),
 	})
 	c.baseURL = server.URL
@@ -543,7 +544,7 @@ func applicationsForServer(t *testing.T, fake *fakeProwlarr, apiKey string) *app
 	t.Helper()
 	server := httptest.NewServer(fake.handler())
 	t.Cleanup(server.Close)
-	return newApplicationsAPI(configurator.ClientFactory{}, func() string { return server.URL }, apiKey)
+	return newApplicationsAPI(appclient.Factory{}, func() string { return server.URL }, apiKey)
 }
 
 // wantApplicationJSON is the exact document Bloud must send for one PVR. It is

@@ -2,7 +2,7 @@
 
 package arrmcp
 
-import "codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+import "codeberg.org/d-buckner/bloud/pkg/configurator"
 
 // init registers the arr-mcp node. The factory is instantiated lazily on
 // first lookup; see pkg/configurator for the registry contract.

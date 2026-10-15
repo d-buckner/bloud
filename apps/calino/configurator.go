@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 const appName = "calino"
@@ -56,12 +56,14 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		port:   port,
 		logger: logger.With("app", appName),
 	}
-	c.app = newAPI(deps.HTTP, func() string {
-		if c.baseURL != "" {
-			return c.baseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", c.port)
-	})
+	if deps.HTTP != nil {
+		c.app = newAPI(deps.HTTP, func() string {
+			if c.baseURL != "" {
+				return c.baseURL
+			}
+			return fmt.Sprintf("http://localhost:%d", c.port)
+		})
+	}
 	return c
 }
 

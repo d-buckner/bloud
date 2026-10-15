@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"net/url"
 
+	"codeberg.org/d-buckner/bloud/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 )
 
 // ssoURLs is the resolved set of SSO URLs for one provisioning pass.

@@ -14,9 +14,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/servarr"
 )
 
 const (
@@ -75,7 +76,7 @@ type Configurator struct {
 	api *servarr.Client
 	// clients builds the application-sync client, which needs the instance key
 	// read from config.xml and so is built per reconciliation.
-	clients configurator.ClientFactory
+	clients configurator.HTTPFactory
 	// ownURL resolves the instance's own base URL (localhost:<port>, or the
 	// test seam).
 	ownURL func() string
@@ -89,7 +90,7 @@ type Configurator struct {
 // binding that says where the provider is and what its API key is, plus
 // Prowlarr's own names for the provider's application contract.
 type pvrTarget struct {
-	binding        configurator.PVRBinding
+	binding        bindings.PVRBinding
 	implementation string
 	configContract string
 }
@@ -114,7 +115,9 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		}
 		return fmt.Sprintf("http://localhost:%d", c.port)
 	}
-	c.api = servarr.NewClient(deps.HTTP, appName, apiPath, c.ownURL)
+	if deps.HTTP != nil {
+		c.api = servarr.NewClient(deps.HTTP, appName, apiPath, c.ownURL)
+	}
 	return c
 }
 

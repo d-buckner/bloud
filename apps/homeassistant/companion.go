@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // The companion token: a Home Assistant long-lived access token that Bloud

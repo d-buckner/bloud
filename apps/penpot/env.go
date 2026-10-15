@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // envFileName is the dotenv file the backend node's configurator writes at

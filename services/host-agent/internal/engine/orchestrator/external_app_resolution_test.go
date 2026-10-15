@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // realCatalogDir points at the checked-in catalog. Tests using it load the real
@@ -159,7 +159,7 @@ func TestExternalAppResolvesAppAPIBinding(t *testing.T) {
 	require.Len(t, state.Integrations.AppAPIs, 1)
 	binding := state.Integrations.AppAPIs[0]
 
-	assert.Equal(t, configurator.ProviderKindExternalApp, binding.Kind)
+	assert.Equal(t, bindings.ProviderKindExternalApp, binding.Kind)
 	assert.Equal(t, "affine", binding.App, "the catalog ID is retained: a remote AFFiNE is still AFFiNE")
 	assert.True(t, binding.Installed, "the operator registered it, which is the same condition as the graph edge")
 	assert.Empty(t, binding.Node, "there is no container to name")
@@ -337,7 +337,7 @@ func TestExternalAppDoesNotAffectLocalResolution(t *testing.T) {
 	secrets.values = map[string]string{"affine/appApi/username": "boot@example.com"}
 
 	binding := orch.buildAppState("affine-mcp").Integrations.AppAPIs[0]
-	assert.Equal(t, configurator.ProviderKindApp, binding.Kind)
+	assert.Equal(t, bindings.ProviderKindApp, binding.Kind)
 	assert.Equal(t, "http://apps-affine:3010", binding.BaseURL)
 	assert.Equal(t, "boot@example.com", binding.Username)
 	assert.Equal(t, "local-password", binding.Password.String())
@@ -534,7 +534,7 @@ func TestExternalContractProviderResolvesForASettingConsumer(t *testing.T) {
 	require.Len(t, out.PVRs, 1, "the off-host record fills the role the consumer declared")
 	binding := out.PVRs[0]
 	assert.Equal(t, "ext-radarr", binding.App)
-	assert.Equal(t, configurator.ProviderKindSetting, binding.Kind)
+	assert.Equal(t, bindings.ProviderKindSetting, binding.Kind)
 	assert.True(t, binding.Installed)
 	assert.Equal(t, "https://radarr.example.com", binding.BaseURL)
 	assert.Equal(t, "off-host-key", binding.APIKey.String())
@@ -711,7 +711,7 @@ func TestExternalHomeAssistantFillsHaMCPBindingFromTheRealCatalog(t *testing.T) 
 		"one Home Assistant is declared, and the operator registered exactly one")
 	binding := state.Integrations.AppAPIs[0]
 
-	assert.Equal(t, configurator.ProviderKindExternalApp, binding.Kind)
+	assert.Equal(t, bindings.ProviderKindExternalApp, binding.Kind)
 	assert.Equal(t, "homeassistant", binding.App)
 	assert.True(t, binding.Installed)
 	assert.Equal(t, "https://ha.example.net:8123", binding.BaseURL)

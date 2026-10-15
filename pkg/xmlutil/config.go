@@ -1,0 +1,177 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Package xmlutil provides utilities for reading and modifying XML configuration files.
+package xmlutil
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
+	"github.com/beevik/etree"
+)
+
+// ConfigFile wraps an etree Document for manipulating XML config files.
+// It provides a simple API for getting and setting element values.
+type ConfigFile struct {
+	doc  *etree.Document
+	path string
+	root *etree.Element
+}
+
+// Open reads an XML config file from disk. If the file doesn't exist,
+// it creates a new document with the specified root element name.
+func Open(path, rootElement string) (*ConfigFile, error) {
+	doc := etree.NewDocument()
+
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		// Create new document with root element
+		root := doc.CreateElement(rootElement)
+		return &ConfigFile{doc: doc, path: path, root: root}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", path, err)
+	}
+
+	if err := doc.ReadFromBytes(data); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+
+	root := doc.Root()
+	if root == nil {
+		return nil, fmt.Errorf("no root element in %s", path)
+	}
+
+	return &ConfigFile{doc: doc, path: path, root: root}, nil
+}
+
+// OpenExisting reads an XML config file from disk.
+// Returns an error if the file doesn't exist.
+func OpenExisting(path string) (*ConfigFile, error) {
+	doc := etree.NewDocument()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := doc.ReadFromBytes(data); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+
+	root := doc.Root()
+	if root == nil {
+		return nil, fmt.Errorf("no root element in %s", path)
+	}
+
+	return &ConfigFile{doc: doc, path: path, root: root}, nil
+}
+
+// ConfigValues is a JSON-like definition of desired XML config state.
+// Values may be string (simple elements) or []string (array elements).
+// Use HasConfig to check and ApplyConfig to write.
+type ConfigValues map[string]any
+
+// GetElement returns the text value of a child element, or empty string if not found.
+func (c *ConfigFile) GetElement(name string) string {
+	el := c.root.SelectElement(name)
+	if el == nil {
+		return ""
+	}
+	return el.Text()
+}
+
+// getStringArray returns the <string> children of a named element.
+func (c *ConfigFile) getStringArray(name string) []string {
+	el := c.root.SelectElement(name)
+	if el == nil {
+		return nil
+	}
+	var values []string
+	for _, child := range el.ChildElements() {
+		values = append(values, child.Text())
+	}
+	return values
+}
+
+// HasConfig returns true if all values in the ConfigValues match the current file.
+func (c *ConfigFile) HasConfig(values ConfigValues) bool {
+	for name, value := range values {
+		switch v := value.(type) {
+		case string:
+			if c.GetElement(name) != v {
+				return false
+			}
+		case []string:
+			current := c.getStringArray(name)
+			if len(current) != len(v) {
+				return false
+			}
+			for i := range v {
+				if current[i] != v[i] {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// ApplyConfig writes all values in the ConfigValues to the file.
+func (c *ConfigFile) ApplyConfig(values ConfigValues) {
+	for name, value := range values {
+		switch v := value.(type) {
+		case string:
+			c.SetElement(name, v)
+		case []string:
+			c.SetStringArray(name, v)
+		}
+	}
+}
+
+// SetElement sets the value of a child element, creating it if it doesn't exist.
+func (c *ConfigFile) SetElement(name, value string) {
+	el := c.root.SelectElement(name)
+	if el == nil {
+		el = c.root.CreateElement(name)
+	}
+	el.SetText(value)
+}
+
+// SetStringArray sets a child element to contain multiple <string> children.
+// This is used for .NET XML serialization format like:
+//
+//	<KnownProxies>
+//	  <string>127.0.0.1</string>
+//	  <string>::1</string>
+//	</KnownProxies>
+func (c *ConfigFile) SetStringArray(name string, values []string) {
+	// Remove existing element if present
+	if existing := c.root.SelectElement(name); existing != nil {
+		c.root.RemoveChild(existing)
+	}
+
+	// Create new element with string children
+	el := c.root.CreateElement(name)
+	for _, v := range values {
+		child := el.CreateElement("string")
+		child.SetText(v)
+	}
+}
+
+// Save writes the document back to disk with proper indentation.
+// Returns true if the file content changed, false if it was already identical.
+func (c *ConfigFile) Save() (bool, error) {
+	if err := os.MkdirAll(filepath.Dir(c.path), 0755); err != nil {
+		return false, fmt.Errorf("failed to create directory: %w", err)
+	}
+	c.doc.Indent(2)
+	var buf bytes.Buffer
+	if _, err := c.doc.WriteTo(&buf); err != nil {
+		return false, err
+	}
+	return managedfile.Write(c.path, buf.Bytes(), managedfile.ModeSharedConfig)
+}

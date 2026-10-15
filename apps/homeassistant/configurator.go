@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appasset"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/appasset"
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
 
 const appName = "homeassistant"
@@ -105,7 +105,7 @@ type Configurator struct {
 
 	// assets installs the pinned hass-oidc-auth release (fetch/verify/stage/
 	// commit) with the shared content cache.
-	assets appasset.Installer
+	assets configurator.AssetInstaller
 
 	// restartContainer stops and starts a running container by name through
 	// the host runtime, forcing its process to re-exec and re-read on-disk
@@ -149,12 +149,14 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		assets:             deps.Assets,
 		restartContainerFn: deps.Runtime.RestartContainer,
 	}
-	c.api = newAPI(deps.HTTP, func() string {
-		if c.baseURLOverride != "" {
-			return c.baseURLOverride
-		}
-		return fmt.Sprintf("http://localhost:%d", c.port)
-	})
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, func() string {
+			if c.baseURLOverride != "" {
+				return c.baseURLOverride
+			}
+			return fmt.Sprintf("http://localhost:%d", c.port)
+		})
+	}
 	return c
 }
 
@@ -352,6 +354,9 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 // reports the pinned version; the Verify callback asserts the archive actually
 // declares the expected provider domain before anything lands.
 func (c *Configurator) ensureOIDCComponent(ctx context.Context, configDir string) (bool, error) {
+	if c.assets == nil {
+		return false, nil
+	}
 	targetDir := filepath.Join(configDir, "custom_components", componentDomain)
 	return c.assets.Install(ctx, appasset.Asset{
 		Name:     "hass-oidc-auth",
