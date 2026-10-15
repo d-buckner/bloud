@@ -5,7 +5,7 @@ package orchestrator
 import (
 	"fmt"
 
-	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
@@ -19,7 +19,7 @@ import (
 // a thing they configure, not a thing Bloud runs. Giving it a source rather than a
 // catalog entry keeps it out of the graph: no node, no lifecycle, no image to pin.
 type providerSource struct {
-	kind configurator.ProviderKind
+	kind bindings.ProviderKind
 	// id is the catalog app ID for an app provider, or
 	// catalog.SettingProviderSource for the instance.
 	id string
@@ -36,7 +36,7 @@ type providerSource struct {
 }
 
 func appSource(id string) providerSource {
-	return providerSource{kind: configurator.ProviderKindApp, id: id}
+	return providerSource{kind: bindings.ProviderKindApp, id: id}
 }
 
 // externalAppSource resolves one declared `app:` provider against the
@@ -46,10 +46,10 @@ func externalAppSource(id string, record *store.ExternalApp) providerSource {
 	if record == nil {
 		return appSource(id)
 	}
-	return providerSource{kind: configurator.ProviderKindExternalApp, id: id, external: record}
+	return providerSource{kind: bindings.ProviderKindExternalApp, id: id, external: record}
 }
 
-func (s providerSource) isSetting() bool { return s.kind == configurator.ProviderKindSetting }
+func (s providerSource) isSetting() bool { return s.kind == bindings.ProviderKindSetting }
 
 // isExternal reports whether this provider is a remote install rather than a
 // container Bloud runs.
@@ -65,9 +65,9 @@ func (s providerSource) isExternal() bool { return s.external != nil }
 // BaseURL and LocalURL are the same origin: with no container network between
 // them, what the consumer's app stores and what its configurator dials are
 // one address.
-func externalAppProviderRef(catalogID, endpoint string) configurator.ProviderRef {
-	return configurator.ProviderRef{
-		Kind:      configurator.ProviderKindExternalApp,
+func externalAppProviderRef(catalogID, endpoint string) bindings.ProviderRef {
+	return bindings.ProviderRef{
+		Kind:      bindings.ProviderKindExternalApp,
 		App:       catalogID,
 		Installed: true,
 		BaseURL:   endpoint,
@@ -82,9 +82,9 @@ func externalAppProviderRef(catalogID, endpoint string) configurator.ProviderRef
 // and no container-network address. The contract's own endpoint field carries the
 // value a consumer dials. `installed` here means "the setting is populated",
 // which is the instance analogue of a graph edge existing.
-func settingProviderRef(populated bool) configurator.ProviderRef {
-	return configurator.ProviderRef{
-		Kind:      configurator.ProviderKindSetting,
+func settingProviderRef(populated bool) bindings.ProviderRef {
+	return bindings.ProviderRef{
+		Kind:      bindings.ProviderKindSetting,
 		App:       catalog.SettingProviderSource,
 		Installed: populated,
 	}
@@ -98,9 +98,9 @@ func settingProviderRef(populated bool) configurator.ProviderRef {
 // write, and two records for the same contract have to be tellable apart. The
 // Kind stays ProviderKindSetting, which is what says "the operator filled this
 // role" rather than "Bloud booted this app".
-func settingRecordProviderRef(rec *store.ExternalApp) configurator.ProviderRef {
-	return configurator.ProviderRef{
-		Kind:      configurator.ProviderKindSetting,
+func settingRecordProviderRef(rec *store.ExternalApp) bindings.ProviderRef {
+	return bindings.ProviderRef{
+		Kind:      bindings.ProviderKindSetting,
 		App:       rec.ID,
 		Installed: true,
 		BaseURL:   rec.URL,
@@ -131,10 +131,10 @@ func (o *Orchestrator) defaultModel() string {
 // It returns ok=false when nothing is configured; a parse failure is logged and
 // also reads as not-configured, because a binding built from an endpoint that
 // does not parse would be worse than none.
-func (o *Orchestrator) settingInferenceSource(requires []string, external externalRegistry) (configurator.InferenceBinding, bool) {
+func (o *Orchestrator) settingInferenceSource(requires []string, external externalRegistry) (bindings.InferenceBinding, bool) {
 	records := external.externalForContract(inference.ContractName)
 	if len(records) == 0 {
-		return configurator.InferenceBinding{}, false
+		return bindings.InferenceBinding{}, false
 	}
 	settings := inference.Settings{
 		Upstreams:    inference.UpstreamsFromExternal(records),
@@ -143,14 +143,14 @@ func (o *Orchestrator) settingInferenceSource(requires []string, external extern
 	ep, ok, err := settings.Endpoint()
 	if err != nil {
 		o.logger.Warn("configured AI upstream endpoint does not parse; providing no inference binding", "error", err)
-		return configurator.InferenceBinding{}, false
+		return bindings.InferenceBinding{}, false
 	}
 	if !ok {
-		return configurator.InferenceBinding{}, false
+		return bindings.InferenceBinding{}, false
 	}
 
 	upstream, _ := settings.ActiveUpstream()
-	binding := configurator.InferenceBinding{
+	binding := bindings.InferenceBinding{
 		ProviderRef:  settingProviderRef(true),
 		Endpoint:     ep.String(),
 		DefaultModel: settings.DefaultModel,
@@ -160,7 +160,7 @@ func (o *Orchestrator) settingInferenceSource(requires []string, external extern
 		ViaGateway: false,
 	}
 	if secretAllowed(requires, "apiKey") && o.secrets != nil {
-		binding.APIKey = configurator.Secret(o.secrets.GetAppSecret(store.ExternalSecretScope(upstream.ID), inference.ContractName))
+		binding.APIKey = bindings.Secret(o.secrets.GetAppSecret(store.ExternalSecretScope(upstream.ID), inference.ContractName))
 	}
 	return binding, true
 }

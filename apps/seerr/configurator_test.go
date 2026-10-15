@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -532,7 +533,7 @@ func deadURL(t *testing.T) string {
 // newState returns an AppState in the test's own temp dir carrying the
 // integration bindings the orchestrator resolves. It is the only place a test
 // says where a provider lives: a configurator discovers nothing itself.
-func newState(t *testing.T, integrations configurator.Integrations) *configurator.AppState {
+func newState(t *testing.T, integrations bindings.Integrations) *configurator.AppState {
 	t.Helper()
 	return &configurator.AppState{
 		DataPath:     filepath.Join(t.TempDir(), "seerr"),
@@ -542,10 +543,10 @@ func newState(t *testing.T, integrations configurator.Integrations) *configurato
 
 // stateWithJellyfin is newState for the common stack: Seerr plus the installed
 // Jellyfin it onboards against.
-func stateWithJellyfin(t *testing.T, binding configurator.MediaServerBinding) *configurator.AppState {
+func stateWithJellyfin(t *testing.T, binding bindings.MediaServerBinding) *configurator.AppState {
 	t.Helper()
-	return newState(t, configurator.Integrations{
-		MediaServers: []configurator.MediaServerBinding{binding},
+	return newState(t, bindings.Integrations{
+		MediaServers: []bindings.MediaServerBinding{binding},
 	})
 }
 
@@ -554,9 +555,9 @@ func stateWithJellyfin(t *testing.T, binding configurator.MediaServerBinding) *c
 // bootstrap admin password Jellyfin published, and the address this
 // configurator reaches it at from the host (here, the fake). An empty password
 // is the provider that has not published one yet, which defers onboarding.
-func jellyfinBinding(localURL, password string) configurator.MediaServerBinding {
-	return configurator.MediaServerBinding{
-		ProviderRef: configurator.ProviderRef{
+func jellyfinBinding(localURL, password string) bindings.MediaServerBinding {
+	return bindings.MediaServerBinding{
+		ProviderRef: bindings.ProviderRef{
 			App:       jellyfinAppName,
 			Installed: true,
 			Node:      "apps-jellyfin",
@@ -565,7 +566,7 @@ func jellyfinBinding(localURL, password string) configurator.MediaServerBinding 
 			LocalURL:  localURL,
 		},
 		AdminUsername: jellyfinAdminUser,
-		AdminPassword: configurator.Secret(password),
+		AdminPassword: bindings.Secret(password),
 	}
 }
 
@@ -573,9 +574,9 @@ func jellyfinBinding(localURL, password string) configurator.MediaServerBinding 
 // can fulfil requests through, with the address and the key each published. An
 // empty key is the provider that has not published one yet, which leaves its
 // DVR entry alone.
-func radarrBinding(localURL, apiKey string) configurator.PVRBinding {
-	return configurator.PVRBinding{
-		ProviderRef: configurator.ProviderRef{
+func radarrBinding(localURL, apiKey string) bindings.PVRBinding {
+	return bindings.PVRBinding{
+		ProviderRef: bindings.ProviderRef{
 			App:       radarrAppName,
 			Installed: true,
 			Node:      "apps-radarr",
@@ -583,13 +584,13 @@ func radarrBinding(localURL, apiKey string) configurator.PVRBinding {
 			BaseURL:   "http://apps-radarr:7878",
 			LocalURL:  localURL,
 		},
-		APIKey: configurator.Secret(apiKey),
+		APIKey: bindings.Secret(apiKey),
 	}
 }
 
-func sonarrBinding(localURL, apiKey string) configurator.PVRBinding {
-	return configurator.PVRBinding{
-		ProviderRef: configurator.ProviderRef{
+func sonarrBinding(localURL, apiKey string) bindings.PVRBinding {
+	return bindings.PVRBinding{
+		ProviderRef: bindings.ProviderRef{
 			App:       sonarrAppName,
 			Installed: true,
 			Node:      "apps-sonarr",
@@ -597,7 +598,7 @@ func sonarrBinding(localURL, apiKey string) configurator.PVRBinding {
 			BaseURL:   "http://apps-sonarr:8989",
 			LocalURL:  localURL,
 		},
-		APIKey: configurator.Secret(apiKey),
+		APIKey: bindings.Secret(apiKey),
 	}
 }
 
@@ -605,14 +606,14 @@ func sonarrBinding(localURL, apiKey string) configurator.PVRBinding {
 // edge changes: the address survives, because it comes from the provider's
 // catalog metadata, which outlives its installation, and that is what lets a
 // consumer recognize - and here, prune - the entry it wrote for it.
-func notInstalledPVR(binding configurator.PVRBinding) configurator.PVRBinding {
+func notInstalledPVR(binding bindings.PVRBinding) bindings.PVRBinding {
 	binding.Installed = false
 	return binding
 }
 
 // notInstalledMediaServer is notInstalledPVR for the media server: the provider
 // is not part of the stack, so Seerr's onboarding defers on it.
-func notInstalledMediaServer(binding configurator.MediaServerBinding) configurator.MediaServerBinding {
+func notInstalledMediaServer(binding bindings.MediaServerBinding) bindings.MediaServerBinding {
 	binding.Installed = false
 	return binding
 }
@@ -839,17 +840,17 @@ func TestPostStart_DefersWhenTheMediaServerIsNotUsable(t *testing.T) {
 	// reconciliation picks the media server up.
 	tests := []struct {
 		name    string
-		binding func(jellyfinURL string) configurator.MediaServerBinding
+		binding func(jellyfinURL string) bindings.MediaServerBinding
 	}{
 		{
 			name: "not installed",
-			binding: func(string) configurator.MediaServerBinding {
+			binding: func(string) bindings.MediaServerBinding {
 				return notInstalledMediaServer(jellyfinBinding("", "pw"))
 			},
 		},
 		{
 			name: "installed but its password is not published yet",
-			binding: func(jellyfinURL string) configurator.MediaServerBinding {
+			binding: func(jellyfinURL string) bindings.MediaServerBinding {
 				return jellyfinBinding(jellyfinURL, "")
 			},
 		},
@@ -865,8 +866,8 @@ func TestPostStart_DefersWhenTheMediaServerIsNotUsable(t *testing.T) {
 
 			// No PreStart and no settings.json: deferral is decided before the
 			// API key is needed, so it must not depend on the config file.
-			state := newState(t, configurator.Integrations{
-				MediaServers: []configurator.MediaServerBinding{tt.binding(jellyfin.server.URL)},
+			state := newState(t, bindings.Integrations{
+				MediaServers: []bindings.MediaServerBinding{tt.binding(jellyfin.server.URL)},
 			})
 			if err := c.PostStart(context.Background(), state); err != nil {
 				t.Fatalf("PostStart() error = %v, want nil (no usable media server defers onboarding)", err)
@@ -1226,8 +1227,8 @@ type pvrFixture struct {
 	fake          *fakeSeerr
 	radarr        *fakePVR
 	sonarr        *fakePVR
-	radarrBinding configurator.PVRBinding
-	sonarrBinding configurator.PVRBinding
+	radarrBinding bindings.PVRBinding
+	sonarrBinding bindings.PVRBinding
 	state         *configurator.AppState
 }
 
@@ -1247,9 +1248,9 @@ func newPVRFixture(t *testing.T) *pvrFixture {
 
 	radarrIntegration := radarrBinding(radarr.server.URL, radarrAPIKey)
 	sonarrIntegration := sonarrBinding(sonarr.server.URL, sonarrAPIKey)
-	state := newState(t, configurator.Integrations{
-		MediaServers: []configurator.MediaServerBinding{jellyfinBinding(jellyfin.server.URL, "pw")},
-		PVRs:         []configurator.PVRBinding{radarrIntegration, sonarrIntegration},
+	state := newState(t, bindings.Integrations{
+		MediaServers: []bindings.MediaServerBinding{jellyfinBinding(jellyfin.server.URL, "pw")},
+		PVRs:         []bindings.PVRBinding{radarrIntegration, sonarrIntegration},
 	})
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
@@ -1268,7 +1269,7 @@ func newPVRFixture(t *testing.T) *pvrFixture {
 // setPVRBindings re-resolves the `pvr` integration, so a test can hand Seerr a
 // different stack than the fixture's default (a PVR that is gone, or one that
 // has not published its key yet) without building the whole fixture again.
-func (f *pvrFixture) setPVRBindings(bindings ...configurator.PVRBinding) {
+func (f *pvrFixture) setPVRBindings(bindings ...bindings.PVRBinding) {
 	f.state.Integrations.PVRs = bindings
 }
 
@@ -1431,9 +1432,9 @@ func TestPostStart_UsesTheBindingsAddressAndSecrets(t *testing.T) {
 	radarr := newFakePVR(t, []map[string]any{{"id": 4, "name": "HD-1080p"}})
 	c := newConfigurator(t, fake, &fakeSecrets{})
 
-	state := newState(t, configurator.Integrations{
-		MediaServers: []configurator.MediaServerBinding{{
-			ProviderRef: configurator.ProviderRef{
+	state := newState(t, bindings.Integrations{
+		MediaServers: []bindings.MediaServerBinding{{
+			ProviderRef: bindings.ProviderRef{
 				App:       jellyfinAppName,
 				Installed: true,
 				Node:      jellyfinNode,
@@ -1444,8 +1445,8 @@ func TestPostStart_UsesTheBindingsAddressAndSecrets(t *testing.T) {
 			AdminUsername: jellyfinAdminUser,
 			AdminPassword: jellyfinPassword,
 		}},
-		PVRs: []configurator.PVRBinding{{
-			ProviderRef: configurator.ProviderRef{
+		PVRs: []bindings.PVRBinding{{
+			ProviderRef: bindings.ProviderRef{
 				App:       radarrAppName,
 				Installed: true,
 				Node:      radarrNode,

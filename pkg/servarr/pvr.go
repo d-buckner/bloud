@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
@@ -386,13 +387,13 @@ func (c *PVRConfigurator) ensureDownloadClient(ctx context.Context, apiKey strin
 
 // downloadClientBinding returns the downloadClient provider Bloud wires, or
 // false when the catalog declares no such provider.
-func downloadClientBinding(state *configurator.AppState) (configurator.DownloadClientBinding, bool) {
+func downloadClientBinding(state *configurator.AppState) (bindings.DownloadClientBinding, bool) {
 	for _, binding := range state.Integrations.DownloadClients {
 		if binding.App == QBittorrentAppID {
 			return binding, true
 		}
 	}
-	return configurator.DownloadClientBinding{}, false
+	return bindings.DownloadClientBinding{}, false
 }
 
 // ensureDownloadCategory creates the category the download client stores.

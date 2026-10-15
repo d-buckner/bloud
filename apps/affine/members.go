@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -48,16 +49,16 @@ func bloudUserEmails(users []authentik.ManagedUserInfo) []string {
 // read from: the resolved `sso` binding that carries an API token. The bool
 // reports whether there is one at all, which is what separates "invite nobody,
 // there is no identity provider" from "invite nobody, they are all already in".
-func sharedIdentity(state *configurator.AppState) (configurator.SSOBinding, bool) {
+func sharedIdentity(state *configurator.AppState) (bindings.SSOBinding, bool) {
 	if state == nil {
-		return configurator.SSOBinding{}, false
+		return bindings.SSOBinding{}, false
 	}
 	for _, s := range state.Integrations.SSO {
 		if s.APIToken.Published() {
 			return s, true
 		}
 	}
-	return configurator.SSOBinding{}, false
+	return bindings.SSOBinding{}, false
 }
 
 // ensureSharedMembers makes the shared workspace hold every Bloud user.
@@ -136,7 +137,7 @@ func (c *Configurator) ownerSessionForInvites(ctx context.Context) (string, bool
 
 // wantedMemberEmails reads the accounts the identity provider holds and keeps
 // the ones that belong to Bloud.
-func (c *Configurator) wantedMemberEmails(ctx context.Context, idp configurator.SSOBinding) ([]string, bool) {
+func (c *Configurator) wantedMemberEmails(ctx context.Context, idp bindings.SSOBinding) ([]string, bool) {
 	// LocalURL, not BaseURL: this call is made by the host-agent process, which
 	// is not on the app's container network, while the identity provider's
 	// port is published to the host.

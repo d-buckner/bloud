@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -27,14 +28,14 @@ func inferenceConfigurator(t *testing.T, fake *fakeAffine, secrets *storeSecrets
 }
 
 // inferenceState builds an AppState carrying one resolved inference binding.
-func inferenceState(dir string, b configurator.InferenceBinding) *configurator.AppState {
+func inferenceState(dir string, b bindings.InferenceBinding) *configurator.AppState {
 	st := &configurator.AppState{DataPath: dir}
-	st.Integrations.Inference = []configurator.InferenceBinding{b}
+	st.Integrations.Inference = []bindings.InferenceBinding{b}
 	return st
 }
 
-func bindingFor(endpoint, model, key string) configurator.InferenceBinding {
-	return configurator.InferenceBinding{Endpoint: endpoint, DefaultModel: model, APIKey: configurator.Secret(key)}
+func bindingFor(endpoint, model, key string) bindings.InferenceBinding {
+	return bindings.InferenceBinding{Endpoint: endpoint, DefaultModel: model, APIKey: bindings.Secret(key)}
 }
 
 // The first pass registers Bloud's endpoint as a workspace BYOK profile: the
@@ -217,7 +218,7 @@ func TestEnsureInferenceProvider_DisabledCustomEndpointsWiresNothing(t *testing.
 func TestEnsureInferenceProvider_IncompleteBindingWiresNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		binding configurator.InferenceBinding
+		binding bindings.InferenceBinding
 	}{
 		{"no endpoint", bindingFor("", "m1", "key")},
 		{"no model", bindingFor("http://gw:4000/v1", "", "key")},

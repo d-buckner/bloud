@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -59,10 +60,10 @@ func (s *storeSecrets) DeleteAppSecrets(string) error                     { retu
 func stateWithAffine(dataDir string) *configurator.AppState {
 	return &configurator.AppState{
 		DataPath: dataDir,
-		Integrations: configurator.Integrations{
-			AppAPIs: []configurator.AppAPIBinding{{
-				ProviderRef: configurator.ProviderRef{
-					Kind:      configurator.ProviderKindApp,
+		Integrations: bindings.Integrations{
+			AppAPIs: []bindings.AppAPIBinding{{
+				ProviderRef: bindings.ProviderRef{
+					Kind:      bindings.ProviderKindApp,
 					App:       "affine",
 					Installed: true,
 					Node:      "apps-affine",
@@ -186,7 +187,7 @@ func TestPreStart_NilSecretsSafeAndConverges(t *testing.T) {
 }
 
 func TestRenderConfig_RejectsLineBreakInValue(t *testing.T) {
-	_, err := renderConfig(configurator.AppAPIBinding{Username: "a\nB", Password: "p"}, true, "t")
+	_, err := renderConfig(bindings.AppAPIBinding{Username: "a\nB", Password: "p"}, true, "t")
 	require.Error(t, err, "a value containing a newline would inject a second config setting")
 }
 

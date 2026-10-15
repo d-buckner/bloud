@@ -17,6 +17,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
@@ -469,7 +470,7 @@ func mcpServerNames(state *configurator.AppState) []string {
 }
 
 // mcpBindings returns the resolved MCP bindings from the app state.
-func mcpBindings(state *configurator.AppState) []configurator.MCPBinding {
+func mcpBindings(state *configurator.AppState) []bindings.MCPBinding {
 	if state == nil {
 		return nil
 	}
@@ -479,7 +480,7 @@ func mcpBindings(state *configurator.AppState) []configurator.MCPBinding {
 // mcpServerKey names the Hermes entry for one binding. serverName is the
 // contract's own namespace label; the provider app name is the fallback so a
 // provider that omitted it still lands somewhere identifiable.
-func mcpServerKey(b configurator.MCPBinding) string {
+func mcpServerKey(b bindings.MCPBinding) string {
 	if b.ServerName != "" {
 		return b.ServerName
 	}
@@ -494,7 +495,7 @@ func mcpServerKey(b configurator.MCPBinding) string {
 // and Hermes runs in the host network namespace for its own OIDC reasons. The
 // host loopback is the address both sides agree on, and it is the same one
 // Traefik uses to reach every app.
-func mcpServerEntry(b configurator.MCPBinding) (map[string]any, bool) {
+func mcpServerEntry(b bindings.MCPBinding) (map[string]any, bool) {
 	if !b.Installed || !b.Token.Published() || b.Path == "" {
 		return nil, false
 	}
@@ -723,13 +724,13 @@ const inferenceProvidersKey = "providers"
 // A consumer with no binding has nothing to point at, which is different from a
 // binding with an empty endpoint: the latter is a misconfiguration the resolver
 // would not have produced.
-func inferenceBinding(state *configurator.AppState) (configurator.InferenceBinding, bool) {
+func inferenceBinding(state *configurator.AppState) (bindings.InferenceBinding, bool) {
 	if state == nil || len(state.Integrations.Inference) == 0 {
-		return configurator.InferenceBinding{}, false
+		return bindings.InferenceBinding{}, false
 	}
 	b := state.Integrations.Inference[0]
 	if b.Endpoint == "" {
-		return configurator.InferenceBinding{}, false
+		return bindings.InferenceBinding{}, false
 	}
 	return b, true
 }
@@ -743,7 +744,7 @@ func inferenceBinding(state *configurator.AppState) (configurator.InferenceBindi
 // The model selection is the part that respects an existing choice, because
 // silently replacing a model an operator picked is the failure mode that makes
 // a managed default unwelcome.
-func applyInference(doc map[string]any, b configurator.InferenceBinding) {
+func applyInference(doc map[string]any, b bindings.InferenceBinding) {
 	providers := mapAt(doc, inferenceProvidersKey)
 	p := mapAt(providers, inferenceProviderKey)
 	p["name"] = "Bloud"

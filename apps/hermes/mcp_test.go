@@ -11,13 +11,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 // mcpState builds an app state carrying the given MCP bindings, with no
 // inference binding so the MCP assertions are not entangled with the provider
 // block.
-func mcpState(dir string, bindings ...configurator.MCPBinding) *configurator.AppState {
+func mcpState(dir string, bindings ...bindings.MCPBinding) *configurator.AppState {
 	st := &configurator.AppState{DataPath: dir}
 	st.Integrations.MCPServers = bindings
 	return st
@@ -55,9 +56,9 @@ func mcpHermes() *Configurator {
 	})
 }
 
-func affineBinding() configurator.MCPBinding {
-	return configurator.MCPBinding{
-		ProviderRef: configurator.ProviderRef{
+func affineBinding() bindings.MCPBinding {
+	return bindings.MCPBinding{
+		ProviderRef: bindings.ProviderRef{
 			App:       "affine",
 			Installed: true,
 			BaseURL:   "http://apps-affine:3010",
@@ -146,12 +147,12 @@ func TestPreStartRemovesUninstalledMCPServer(t *testing.T) {
 // register a namespace that 401s forever. The empty token is the same
 // not-ready signal the provider side treats as "write nothing".
 func TestPreStartSkipsUnpublishedToken(t *testing.T) {
-	for name, mutate := range map[string]func(*configurator.MCPBinding){
-		"empty token":  func(b *configurator.MCPBinding) { b.Token = "" },
-		"empty path":   func(b *configurator.MCPBinding) { b.Path = "" },
-		"no address":   func(b *configurator.MCPBinding) { b.LocalURL = ""; b.BaseURL = "" },
-		"not install":  func(b *configurator.MCPBinding) { b.Installed = false },
-		"empty server": func(b *configurator.MCPBinding) { b.ServerName = ""; b.App = "" },
+	for name, mutate := range map[string]func(*bindings.MCPBinding){
+		"empty token":  func(b *bindings.MCPBinding) { b.Token = "" },
+		"empty path":   func(b *bindings.MCPBinding) { b.Path = "" },
+		"no address":   func(b *bindings.MCPBinding) { b.LocalURL = ""; b.BaseURL = "" },
+		"not install":  func(b *bindings.MCPBinding) { b.Installed = false },
+		"empty server": func(b *bindings.MCPBinding) { b.ServerName = ""; b.App = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -298,9 +299,9 @@ func TestPreStartPicksUpWorkspaceChange(t *testing.T) {
 
 // caldavBinding is the second MCP provider: the calendar namespace, installed
 // after the harness was already running.
-func caldavBinding() configurator.MCPBinding {
-	return configurator.MCPBinding{
-		ProviderRef: configurator.ProviderRef{
+func caldavBinding() bindings.MCPBinding {
+	return bindings.MCPBinding{
+		ProviderRef: bindings.ProviderRef{
 			App:       "dav-mcp",
 			Installed: true,
 			BaseURL:   "http://apps-dav-mcp:9333",

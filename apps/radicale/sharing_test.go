@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,7 +27,7 @@ import (
 // the tests read as the scenario rather than as the plumbing that builds a
 // Plan. The names arrive with no directory display name, which is the case
 // where the username has to carry the identity alone.
-func renderWith(recipients []string, feeds []configurator.ICSFeedBinding) string {
+func renderWith(recipients []string, feeds []bindings.ICSFeedBinding) string {
 	return renderShares(planCalendars(usersNamed(recipients...), feeds, true, nil))
 }
 
@@ -39,7 +40,7 @@ func usersNamed(names ...string) []DirectoryUser {
 }
 
 func TestRenderSharesMountsEverySharedCollectionIntoEveryTree(t *testing.T) {
-	feeds := []configurator.ICSFeedBinding{feedBinding()}
+	feeds := []bindings.ICSFeedBinding{feedBinding()}
 	got := renderWith([]string{"alice", "bob"}, feeds)
 
 	// The header pins the column order Radicale's csv backend reads.
@@ -69,7 +70,7 @@ func TestRenderSharesMountsEverySharedCollectionIntoEveryTree(t *testing.T) {
 }
 
 func TestRenderSharesWithNoUsersStillSharesWithTheAgent(t *testing.T) {
-	got := renderWith(nil, []configurator.ICSFeedBinding{feedBinding()})
+	got := renderWith(nil, []bindings.ICSFeedBinding{feedBinding()})
 
 	lines := strings.Split(strings.TrimSpace(got), "\n")
 	// Header + the agent's family + the agent's feed.
@@ -81,7 +82,7 @@ func TestRenderSharesSkipsIncompleteFeeds(t *testing.T) {
 	noKey := feedBinding()
 	noKey.APIKey = ""
 
-	got := renderWith([]string{"alice"}, []configurator.ICSFeedBinding{noKey})
+	got := renderWith([]string{"alice"}, []bindings.ICSFeedBinding{noKey})
 
 	// The feed is not shared, but the family calendar still is: an unready
 	// feed says nothing about the collection people write to.
@@ -94,8 +95,8 @@ func TestRenderSharesIsDeterministic(t *testing.T) {
 	sonarr := feedBinding()
 	sonarr.App = "sonarr"
 
-	first := renderWith([]string{"bob", "alice"}, []configurator.ICSFeedBinding{sonarr, radarr})
-	second := renderWith([]string{"alice", "bob"}, []configurator.ICSFeedBinding{radarr, sonarr})
+	first := renderWith([]string{"bob", "alice"}, []bindings.ICSFeedBinding{sonarr, radarr})
+	second := renderWith([]string{"alice", "bob"}, []bindings.ICSFeedBinding{radarr, sonarr})
 	assert.Equal(t, first, second, "a re-render must be byte-identical or every pass restarts Radicale")
 }
 
@@ -124,15 +125,15 @@ func TestRenderSharesMatchesThePrePlanGoldenOutput(t *testing.T) {
 		"map;/carol/Movies/;/calendar-service/Movies/;none;calendar-service;carol;Rr;True;True;False;False;0;0;{};{}\n" +
 		"map;/carol/Shows/;/calendar-service/Shows/;none;calendar-service;carol;Rr;True;True;False;False;0;0;{};{}\n"
 
-	feeds := []configurator.ICSFeedBinding{
+	feeds := []bindings.ICSFeedBinding{
 		{
-			ProviderRef:  configurator.ProviderRef{App: "sonarr", Installed: true, BaseURL: "http://sonarr:8989"},
+			ProviderRef:  bindings.ProviderRef{App: "sonarr", Installed: true, BaseURL: "http://sonarr:8989"},
 			APIKey:       "sonarr-key",
 			Path:         "/api/v3/calendar",
 			CalendarName: "Shows",
 		},
 		{
-			ProviderRef:  configurator.ProviderRef{App: "radarr", Installed: true, BaseURL: "http://radarr:7878"},
+			ProviderRef:  bindings.ProviderRef{App: "radarr", Installed: true, BaseURL: "http://radarr:7878"},
 			APIKey:       "radarr-key",
 			Path:         "/api/v3/calendar",
 			CalendarName: "Movies",
@@ -197,10 +198,10 @@ func ssoState(t *testing.T, baseURL string) *configurator.AppState {
 	t.Helper()
 	return &configurator.AppState{
 		DataPath: t.TempDir(),
-		Integrations: configurator.Integrations{
-			SSO: []configurator.SSOBinding{{
-				ProviderRef: configurator.ProviderRef{
-					Kind:      configurator.ProviderKindApp,
+		Integrations: bindings.Integrations{
+			SSO: []bindings.SSOBinding{{
+				ProviderRef: bindings.ProviderRef{
+					Kind:      bindings.ProviderKindApp,
 					App:       "authentik",
 					Installed: true,
 					LocalURL:  baseURL,
@@ -454,7 +455,7 @@ func davBodyRecorder(t *testing.T, propfindStatus int, seen *[]string, bodies *m
 	}))
 }
 
-func feedWith(name, calendarName string) configurator.ICSFeedBinding {
+func feedWith(name, calendarName string) bindings.ICSFeedBinding {
 	f := feedBinding()
 	f.App = name
 	f.Node = "apps-" + name
@@ -478,7 +479,7 @@ func TestEnsureCalendarsCreatesEachFeedCollectionNamed(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []bindings.ICSFeedBinding{
 		feedWith("radarr", "Movies"),
 		feedWith("sonarr", "Shows"),
 	}, true, nil)))
@@ -507,7 +508,7 @@ func TestEnsureCalendarsIsANoOpWhenTheFeedCollectionExists(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{feedWith("radarr", "Movies")}, true, nil)))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []bindings.ICSFeedBinding{feedWith("radarr", "Movies")}, true, nil)))
 
 	assert.Equal(t, []string{
 		"PROPFIND /" + calendarOwner + "/family/",
@@ -531,7 +532,7 @@ func TestEnsureCalendarsSkipsAnIncompleteFeed(t *testing.T) {
 	notInstalled := feedWith("sonarr", "Shows")
 	notInstalled.Installed = false
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{noKey, notInstalled}, true, nil)))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []bindings.ICSFeedBinding{noKey, notInstalled}, true, nil)))
 
 	// The feeds create nothing; the family calendar is unaffected, because an
 	// unready feed says nothing about the collection people write to.
@@ -569,7 +570,7 @@ func TestEnsureCalendarsContinuesPastAServerError(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = ownerSecrets()
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []bindings.ICSFeedBinding{
 		feedWith("radarr", "Movies"),
 		feedWith("sonarr", "Shows"),
 	}, true, nil)))
@@ -588,7 +589,7 @@ func TestEnsureCalendarsWithoutACredentialMakesNoCalls(t *testing.T) {
 	c.baseURL = server.URL
 	c.secrets = &fakeSecrets{values: map[string]string{}}
 
-	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []configurator.ICSFeedBinding{feedWith("radarr", "Movies")}, true, nil)))
+	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []bindings.ICSFeedBinding{feedWith("radarr", "Movies")}, true, nil)))
 	assert.Empty(t, seen)
 }
 
@@ -688,7 +689,7 @@ func TestPersonalMountsCarryTheirOwnDisplayNames(t *testing.T) {
 // bug with a named victim, and nothing in the rendered file looks wrong about
 // it unless this is checked.
 func TestPersonalCalendarsAreNeverSharedWithAnotherPerson(t *testing.T) {
-	plan := planCalendars(household(), []configurator.ICSFeedBinding{feedBinding()}, true, nil)
+	plan := planCalendars(household(), []bindings.ICSFeedBinding{feedBinding()}, true, nil)
 
 	for _, row := range parseRows(renderShares(plan)) {
 		trimmed := strings.TrimPrefix(row.mappedTo, "/"+calendarOwner+"/"+personalPrefix)

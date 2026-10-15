@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
@@ -336,13 +337,13 @@ func (c *Configurator) reconcileTranscription(ctx context.Context, state *config
 // pickTranscription returns the endpoint to dial. The first installed one wins:
 // the contract is single-provider by construction, so a second is a registry
 // someone edited by hand rather than a choice this app gets to make.
-func pickTranscription(state *configurator.AppState) (configurator.TranscriptionBinding, bool) {
+func pickTranscription(state *configurator.AppState) (bindings.TranscriptionBinding, bool) {
 	for _, b := range state.Integrations.Transcription {
 		if b.Installed && strings.TrimSpace(b.Endpoint) != "" {
 			return b, true
 		}
 	}
-	return configurator.TranscriptionBinding{}, false
+	return bindings.TranscriptionBinding{}, false
 }
 
 func orEndpointDefault(model string) string {

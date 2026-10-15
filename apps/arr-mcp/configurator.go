@@ -29,6 +29,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/apps/jellyfin"
 	"codeberg.org/d-buckner/bloud/apps/seerr"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
@@ -273,7 +274,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // ensureJellyfinAPIKey returns the API key this app calls Jellyfin with,
 // minting it through apps/jellyfin's shared client on the first pass and
 // reusing the stored key afterwards.
-func (c *Configurator) ensureJellyfinAPIKey(ctx context.Context, server configurator.MediaServerBinding) (string, error) {
+func (c *Configurator) ensureJellyfinAPIKey(ctx context.Context, server bindings.MediaServerBinding) (string, error) {
 	if c.secrets == nil {
 		return "", nil
 	}
@@ -300,7 +301,7 @@ func (c *Configurator) ensureJellyfinAPIKey(ctx context.Context, server configur
 // admin was created from; Seerr has no token-minting endpoint, so the only way
 // to get its key is to log in with that pair and read main.apiKey out of its
 // settings.
-func (c *Configurator) ensureSeerrAPIKey(ctx context.Context, rm configurator.RequestManagerBinding) (string, error) {
+func (c *Configurator) ensureSeerrAPIKey(ctx context.Context, rm bindings.RequestManagerBinding) (string, error) {
 	if c.secrets == nil {
 		return "", nil
 	}
@@ -333,24 +334,24 @@ func (c *Configurator) currentBearer() string {
 
 // requestManagerBinding returns the installed Seerr provider, or false when
 // none is installed or it has not published its login yet.
-func requestManagerBinding(state *configurator.AppState) (configurator.RequestManagerBinding, bool) {
+func requestManagerBinding(state *configurator.AppState) (bindings.RequestManagerBinding, bool) {
 	if state == nil {
-		return configurator.RequestManagerBinding{}, false
+		return bindings.RequestManagerBinding{}, false
 	}
 	for _, b := range state.Integrations.RequestManagers {
 		if b.App == seerrAppName && b.Installed && b.Password.Published() {
 			return b, true
 		}
 	}
-	return configurator.RequestManagerBinding{}, false
+	return bindings.RequestManagerBinding{}, false
 }
 
 // pvrBindings returns every installed Servarr that has published its key.
-func pvrBindings(state *configurator.AppState) []configurator.PVRBinding {
+func pvrBindings(state *configurator.AppState) []bindings.PVRBinding {
 	if state == nil {
 		return nil
 	}
-	var out []configurator.PVRBinding
+	var out []bindings.PVRBinding
 	for _, b := range state.Integrations.PVRs {
 		if b.Installed && b.APIKey.Published() {
 			out = append(out, b)
@@ -361,16 +362,16 @@ func pvrBindings(state *configurator.AppState) []configurator.PVRBinding {
 
 // mediaServerBinding returns the installed Jellyfin provider, or false when
 // the catalog declares none or it is not installed yet.
-func mediaServerBinding(state *configurator.AppState) (configurator.MediaServerBinding, bool) {
+func mediaServerBinding(state *configurator.AppState) (bindings.MediaServerBinding, bool) {
 	if state == nil {
-		return configurator.MediaServerBinding{}, false
+		return bindings.MediaServerBinding{}, false
 	}
 	for _, b := range state.Integrations.MediaServers {
 		if b.App == jellyfinAppName && b.Installed && b.AdminPassword.Published() {
 			return b, true
 		}
 	}
-	return configurator.MediaServerBinding{}, false
+	return bindings.MediaServerBinding{}, false
 }
 
 // configFile is the subset of arr-mcp's config.yaml Bloud owns. The schema is

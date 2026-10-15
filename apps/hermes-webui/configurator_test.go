@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -99,8 +100,8 @@ func testState(t *testing.T) *configurator.AppState {
 			IssuerURL:    "https://sso.example.com/application/o/webui/",
 			RedirectURI:  "https://hermes.example.com/api/auth/oidc/callback",
 		},
-		Integrations: configurator.Integrations{
-			AgentAPIs: []configurator.AgentAPIBinding{{
+		Integrations: bindings.Integrations{
+			AgentAPIs: []bindings.AgentAPIBinding{{
 				Endpoint:  "https://hermes.example.com/v1",
 				APIKey:    "agent-key",
 				ModelName: "hermes",

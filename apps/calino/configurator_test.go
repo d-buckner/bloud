@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,9 +60,9 @@ func shellHandler() http.Handler {
 func davState(address, path string) *configurator.AppState {
 	return &configurator.AppState{
 		DataPath: "unused",
-		Integrations: configurator.Integrations{
-			CalDAVServers: []configurator.CalDAVBinding{{
-				ProviderRef: configurator.ProviderRef{
+		Integrations: bindings.Integrations{
+			CalDAVServers: []bindings.CalDAVBinding{{
+				ProviderRef: bindings.ProviderRef{
 					App:       "radicale",
 					Installed: true,
 					Node:      "apps-radicale",

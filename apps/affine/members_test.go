@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -92,8 +93,8 @@ func (f *fakeAuthentik) url() string { return f.server.URL }
 func membersState(t *testing.T, idpURL string) *configurator.AppState {
 	t.Helper()
 	st := &configurator.AppState{DataPath: t.TempDir()}
-	st.Integrations.SSO = []configurator.SSOBinding{{
-		ProviderRef: configurator.ProviderRef{
+	st.Integrations.SSO = []bindings.SSOBinding{{
+		ProviderRef: bindings.ProviderRef{
 			App:      "authentik",
 			Node:     "apps-authentik-server",
 			Port:     9001,
@@ -136,12 +137,12 @@ func TestSharedIdentityRequiresAToken(t *testing.T) {
 	assert.False(t, ok, "a nil state has no identity provider")
 
 	st := &configurator.AppState{}
-	st.Integrations.SSO = []configurator.SSOBinding{{ProviderRef: configurator.ProviderRef{App: "authentik"}}}
+	st.Integrations.SSO = []bindings.SSOBinding{{ProviderRef: bindings.ProviderRef{App: "authentik"}}}
 	_, ok = sharedIdentity(st)
 	assert.False(t, ok, "a binding with no published token is not a usable identity provider")
 
-	st.Integrations.SSO = []configurator.SSOBinding{{
-		ProviderRef: configurator.ProviderRef{App: "authentik"},
+	st.Integrations.SSO = []bindings.SSOBinding{{
+		ProviderRef: bindings.ProviderRef{App: "authentik"},
 		APIToken:    "t",
 	}}
 	got, ok := sharedIdentity(st)
@@ -211,7 +212,7 @@ func TestEnsureSharedMembers_NoTokenInvitesNobody(t *testing.T) {
 	fake := newFakeAffine("ws-1")
 	c := inferenceConfigurator(t, fake, newStoreSecrets("owner-pass"))
 	st := &configurator.AppState{DataPath: t.TempDir()}
-	st.Integrations.SSO = []configurator.SSOBinding{{ProviderRef: configurator.ProviderRef{App: "authentik"}}}
+	st.Integrations.SSO = []bindings.SSOBinding{{ProviderRef: bindings.ProviderRef{App: "authentik"}}}
 
 	c.ensureSharedMembers(context.Background(), st)
 

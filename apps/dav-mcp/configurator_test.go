@@ -11,14 +11,15 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func caldavBinding() configurator.CalDAVBinding {
-	return configurator.CalDAVBinding{
-		ProviderRef: configurator.ProviderRef{
+func caldavBinding() bindings.CalDAVBinding {
+	return bindings.CalDAVBinding{
+		ProviderRef: bindings.ProviderRef{
 			App:       "radicale",
 			Installed: true,
 			Node:      "apps-radicale",
@@ -29,9 +30,9 @@ func caldavBinding() configurator.CalDAVBinding {
 	}
 }
 
-func credential() configurator.AppAPIBinding {
-	return configurator.AppAPIBinding{
-		ProviderRef: configurator.ProviderRef{
+func credential() bindings.AppAPIBinding {
+	return bindings.AppAPIBinding{
+		ProviderRef: bindings.ProviderRef{
 			App:       "radicale",
 			Installed: true,
 			Node:      "apps-radicale",
@@ -60,7 +61,7 @@ func TestRenderEnvFileCarriesTheResolvedBindings(t *testing.T) {
 // the server reads as not configured. Only the second one is true, and only the
 // second one lets a later pass restart the container once the binding lands.
 func TestRenderEnvFileOmitsWhatHasNotResolved(t *testing.T) {
-	content := renderEnvFile("http://apps-radicale:5232/", true, configurator.AppAPIBinding{}, false, "")
+	content := renderEnvFile("http://apps-radicale:5232/", true, bindings.AppAPIBinding{}, false, "")
 
 	assert.Contains(t, content, "CALDAV_SERVER_URL='http://apps-radicale:5232/'")
 	assert.NotContains(t, content, "CALDAV_USERNAME")
@@ -198,8 +199,8 @@ func TestJSONRPCMessageTakesTheLastDataLine(t *testing.T) {
 
 func TestCaldavBaseURLConsidersOnlyUsableProviders(t *testing.T) {
 	baseURL, ok := caldavBaseURL(&configurator.AppState{
-		Integrations: configurator.Integrations{
-			CalDAVServers: []configurator.CalDAVBinding{caldavBinding()},
+		Integrations: bindings.Integrations{
+			CalDAVServers: []bindings.CalDAVBinding{caldavBinding()},
 		},
 	})
 	require.True(t, ok)
@@ -208,14 +209,14 @@ func TestCaldavBaseURLConsidersOnlyUsableProviders(t *testing.T) {
 	notInstalled := caldavBinding()
 	notInstalled.Installed = false
 	_, ok = caldavBaseURL(&configurator.AppState{
-		Integrations: configurator.Integrations{CalDAVServers: []configurator.CalDAVBinding{notInstalled}},
+		Integrations: bindings.Integrations{CalDAVServers: []bindings.CalDAVBinding{notInstalled}},
 	})
 	assert.False(t, ok, "an uninstalled provider has no address to dial")
 }
 
 func TestCaldavCredentialRequiresTheWholeCredential(t *testing.T) {
 	cred, ok := caldavCredential(&configurator.AppState{
-		Integrations: configurator.Integrations{AppAPIs: []configurator.AppAPIBinding{credential()}},
+		Integrations: bindings.Integrations{AppAPIs: []bindings.AppAPIBinding{credential()}},
 	})
 	require.True(t, ok)
 	assert.Equal(t, "caldav-service", cred.Username)
@@ -224,7 +225,7 @@ func TestCaldavCredentialRequiresTheWholeCredential(t *testing.T) {
 	noPassword := credential()
 	noPassword.Password = ""
 	_, ok = caldavCredential(&configurator.AppState{
-		Integrations: configurator.Integrations{AppAPIs: []configurator.AppAPIBinding{noPassword}},
+		Integrations: bindings.Integrations{AppAPIs: []bindings.AppAPIBinding{noPassword}},
 	})
 	assert.False(t, ok, "an empty password is the provider's 'not published yet' state")
 }

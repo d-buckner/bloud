@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 	"codeberg.org/d-buckner/bloud/pkg/servarr"
@@ -89,7 +90,7 @@ type Configurator struct {
 // binding that says where the provider is and what its API key is, plus
 // Prowlarr's own names for the provider's application contract.
 type pvrTarget struct {
-	binding        configurator.PVRBinding
+	binding        bindings.PVRBinding
 	implementation string
 	configContract string
 }

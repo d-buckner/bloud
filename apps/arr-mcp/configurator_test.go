@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"github.com/stretchr/testify/require"
 )
@@ -52,7 +53,7 @@ func writeConfig(t *testing.T, c *Configurator, state *configurator.AppState) st
 func TestPreStartUnboundIsOfflineAndIdempotent(t *testing.T) {
 	secrets := newFakeSecrets()
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets})
-	state := &configurator.AppState{DataPath: t.TempDir(), Integrations: configurator.Integrations{}}
+	state := &configurator.AppState{DataPath: t.TempDir(), Integrations: bindings.Integrations{}}
 
 	first, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
@@ -85,9 +86,9 @@ func TestPreStartRendersSeerr(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets})
 	state := &configurator.AppState{
 		DataPath: t.TempDir(),
-		Integrations: configurator.Integrations{
-			RequestManagers: []configurator.RequestManagerBinding{{
-				ProviderRef: configurator.ProviderRef{
+		Integrations: bindings.Integrations{
+			RequestManagers: []bindings.RequestManagerBinding{{
+				ProviderRef: bindings.ProviderRef{
 					App: "seerr", Node: "apps-seerr", Port: 5055,
 					BaseURL: "http://apps-seerr:5055", LocalURL: "http://localhost:5055",
 					Installed: true,
@@ -111,10 +112,10 @@ func TestPreStartRendersPVRs(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: newFakeSecrets()})
 	state := &configurator.AppState{
 		DataPath: t.TempDir(),
-		Integrations: configurator.Integrations{
-			PVRs: []configurator.PVRBinding{
-				{ProviderRef: configurator.ProviderRef{App: "radarr", Node: "apps-radarr", Port: 7878, BaseURL: "http://apps-radarr:7878", Installed: true}, APIKey: "radarr-key"},
-				{ProviderRef: configurator.ProviderRef{App: "sonarr", Node: "apps-sonarr", Port: 8989, BaseURL: "http://apps-sonarr:8989", Installed: true}, APIKey: "sonarr-key"},
+		Integrations: bindings.Integrations{
+			PVRs: []bindings.PVRBinding{
+				{ProviderRef: bindings.ProviderRef{App: "radarr", Node: "apps-radarr", Port: 7878, BaseURL: "http://apps-radarr:7878", Installed: true}, APIKey: "radarr-key"},
+				{ProviderRef: bindings.ProviderRef{App: "sonarr", Node: "apps-sonarr", Port: 8989, BaseURL: "http://apps-sonarr:8989", Installed: true}, APIKey: "sonarr-key"},
 			},
 		},
 	}
@@ -136,9 +137,9 @@ func TestPreStartSetsJellyfinDefaultUser(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets})
 	state := &configurator.AppState{
 		DataPath: t.TempDir(),
-		Integrations: configurator.Integrations{
-			MediaServers: []configurator.MediaServerBinding{{
-				ProviderRef: configurator.ProviderRef{
+		Integrations: bindings.Integrations{
+			MediaServers: []bindings.MediaServerBinding{{
+				ProviderRef: bindings.ProviderRef{
 					App: "jellyfin", Node: "apps-jellyfin", Port: 8096,
 					BaseURL: "http://apps-jellyfin:8096", LocalURL: "http://localhost:8096",
 					Installed: true,
@@ -173,16 +174,16 @@ func TestPreStartGrantsSafeWritesOnly(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets})
 	state := &configurator.AppState{
 		DataPath: t.TempDir(),
-		Integrations: configurator.Integrations{
-			RequestManagers: []configurator.RequestManagerBinding{{
-				ProviderRef: configurator.ProviderRef{App: "seerr", Node: "apps-seerr", Port: 5055, BaseURL: "http://apps-seerr:5055", Installed: true},
+		Integrations: bindings.Integrations{
+			RequestManagers: []bindings.RequestManagerBinding{{
+				ProviderRef: bindings.ProviderRef{App: "seerr", Node: "apps-seerr", Port: 5055, BaseURL: "http://apps-seerr:5055", Installed: true},
 				Username:    "bloud-bootstrap-admin", Password: "jellyfin-pw",
 			}},
-			PVRs: []configurator.PVRBinding{
-				{ProviderRef: configurator.ProviderRef{App: "radarr", Node: "apps-radarr", Port: 7878, BaseURL: "http://apps-radarr:7878", Installed: true}, APIKey: "radarr-key"},
+			PVRs: []bindings.PVRBinding{
+				{ProviderRef: bindings.ProviderRef{App: "radarr", Node: "apps-radarr", Port: 7878, BaseURL: "http://apps-radarr:7878", Installed: true}, APIKey: "radarr-key"},
 			},
-			MediaServers: []configurator.MediaServerBinding{{
-				ProviderRef:   configurator.ProviderRef{App: "jellyfin", Node: "apps-jellyfin", Port: 8096, BaseURL: "http://apps-jellyfin:8096", Installed: true},
+			MediaServers: []bindings.MediaServerBinding{{
+				ProviderRef:   bindings.ProviderRef{App: "jellyfin", Node: "apps-jellyfin", Port: 8096, BaseURL: "http://apps-jellyfin:8096", Installed: true},
 				AdminUsername: "bloud-bootstrap-admin", AdminPassword: "pw",
 			}},
 		},
@@ -235,9 +236,9 @@ func TestPostStartToleratesStatelessServer(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: appclient.Factory{}})
 	state := &configurator.AppState{
 		DataPath: t.TempDir(),
-		Integrations: configurator.Integrations{
-			RequestManagers: []configurator.RequestManagerBinding{{
-				ProviderRef: configurator.ProviderRef{
+		Integrations: bindings.Integrations{
+			RequestManagers: []bindings.RequestManagerBinding{{
+				ProviderRef: bindings.ProviderRef{
 					App: "seerr", Node: "apps-seerr", Port: 5055,
 					BaseURL: "http://apps-seerr:5055", LocalURL: "http://localhost:5055",
 					Installed: true,

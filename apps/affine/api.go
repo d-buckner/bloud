@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -445,7 +446,7 @@ func (a *affineAPI) byokSettings(ctx context.Context, workspaceID string) (*byok
 // slot require the `tool_calling` feature; without it the route reports
 // `no_compatible_target`. Bloud's gateway is an OpenAI-compatible server, so a
 // tool-calling request is forwarded as-is.
-func byokDefinition(b configurator.InferenceBinding) map[string]any {
+func byokDefinition(b bindings.InferenceBinding) map[string]any {
 	return map[string]any{
 		"endpoint": map[string]any{
 			"kind":    byokEndpointOpenAICompatible,
@@ -473,7 +474,7 @@ func byokDefinition(b configurator.InferenceBinding) map[string]any {
 // createByokProfile registers the Bloud endpoint as a new workspace BYOK
 // profile and returns its id. `description` must be present explicitly (AFFiNE
 // rejects the input otherwise), and the credential is required here.
-func (a *affineAPI) createByokProfile(ctx context.Context, workspaceID, credential, name, description string, b configurator.InferenceBinding) (string, error) {
+func (a *affineAPI) createByokProfile(ctx context.Context, workspaceID, credential, name, description string, b bindings.InferenceBinding) (string, error) {
 	var out struct {
 		CreateWorkspaceByokProfile struct {
 			ProfileID string `json:"profileId"`
@@ -505,7 +506,7 @@ func (a *affineAPI) createByokProfile(ctx context.Context, workspaceID, credenti
 // null credential as "keep the stored one," which is what an endpoint-only
 // change wants. The empty-string case cannot happen because AFFiNE rejects an
 // empty credential on create, so a profile always has one.
-func (a *affineAPI) replaceByokProfile(ctx context.Context, workspaceID, profileID, credential, name, description string, revision int, b configurator.InferenceBinding) error {
+func (a *affineAPI) replaceByokProfile(ctx context.Context, workspaceID, profileID, credential, name, description string, revision int, b bindings.InferenceBinding) error {
 	var credentialArg any
 	if credential != "" {
 		credentialArg = credential

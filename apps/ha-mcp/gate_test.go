@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -163,8 +164,8 @@ func TestHomeAssistantBindingHelpers(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "ha-long-lived-token", token)
 
-	notReady := &configurator.AppState{Integrations: configurator.Integrations{
-		AppAPIs: []configurator.AppAPIBinding{{ProviderRef: configurator.ProviderRef{App: "homeassistant", Installed: true}}},
+	notReady := &configurator.AppState{Integrations: bindings.Integrations{
+		AppAPIs: []bindings.AppAPIBinding{{ProviderRef: bindings.ProviderRef{App: "homeassistant", Installed: true}}},
 	}}
 	_, ok = homeAssistantToken(notReady)
 	require.False(t, ok, "an empty published secret is not a credential")

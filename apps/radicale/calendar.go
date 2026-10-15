@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 )
 
 // personalPrefix namespaces a personal collection by name rather than by path,
@@ -129,7 +129,7 @@ type Plan struct {
 // what comes next within a recipient's rows. The family calendar is planned
 // first, then the feeds in app order, then the personal calendars by
 // username, which is the order the sharing database has always been written in.
-func planCalendars(users []DirectoryUser, feeds []configurator.ICSFeedBinding, complete bool, occupied map[string]bool) Plan {
+func planCalendars(users []DirectoryUser, feeds []bindings.ICSFeedBinding, complete bool, occupied map[string]bool) Plan {
 	// The shared audience is every user plus the agent, with the owner
 	// excluded. shareRecipients is what keeps the agent in the set even though
 	// it is not in the directory listing the people come from, and without it

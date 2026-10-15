@@ -20,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -350,10 +351,10 @@ func nested(t *testing.T, doc map[string]any, keys ...string) map[string]any {
 
 // inferenceState builds an AppState carrying one resolved inference binding,
 // with SSO off so the tests read only the inference effect.
-func inferenceState(dir string, b configurator.InferenceBinding) *configurator.AppState {
+func inferenceState(dir string, b bindings.InferenceBinding) *configurator.AppState {
 	st := &configurator.AppState{DataPath: dir}
 	if b.Endpoint != "" {
-		st.Integrations.Inference = []configurator.InferenceBinding{b}
+		st.Integrations.Inference = []bindings.InferenceBinding{b}
 	}
 	return st
 }
@@ -366,7 +367,7 @@ func TestPreStartWritesInferenceProvider(t *testing.T) {
 			PrimaryBaseURL: func() string { return "http://localhost:8080" },
 		},
 	})
-	state := inferenceState(dir, configurator.InferenceBinding{
+	state := inferenceState(dir, bindings.InferenceBinding{
 		Endpoint:     "https://api.example.com/v1",
 		APIKey:       "sk-test",
 		DefaultModel: "gpt-4o-mini",
@@ -448,7 +449,7 @@ func TestPreStartAdoptUnlessOverridden(t *testing.T) {
 			PrimaryBaseURL: func() string { return "http://localhost:8080" },
 		},
 	})
-	state := inferenceState(dir, configurator.InferenceBinding{
+	state := inferenceState(dir, bindings.InferenceBinding{
 		Endpoint:     "https://api.example.com/v1",
 		DefaultModel: "gpt-4o-mini",
 	})
@@ -480,7 +481,7 @@ func TestPreStartInferenceIdempotent(t *testing.T) {
 			PrimaryBaseURL: func() string { return "http://localhost:8080" },
 		},
 	})
-	state := inferenceState(dir, configurator.InferenceBinding{
+	state := inferenceState(dir, bindings.InferenceBinding{
 		Endpoint:     "https://api.example.com/v1",
 		APIKey:       "sk-test",
 		DefaultModel: "gpt-4o-mini",
@@ -514,7 +515,7 @@ func TestPreStartStripsInferenceWhenNoBinding(t *testing.T) {
 		},
 	})
 
-	changed, err := c.PreStart(context.Background(), inferenceState(dir, configurator.InferenceBinding{}))
+	changed, err := c.PreStart(context.Background(), inferenceState(dir, bindings.InferenceBinding{}))
 	if err != nil {
 		t.Fatalf("PreStart: %v", err)
 	}
@@ -564,7 +565,7 @@ func TestPreStartNoAPIKeyWritesNoCredential(t *testing.T) {
 			PrimaryBaseURL: func() string { return "http://localhost:8080" },
 		},
 	})
-	state := inferenceState(dir, configurator.InferenceBinding{
+	state := inferenceState(dir, bindings.InferenceBinding{
 		Endpoint:     "http://127.0.0.1:8899/v1",
 		DefaultModel: "some-local-model",
 	})

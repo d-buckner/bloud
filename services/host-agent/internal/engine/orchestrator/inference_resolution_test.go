@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -78,7 +78,7 @@ func TestResolveInference_InstanceServesAsProvider(t *testing.T) {
 	require.Len(t, out.Inference, 1)
 	b := out.Inference[0]
 	assert.Equal(t, catalog.SettingProviderSource, b.App)
-	assert.Equal(t, configurator.ProviderKindSetting, b.Kind)
+	assert.Equal(t, bindings.ProviderKindSetting, b.Kind)
 	assert.True(t, b.Installed, "the setting being populated is the instance analogue of an installed provider")
 	assert.Equal(t, "https://api.example.com/v1", b.Endpoint)
 	assert.Equal(t, "operator-key", b.APIKey.String())

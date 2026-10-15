@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
@@ -165,9 +166,9 @@ func TestRenderConfigFile_WithoutOIDC(t *testing.T) {
 	assert.False(t, hasOAuth, "oauth section must be absent without SSO")
 }
 
-func installedCalDAVBinding() configurator.CalDAVBinding {
-	return configurator.CalDAVBinding{
-		ProviderRef: configurator.ProviderRef{
+func installedCalDAVBinding() bindings.CalDAVBinding {
+	return bindings.CalDAVBinding{
+		ProviderRef: bindings.ProviderRef{
 			App:       "radicale",
 			Installed: true,
 			Node:      "apps-radicale",
@@ -249,7 +250,7 @@ func TestPostStart_RestartsWhenCalDAVProviderAppears(t *testing.T) {
 
 	// A provider appears after AFFiNE is already RUNNING: the resync rewrites
 	// config.json and restarts, returning before any network work.
-	state.Integrations.CalDAVServers = []configurator.CalDAVBinding{installedCalDAVBinding()}
+	state.Integrations.CalDAVServers = []bindings.CalDAVBinding{installedCalDAVBinding()}
 	require.NoError(t, c.PostStart(context.Background(), state))
 	assert.Equal(t, []string{nodeName}, restarted)
 

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 	"codeberg.org/d-buckner/bloud/pkg/servarr"
@@ -91,7 +92,7 @@ type pvrTarget struct {
 	// binding is the resolved provider: the catalog knows from
 	// metadata.yaml which PVRs integrate with Seerr, where they live and what
 	// their API key is, so nothing about a provider is restated here.
-	binding configurator.PVRBinding
+	binding bindings.PVRBinding
 
 	// service is the Seerr list this PVR's entry belongs to.
 	service dvrService
@@ -119,10 +120,10 @@ type pvrTarget struct {
 // declares the compatible apps), so a reconciliation always makes the same
 // calls in the same order; what is per-PVR here is Seerr's own vocabulary for
 // that PVR (its DVR list, its display name, its root folder), not its address.
-func pvrTargets(state *configurator.AppState) ([]pvrTarget, []configurator.PVRBinding) {
+func pvrTargets(state *configurator.AppState) ([]pvrTarget, []bindings.PVRBinding) {
 	var (
 		targets   []pvrTarget
-		unhandled []configurator.PVRBinding
+		unhandled []bindings.PVRBinding
 	)
 	for _, binding := range state.Integrations.PVRs {
 		var target pvrTarget
@@ -203,7 +204,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 // providerClient builds the client a configurator uses to reach a provider
 // *from the host* (its own API calls): the binding's LocalURL, never the
 // address stored for the app's containers.
-func (c *Configurator) providerClient(ref configurator.ProviderRef) *appclient.Client {
+func (c *Configurator) providerClient(ref bindings.ProviderRef) *appclient.Client {
 	return c.clients.New(appclient.Spec{Name: ref.App, BaseURLFn: func() string {
 		return ref.LocalURL
 	}})
@@ -212,13 +213,13 @@ func (c *Configurator) providerClient(ref configurator.ProviderRef) *appclient.C
 // mediaServerBinding returns the installed media-server provider, or false when
 // the catalog declares none or it is not installed yet, which is the state that
 // defers onboarding.
-func mediaServerBinding(state *configurator.AppState) (configurator.MediaServerBinding, bool) {
+func mediaServerBinding(state *configurator.AppState) (bindings.MediaServerBinding, bool) {
 	for _, binding := range state.Integrations.MediaServers {
 		if binding.App == jellyfinAppName && binding.Installed {
 			return binding, true
 		}
 	}
-	return configurator.MediaServerBinding{}, false
+	return bindings.MediaServerBinding{}, false
 }
 
 // Name returns the node name this configurator manages.
@@ -310,7 +311,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // address because Jellyseerr wants host/port/TLS where the binding has a URL,
 // and that URL is the one thing correct for a container on Bloud's network and
 // for a server it only points at.
-func (c *Configurator) jellyfinOnboardingLogin(jellyfin configurator.MediaServerBinding) (jellyfinLogin, bool) {
+func (c *Configurator) jellyfinOnboardingLogin(jellyfin bindings.MediaServerBinding) (jellyfinLogin, bool) {
 	if !jellyfin.AdminPassword.Published() {
 		c.logger.Warn("the media server has not published its bootstrap admin password yet; Seerr onboarding is deferred",
 			"mediaServer", jellyfin.App)

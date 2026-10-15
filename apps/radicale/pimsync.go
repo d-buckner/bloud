@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"codeberg.org/d-buckner/bloud/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/managedfile"
 )
@@ -132,7 +133,7 @@ func (t pimsyncTarget) complete() bool {
 // A target without a credential renders no pairs. The sidecar then parks
 // rather than crash-looping, and starts as soon as a later pass has something
 // real to sync.
-func renderPimsyncConf(target pimsyncTarget, feeds []configurator.ICSFeedBinding) (string, error) {
+func renderPimsyncConf(target pimsyncTarget, feeds []bindings.ICSFeedBinding) (string, error) {
 	var b strings.Builder
 	b.WriteString(pimsyncHeader)
 
@@ -183,7 +184,7 @@ func writeTargetStorage(b *strings.Builder, target pimsyncTarget) error {
 	return nil
 }
 
-func writeFeedBlocks(b *strings.Builder, feed configurator.ICSFeedBinding) error {
+func writeFeedBlocks(b *strings.Builder, feed bindings.ICSFeedBinding) error {
 	name := feed.App
 	url, err := scfgQuote(feedURL(feed))
 	if err != nil {

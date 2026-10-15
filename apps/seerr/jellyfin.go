@@ -10,7 +10,7 @@ import (
 	"os"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
-	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 )
 
 // Seerr's Jellyfin coupling: the API key Seerr mints *into Jellyfin* while it
@@ -217,7 +217,7 @@ func (c *Configurator) reconcileJellyfinCoupling(
 	ctx context.Context,
 	settingsPath string,
 	jellyfin *appclient.Client,
-	binding configurator.MediaServerBinding,
+	binding bindings.MediaServerBinding,
 ) {
 	seerrKey, err := readAPIKey(settingsPath)
 	if err != nil {

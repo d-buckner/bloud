@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/servarr"
 	"codeberg.org/d-buckner/bloud/pkg/xmlutil"
@@ -470,8 +471,8 @@ func configuratorFor(t *testing.T, instance *fakeInstance, qb *fakeQBittorrent) 
 // wrote, and it is the only thing that means "not installed": a provider that is
 // installed but not answering keeps its binding and is retried.
 func withDownloadClient(state *configurator.AppState, qb *fakeQBittorrent, installed bool) {
-	state.Integrations.DownloadClients = []configurator.DownloadClientBinding{{
-		ProviderRef: configurator.ProviderRef{
+	state.Integrations.DownloadClients = []bindings.DownloadClientBinding{{
+		ProviderRef: bindings.ProviderRef{
 			App:       qbittorrentAppID,
 			Installed: installed,
 			Node:      "apps-qbittorrent",
