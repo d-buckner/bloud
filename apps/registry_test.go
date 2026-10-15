@@ -41,6 +41,8 @@ func TestNodeNamesStable(t *testing.T) {
 		"apps-ha-mcp-gate",
 		"apps-hermes",
 		"apps-hermes-webui",
+		"apps-hindsight",
+		"apps-hindsight-gate",
 		"apps-homeassistant",
 		"apps-immich-server",
 		"apps-jellyfin",

@@ -62,6 +62,13 @@ var conformanceTable = []appSpec{
 	{Dir: "dav-mcp", Node: "apps-dav-mcp"},
 	{Dir: "hermes", Node: "apps-hermes", WithSSO: true},
 	{Dir: "hermes-webui", Node: "apps-hermes-webui", WithSSO: true, WithAgent: true},
+	// Both halves of the split front door. The server node writes the env file its
+	// container is created from and the gate writes the nginx config it mounts, and
+	// the two share the credentials the server node mints, so both are held to the
+	// same idempotency rule. Only the gate publishes the app port, so only it
+	// reports one.
+	{Dir: "hindsight", Node: "apps-hindsight"},
+	{Dir: "hindsight", Node: "apps-hindsight-gate"},
 	{Dir: "homeassistant", Node: "apps-homeassistant", WithSSO: true, OwnsTeardown: true, Preseed: preseedHAComponent},
 	{Dir: "ha-mcp", Node: "apps-ha-mcp", WithAppAPI: true},
 	{Dir: "ha-mcp", Node: "apps-ha-mcp-gate", WithAppAPI: true},

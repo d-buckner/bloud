@@ -234,11 +234,12 @@ func (f *FakeAuthentikClient) SetDeleteError(err error) {
 // ============================================================================
 
 type FakeAppGraph struct {
-	mu            sync.Mutex
-	installPlans  map[string]*catalog.InstallPlan
-	removePlans   map[string]*catalog.RemovePlan
-	installedApps []string
-	apps          map[string]*catalog.App
+	mu                  sync.Mutex
+	installPlans        map[string]*catalog.InstallPlan
+	removePlans         map[string]*catalog.RemovePlan
+	installedApps       []string
+	configuredContracts []string
+	apps                map[string]*catalog.App
 }
 
 func NewFakeAppGraph() *FakeAppGraph {
@@ -281,6 +282,12 @@ func (f *FakeAppGraph) SetInstalled(installed []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.installedApps = installed
+}
+
+func (f *FakeAppGraph) SetConfiguredContracts(contracts []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.configuredContracts = contracts
 }
 
 func (f *FakeAppGraph) IsInstalled(appName string) bool {

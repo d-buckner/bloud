@@ -20,6 +20,10 @@
 	let installed = $derived(state === 'installed');
 	let installing = $derived(state === 'installing');
 	let uninstalling = $derived(state === 'uninstalling');
+	// A required endpoint the operator has not configured yet. The card says so
+	// rather than offering an install the orchestrator will refuse, and the modal
+	// spells out the same sentence the API returned.
+	let blocked = $derived(!installed && !installing && (app.installBlockers?.length ?? 0) > 0);
 
 	let displayName = $derived(app.displayName || formatAppName(app.catalogId));
 	let sizeLabel = $derived(formatSizeMB(app.estimatedSizeMB));
@@ -90,6 +94,14 @@
 				</a>
 				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{/if}
+		</div>
+	{:else if blocked}
+		<div class="card-side">
+			<!-- title carries the first reason so the badge alone is not the only
+			     place the requirement is stated. The modal states it in full. -->
+			<span class="state-badge neutral" title={app.installBlockers?.[0]}>
+				Needs setup
+			</span>
 		</div>
 	{/if}
 </article>

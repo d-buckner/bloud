@@ -219,6 +219,7 @@ Every other row is a debug port, and the table is generated from `apps/*/metadat
 | 9222 | AFFiNE MCP | debugging |
 | 9333 | DAV MCP | debugging |
 | 9696 | Prowlarr | debugging |
+| 9999 | Hindsight | debugging |
 Not forwarded: 6881 (qbittorrent: host port 6881 already forwards qBittorrent); 8080 (traefik: host port 8080 already forwards Traefik: the user-facing port)
 <!-- END GENERATED DEBUG PORTS -->
 
@@ -815,7 +816,7 @@ combined with instance/SSH-target env vars). Instance overrides:
    cadence. See `services/host-agent/internal/engine/orchestrator/selfheal.go`).
 9. **The address is a first-class setting, and it is one URL.** The instance
    has exactly one configured address, the **public URL**, typed as a bare
-   origin in Settings → Address (`GET/PUT /api/settings/public-url`):
+   origin in Settings → Host (`GET/PUT /api/settings/public-url`):
    `https://bloud.example.com:8443`. The scheme, the host, and the port all
    live in that string, and the port belongs to the proxy: it is the port the
    public entrypoint is dialed on from outside, not anything Bloud binds

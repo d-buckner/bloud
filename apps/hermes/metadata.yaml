@@ -71,6 +71,12 @@ integrations:
       # long-lived token Bloud minted for the owner account. Same shape as the
       # other wrappers: Hermes changes nothing when the app appears.
       - app: ha-mcp
+      # The memory. Hindsight is not a wrapper around another app: it is a store
+      # the agent keeps facts in and reads back, so its namespace answers the
+      # question the others cannot, which is what the agent knew last week.
+      # Declared on the same terms as the rest: install it and the agent gains the
+      # namespace, uninstall it and the entry goes away on the next pass.
+      - app: hindsight
       # The music library. Navidrome holds the collection and `apps/navidrome-mcp`
       # exposes it as a tool namespace over one Navidrome account, which is what
       # answers "what have I actually been listening to" and builds the playlist

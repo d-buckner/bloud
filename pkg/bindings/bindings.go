@@ -185,6 +185,33 @@ type TranscriptionBinding struct {
 	Model string
 }
 
+// EmbeddingsBinding is an endpoint a consumer can send text to for vectors: an
+// OpenAI-compatible `/v1/embeddings`.
+//
+// It is its own binding rather than a third flag on InferenceBinding because an
+// endpoint answers one of these three and often not the others, and a consumer
+// that asked for this binding has been told, by the operator's own declaration,
+// that the address embeds. The distinction is not pedantry on this instance:
+// Hindsight's slim image cannot store a memory at all without a vector, and a
+// chat endpoint it was handed by mistake fails at its first write rather than at
+// its first message.
+//
+// The payload is the same three fields TranscriptionBinding carries, and that is
+// deliberate: both are one OpenAI-compatible endpoint with a bearer and an
+// optional model id, and a consumer reads them the same way.
+type EmbeddingsBinding struct {
+	ProviderRef
+	// Endpoint is the base URL an SDK should be constructed with, path
+	// included, for example https://api.openai.com/v1.
+	Endpoint string
+	// APIKey is the bearer to send. An endpoint that needs none leaves it
+	// unpublished.
+	APIKey Secret
+	// Model is the model id to request, empty when the operator expressed no
+	// preference and the endpoint's own default stands.
+	Model string
+}
+
 // PVRBinding is an app that holds recordings or a library and accepts requests
 // or indexers over its own API: the consumer needs the key that API
 // authenticates with.
@@ -393,6 +420,7 @@ type Integrations struct {
 	ModelSources    []ModelSourceBinding
 	Inference       []InferenceBinding
 	Transcription   []TranscriptionBinding
+	Embeddings      []EmbeddingsBinding
 	MCPServers      []MCPBinding
 	AppAPIs         []AppAPIBinding
 	AgentAPIs       []AgentAPIBinding

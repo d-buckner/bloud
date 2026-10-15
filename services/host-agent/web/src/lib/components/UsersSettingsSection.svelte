@@ -214,19 +214,8 @@
 />
 
 <style>
-	/* The section shell matches the other settings sections exactly. Each
-	   section carries its own copy because the page's scoped styles do not
-	   reach into a child component's markup. */
-	.section {
-		max-width: 560px;
-	}
-
-	.section h2 {
-		margin: 0 0 var(--space-xs) 0;
-		font-size: 1.125rem;
-		font-weight: 500;
-	}
-
+	/* The section shell (measure, heading) comes from `base.css`, where every
+	   settings section reads the same rule. */
 	.section-description {
 		margin: 0 0 var(--space-xl) 0;
 		color: var(--color-text-secondary);

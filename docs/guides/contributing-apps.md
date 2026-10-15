@@ -540,6 +540,7 @@ for _, pvr := range state.Integrations.PVRs {
 | `ModelSources` (`modelSource`) | `Endpoint`, `APIKey`, `Models` |
 | `Inference` (`inference`) | `Endpoint`, `APIKey`, `DefaultModel`, `Models`, `ViaGateway` |
 | `Transcription` (`transcription`) | `Endpoint`, `APIKey`, `Model` |
+| `Embeddings` (`embeddings`) | `Endpoint`, `APIKey`, `Model` |
 
 Every binding embeds `ProviderRef`, the part that is the same for all of them:
 
@@ -559,12 +560,20 @@ are ignored. `Installed` distinguishes the ones that are actually there, and a
 payload the provider has not published yet is empty, which means "not ready",
 never "use this empty credential".
 
-Two contracts (`inference` and `transcription`) can also name the operator's
-Settings as a provider, with `compatible: [{source: setting}]`. That provider is
-not a catalog app: it has no container, no node, and no graph edge, and the
-binding's `App` carries the record id rather than an app name. A consumer of a
+Three contracts (`inference`, `transcription`, and `embeddings`) can also name the
+operator's Settings as a provider, with `compatible: [{source: setting}]`. That
+provider is not a catalog app: it has no container, no node, and no graph edge, and
+the binding's `App` carries the record id rather than an app name. A consumer of a
 setting-sourced contract is reset when the setting changes, which is the
 substitute for the edge it does not have.
+
+Marking such a contract `required: true` is a statement about the app, not a
+request, and it has a consequence: there is no default app to install with the
+consumer, so if the operator has not filled the row the install is refused with a
+blocker naming the missing endpoint, and the dashboard shows the reason instead of
+an install button. Use it only for a capability the app cannot start without.
+`embeddings` on Hindsight is that case: the slim image stores a memory as a vector
+and has no model of its own, so with no endpoint there is nothing it can save.
 
 `requires` is what keeps a payload least privilege: declaring a contract gets an
 app the provider's address, and nothing more. Only the credentials you list are

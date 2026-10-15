@@ -2,24 +2,48 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 	import { onMount } from 'svelte';
 	import {
-		discoverTranscriptionModels,
-		fetchAISettings,
-		fetchTranscriptionSettings,
-		setTranscriptionSettings,
-		type TranscriptionSettings
+		discoverEndpointModels,
+		fetchEndpointSettings,
+		setEndpointSettings,
+		type EndpointContract,
+		type EndpointSettings
 	} from '$lib/clients/settingsClient';
-	import { appliedTo, buildSaveRequest, SAVE_WINDOW } from '$lib/utils/transcriptionSave';
+	import { appliedTo, buildSaveRequest, SAVE_WINDOW } from '$lib/utils/endpointSave';
 	import Button from '$lib/components/Button.svelte';
 	import { pollUntil } from '$lib/store/effects/convergence';
 
-	let settings = $state<TranscriptionSettings | null>(null);
+	interface Props {
+		/** Which single-endpoint contract this form reads and writes. */
+		contract: EndpointContract;
+		/** The sub-heading, and the label every message about this row uses. */
+		label: string;
+		/** What the endpoint does, in the operator's terms. */
+		description: string;
+		/** The name the API stores when the operator left the field blank. */
+		defaultName: string;
+		/** Example address shown in the Base URL field. */
+		placeholder: string;
+		/**
+		 * The AI upstream address, offered as a one-click fill. Optional and
+		 * never a dependency: the parent may not have loaded it, and a missing
+		 * convenience is not a reason this form cannot be filled by hand.
+		 */
+		aiBaseUrl?: string;
+	}
+
+	let { contract, label, description, defaultName, placeholder, aiBaseUrl = '' }: Props = $props();
+
+	let settings = $state<EndpointSettings | null>(null);
 	let loading = $state(true);
 	let saving = $state(false);
 	let removing = $state(false);
 	let error = $state('');
 	let saved = $state(false);
 
-	let name = $state('Transcription');
+	// Seeded in onMount rather than from `defaultName` here: a $state initialized
+	// from a prop captures only its initial value, and the field is re-seeded
+	// from the server on every load and every save anyway.
+	let name = $state('');
 	let baseUrl = $state('');
 	let apiKey = $state('');
 	let model = $state('');
@@ -28,13 +52,8 @@
 	let listResult = $state('');
 	let listOk = $state<boolean | null>(null);
 
-	// The AI upstream address, read only to offer "same server" as a click. It
-	// is a convenience, not a dependency: if the AI settings fail to load the
-	// operator still types the address themselves.
-	let aiBaseUrl = $state('');
-
 	let dirty = $derived(
-		name !== (settings?.name ?? 'Transcription') ||
+		name !== (settings?.name ?? defaultName) ||
 			baseUrl !== (settings?.baseUrl ?? '') ||
 			model !== (settings?.model ?? '') ||
 			apiKey !== ''
@@ -45,24 +64,16 @@
 
 	onMount(async () => {
 		try {
-			settings = await fetchTranscriptionSettings();
-			name = settings.name || 'Transcription';
+			settings = await fetchEndpointSettings(contract);
+			name = settings.name || defaultName;
 			baseUrl = settings.baseUrl;
 			model = settings.model;
 			// The stored list is not returned (there is none: the endpoint owns
 			// its models), so the picker starts empty until the operator lists.
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not load transcription settings';
+			error = e instanceof Error ? e.message : `Could not load ${label.toLowerCase()} settings`;
 		} finally {
 			loading = false;
-		}
-		// Second, and never fatal: a missing AI upstream only means the
-		// convenience button does not appear.
-		try {
-			const ai = await fetchAISettings();
-			aiBaseUrl = ai.upstreams.find((u) => u.enabled)?.baseUrl ?? '';
-		} catch {
-			aiBaseUrl = '';
 		}
 	});
 
@@ -72,7 +83,7 @@
 		listResult = '';
 		listOk = null;
 		try {
-			const res = await discoverTranscriptionModels(baseUrl.trim(), apiKey || undefined);
+			const res = await discoverEndpointModels(contract, baseUrl.trim(), apiKey || undefined);
 			if (res.ok && res.models) {
 				models = res.models;
 				listOk = true;
@@ -94,26 +105,29 @@
 		error = '';
 		saved = false;
 		try {
-			const body = buildSaveRequest({ name, baseUrl, model, apiKey }, payload.remove === true);
-			const accepted = await setTranscriptionSettings(body);
+			const body = buildSaveRequest(
+				{ name, baseUrl, model, apiKey, defaultName },
+				payload.remove === true
+			);
+			const accepted = await setEndpointSettings(contract, body);
 			// The save is an intent: the 202 is a receipt, not a result. Wait for the
 			// stored state to reach what the save reported, so a write the orchestrator
 			// dropped is an error on screen rather than a page that looks configured.
 			const applied = appliedTo(accepted, body.apiKey);
-			settings = await pollUntil(fetchTranscriptionSettings, applied, SAVE_WINDOW);
+			settings = await pollUntil(fetchEndpointSettings.bind(null, contract), applied, SAVE_WINDOW);
 			if (!applied(settings)) {
 				throw new Error(`Saved, but the endpoint is still ${settings.baseUrl || 'unset'}. Check the logs.`);
 			}
 			// Re-seed the fields from what the server now holds rather than from what
 			// was typed: the parser may have rewritten the address, and a Remove has
 			// to empty the input instead of leaving the removed address on screen.
-			name = settings.name || 'Transcription';
+			name = settings.name || defaultName;
 			baseUrl = settings.baseUrl;
 			model = settings.model;
 			apiKey = '';
 			saved = true;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not save transcription settings';
+			error = e instanceof Error ? e.message : `Could not save ${label.toLowerCase()} settings`;
 		} finally {
 			saving = false;
 		}
@@ -135,26 +149,20 @@
 	}
 </script>
 
-<section class="section transcription-section">
-	<h2>Transcription</h2>
-	<p class="section-description">
-		An OpenAI-compatible endpoint that turns audio into timed text. This is a
-		separate setting from AI on purpose: a server that answers chat can be
-		the same box or a different one, and Bloud never assumes the address that
-		completes also transcribes. Apps that transcribe follow what is set here,
-		and run without it if nothing is.
-	</p>
+<div class="capability" data-contract={contract}>
+	<h3 class="capability-title">{label}</h3>
+	<p class="capability-description">{description}</p>
 
 	{#if loading}
-		<div class="loading-state"><p>Loading transcription settings...</p></div>
+		<div class="loading-state"><p>Loading {label.toLowerCase()} settings...</p></div>
 	{:else}
-		<form class="transcription-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
+		<form class="capability-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
 			<div class="form-field">
-				<label for="tr-base-url">Base URL</label>
+				<label for="{contract}-base-url">Base URL</label>
 				<input
-					id="tr-base-url"
+					id="{contract}-base-url"
 					type="text"
-					placeholder="https://api.openai.com/v1"
+					{placeholder}
 					inputmode="url"
 					autocomplete="off"
 					autocapitalize="none"
@@ -170,14 +178,14 @@
 			</div>
 
 			<div class="form-field">
-				<label for="tr-key">
+				<label for="{contract}-key">
 					API key
 					{#if hasApiKey}<span class="pill pill-success">stored</span>{/if}
 				</label>
 				<!-- new-password, not off: blank means "keep the stored key", so the
 				     last thing wanted is a manager autofilling the old one. -->
 				<input
-					id="tr-key"
+					id="{contract}-key"
 					type="password"
 					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
 					bind:value={apiKey}
@@ -187,19 +195,19 @@
 				<span class="hint">
 					{hasApiKey
 						? 'Leave blank to keep the stored key.'
-						: 'Stored in the secrets manager, never read back by the browser.'}
+						: 'Stored in the secrets manager.'}
 				</span>
 			</div>
 
 			<div class="form-row">
 				<div class="form-field">
-					<label for="tr-name">Name</label>
-					<input id="tr-name" type="text" bind:value={name} disabled={saving} autocomplete="off" />
+					<label for="{contract}-name">Name</label>
+					<input id="{contract}-name" type="text" bind:value={name} disabled={saving} autocomplete="off" />
 				</div>
 				<div class="form-field">
-					<label for="tr-model">Model</label>
+					<label for="{contract}-model">Model</label>
 					{#if models.length > 0}
-						<select id="tr-model" bind:value={model} disabled={saving}>
+						<select id="{contract}-model" bind:value={model} disabled={saving}>
 							<option value="">(endpoint default)</option>
 							{#each models as entry (entry)}
 								<option value={entry}>{entry}</option>
@@ -207,9 +215,9 @@
 						</select>
 					{:else}
 						<input
-							id="tr-model"
+							id="{contract}-model"
 							type="text"
-							placeholder="blank uses the endpoint default"
+							placeholder="endpoint default"
 							bind:value={model}
 							disabled={saving}
 							autocomplete="off"
@@ -257,7 +265,7 @@
 
 	{#if servedTo.length > 0}
 		<div class="served-to">
-			<h3>Served to</h3>
+			<h4>Served to</h4>
 			<div class="served-list">
 				{#each servedTo as consumer (consumer)}
 					<div class="served-row">
@@ -267,30 +275,27 @@
 			</div>
 		</div>
 	{/if}
-</section>
+</div>
 
 <style>
-	/* The section shell matches the other settings sections (Address, Users,
-	   AI) exactly: same measure, same separator, same heading and description
-	   type. This component carries its own rule because the page's separator
-	   selector does not reach into a child component's scoped styles. */
-	.section {
-		max-width: 560px;
-		margin-top: var(--space-2xl);
-		padding-top: var(--space-2xl);
-		border-top: 1px solid var(--color-border);
+	/* No card and no rule between the capabilities: they are one group under the
+	   AI heading, and the section spaces them with a gap. `min-width: 0` because a
+	   flex item will not shrink below its content, and a long URL in a field would
+	   otherwise set the page's minimum width. */
+	.capability {
+		min-width: 0;
 	}
 
-	.section h2 {
+	.capability-title {
 		margin: 0 0 var(--space-xs) 0;
-		font-size: 1.125rem;
+		font-size: 1rem;
 		font-weight: 500;
 	}
 
-	.section-description {
-		margin: 0 0 var(--space-xl) 0;
+	.capability-description {
+		margin: 0 0 var(--space-lg) 0;
 		color: var(--color-text-secondary);
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 		line-height: 1.5;
 	}
 
@@ -300,7 +305,7 @@
 		color: var(--color-text-muted);
 	}
 
-	.transcription-form {
+	.capability-form {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-lg);
@@ -330,7 +335,6 @@
 		color: var(--color-text);
 		transition: border-color 0.15s ease;
 		width: 100%;
-		max-width: 100%;
 	}
 
 	.form-field input:focus,
@@ -339,8 +343,8 @@
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text) 12%, transparent);
 	}
 
-	.form-field input::placeholder,
-	.form-field select::placeholder {
+	/* `input` only: a `select` has no placeholder pseudo-element. */
+	.form-field input::placeholder {
 		color: var(--color-text-muted);
 	}
 
@@ -447,12 +451,12 @@
 	}
 
 	.served-to {
-		margin-top: var(--space-2xl);
+		margin-top: var(--space-xl);
 	}
 
-	.served-to h3 {
+	.served-to h4 {
 		margin: 0 0 var(--space-md) 0;
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 		font-weight: 500;
 	}
 

@@ -10,26 +10,27 @@
 
 import { describe, expect, it } from 'vitest';
 import type {
-	SetTranscriptionResponse,
-	TranscriptionSettings
+	EndpointSettings,
+	SetEndpointResponse
 } from '$lib/clients/settingsClient';
-import { appliedTo, buildSaveRequest, type TranscriptionForm } from '../transcriptionSave';
+import { appliedTo, buildSaveRequest, type EndpointForm } from '../endpointSave';
 
-const FORM: TranscriptionForm = {
+const FORM: EndpointForm = {
 	name: '  Lab  ',
 	baseUrl: '  https://tr.example.test/v1  ',
 	model: '  whisper-x  ',
-	apiKey: ''
+	apiKey: '',
+	defaultName: 'Transcription'
 };
 
-const ACCEPTED: SetTranscriptionResponse = {
+const ACCEPTED: SetEndpointResponse = {
 	status: 'accepted',
 	baseUrl: 'https://tr.example.test/v1',
 	model: 'whisper-x',
 	configured: true
 };
 
-const LIVE: TranscriptionSettings = {
+const LIVE: EndpointSettings = {
 	configured: true,
 	name: 'Lab',
 	baseUrl: 'https://tr.example.test/v1',
@@ -55,8 +56,13 @@ describe('buildSaveRequest', () => {
 		expect(buildSaveRequest({ ...FORM, apiKey: 'sk-1' }, false).apiKey).toBe('sk-1');
 	});
 
-	it('falls back to the default name when the field is blank', () => {
+	it('falls back to the caller\'s default name when the field is blank', () => {
 		expect(buildSaveRequest({ ...FORM, name: '  ' }, false).name).toBe('Transcription');
+		// The default travels with the form rather than being hardcoded here, so
+		// the embeddings row does not store the word "Transcription".
+		expect(buildSaveRequest({ ...FORM, name: '  ', defaultName: 'Embeddings' }, false).name).toBe(
+			'Embeddings'
+		);
 	});
 
 	it('a remove sends no address and never a credential', () => {
@@ -89,13 +95,13 @@ describe('appliedTo', () => {
 	});
 
 	it('settles a remove once nothing is configured', () => {
-		const removed: SetTranscriptionResponse = {
+		const removed: SetEndpointResponse = {
 			status: 'accepted',
 			baseUrl: '',
 			model: '',
 			configured: false
 		};
-		const empty: TranscriptionSettings = {
+		const empty: EndpointSettings = {
 			configured: false,
 			name: '',
 			baseUrl: '',

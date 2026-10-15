@@ -65,6 +65,16 @@ export interface CatalogApp {
 	// One entry per container this app runs, so the modal can state the size of
 	// what gets created. The graph treats each entry as one node.
 	containers?: { name: string }[];
+	/**
+	 * Why this app cannot be installed yet, one sentence each. Absent means the
+	 * app can be installed.
+	 *
+	 * A requirement served by a Settings row has no container to install with the
+	 * app, so the only thing that can satisfy it is the operator. The card renders
+	 * these instead of an install button, because a button that accepts an install
+	 * the orchestrator will refuse spends its polling budget on a lie.
+	 */
+	installBlockers?: string[];
 }
 
 /** One `integrations:` entry of an app's metadata. */

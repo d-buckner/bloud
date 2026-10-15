@@ -207,3 +207,87 @@ func TestPlanRemove_AllowedWithAlternative(t *testing.T) {
 		t.Fatalf("expected 1 unconfigure, got %d", len(plan.WillUnconfigure))
 	}
 }
+
+// settingServedApp is an app whose only required contract is filled by a
+// Settings row rather than by a catalog app: the shape `embeddings` has.
+func settingServedApp(required bool) *App {
+	return &App{
+		CatalogID: "hindsight",
+		Integrations: map[string]Integration{
+			"embeddings": {
+				Required:   required,
+				Multi:      false,
+				Compatible: []CompatibleApp{{Source: SettingProviderSource, Default: true}},
+			},
+		},
+	}
+}
+
+// TestPlanInstall_SettingRequirementBlocksUntilConfigured is the whole point of
+// the rule: an app that cannot work without an endpoint the operator must type
+// does not install into a container that fails at startup.
+func TestPlanInstall_SettingRequirementBlocksUntilConfigured(t *testing.T) {
+	g := NewGraph([]*App{settingServedApp(true)})
+
+	plan, err := g.PlanInstall("hindsight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.CanInstall {
+		t.Fatal("an unmet setting requirement must block the install")
+	}
+	if len(plan.Blockers) != 1 {
+		t.Fatalf("want one blocker naming the missing endpoint, got %v", plan.Blockers)
+	}
+	if len(plan.RequiredProviders) != 0 {
+		t.Fatalf("a settings-served requirement installs no app, got %v", plan.RequiredProviders)
+	}
+
+	g.SetConfiguredContracts([]string{"embeddings"})
+	plan, err = g.PlanInstall("hindsight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.CanInstall {
+		t.Fatalf("a filled Settings row satisfies the requirement, blockers: %v", plan.Blockers)
+	}
+}
+
+// TestPlanInstall_OptionalSettingRequirementNeverBlocks is the other half: the
+// same mechanism must not gate a capability an app degrades without, or the
+// catalog would refuse an install the app handles fine.
+func TestPlanInstall_OptionalSettingRequirementNeverBlocks(t *testing.T) {
+	g := NewGraph([]*App{settingServedApp(false)})
+
+	plan, err := g.PlanInstall("hindsight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.CanInstall {
+		t.Fatalf("an optional requirement blocks nothing, blockers: %v", plan.Blockers)
+	}
+}
+
+// TestSettingRequirementBlockers_SkipsAppServedRequirements pins the exported
+// rule the dashboard read uses: a required contract with a default app installs
+// that app and is never a blocker, and only a setting-served requirement is.
+func TestSettingRequirementBlockers_SkipsAppServedRequirements(t *testing.T) {
+	none := func(string) bool { return false }
+
+	if got := SettingRequirementBlockers(&App{CatalogID: "radarr", Integrations: map[string]Integration{
+		"downloadClient": {Required: true, Compatible: []CompatibleApp{{App: "qbittorrent", Default: true}}},
+	}}, none); len(got) != 0 {
+		t.Fatalf("a requirement an app satisfies is not a blocker, got %v", got)
+	}
+	if got := SettingRequirementBlockers(&App{CatalogID: "radarr", Integrations: map[string]Integration{
+		"downloadClient": {Required: false, Compatible: []CompatibleApp{{Source: SettingProviderSource}}},
+	}}, none); len(got) != 0 {
+		t.Fatalf("an optional requirement is not a blocker, got %v", got)
+	}
+	if got := SettingRequirementBlockers(settingServedApp(true), none); len(got) != 1 {
+		t.Fatalf("an unmet setting requirement is a blocker, got %v", got)
+	}
+	if got := SettingRequirementBlockers(settingServedApp(true), func(string) bool { return true }); len(got) != 0 {
+		t.Fatalf("a configured requirement is not a blocker, got %v", got)
+	}
+}

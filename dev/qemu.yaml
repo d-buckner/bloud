@@ -58,6 +58,7 @@ portForwards:
   - guestPort: 9222 # AFFiNE MCP
   - guestPort: 9333 # DAV MCP
   - guestPort: 9696 # Prowlarr
+  - guestPort: 9999 # Hindsight
 # Not forwarded: 6881 (qbittorrent: host port 6881 already forwards qBittorrent)
 # 8080 (traefik: host port 8080 already forwards Traefik: the user-facing port)
 # END GENERATED DEBUG PORT FORWARDS
