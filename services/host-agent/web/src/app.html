@@ -5,6 +5,41 @@
 		<meta charset="utf-8" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!-- Tells the browser this page carries both palettes, so the window it
+		     paints before this document's own stylesheet loads is already the
+		     right colour. The `color-scheme` property in variables.css takes over
+		     from here and narrows it to the one in use, which is what lets a
+		     manual override change the scrollbars and the form controls as well. -->
+		<meta name="color-scheme" content="light dark" />
+		<!-- Chooses the palette before the first paint.
+
+		     A stylesheet cannot do this on its own: the page would render light,
+		     then flip to dark one frame later, and a dashboard that is opened
+		     hundreds of times a week pays that flash every time. The script is
+		     inline and parser-blocking so the answer is on the root element
+		     before anything is drawn.
+
+		     It repeats the rule in `src/lib/theme.ts` because a module cannot run
+		     this early. `theme.test.ts` fails the build if the two drift. -->
+		<script>
+			(function () {
+				var KEY = 'bloud-theme';
+				var theme = null;
+				try {
+					var stored = window.localStorage.getItem(KEY);
+					if (stored === 'light' || stored === 'dark') theme = stored;
+				} catch (err) {
+					// A blocked storage is a storage with nothing in it.
+				}
+				if (theme === null) {
+					var dark =
+						typeof window.matchMedia === 'function' &&
+						window.matchMedia('(prefers-color-scheme: dark)').matches;
+					theme = dark ? 'dark' : 'light';
+				}
+				document.documentElement.setAttribute('data-theme', theme);
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

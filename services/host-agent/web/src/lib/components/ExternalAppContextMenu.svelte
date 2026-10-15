@@ -88,7 +88,7 @@
 		background: var(--color-bg-elevated);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+		box-shadow: var(--shadow-popover);
 		padding: var(--space-xs) 0;
 		animation: fadeIn 0.1s ease;
 	}
@@ -129,7 +129,7 @@
 	}
 
 	.context-item.danger:hover {
-		background: rgba(185, 28, 28, 0.08);
+		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 	}
 
 	.context-divider {

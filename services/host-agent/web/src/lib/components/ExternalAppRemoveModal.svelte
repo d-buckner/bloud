@@ -115,8 +115,8 @@
 	}
 
 	.btn-danger {
-		background: var(--color-error);
-		color: white;
+		background: var(--color-danger);
+		color: var(--color-on-danger);
 		border-color: var(--color-error);
 	}
 

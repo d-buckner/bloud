@@ -84,7 +84,7 @@
 		height: 100%;
 		border: 1px solid var(--color-border, #e5e5e5);
 		border-radius: 10px;
-		background: rgba(120, 113, 108, 0.06);
+		background: color-mix(in srgb, var(--color-text) 5%, transparent);
 		font-family: var(--font-serif, system-ui);
 	}
 

@@ -86,7 +86,7 @@
 	/* Primary */
 	.btn.primary {
 		background: var(--color-accent);
-		color: white;
+		color: var(--color-on-accent);
 	}
 
 	.btn.primary:hover:not(:disabled) {
@@ -106,12 +106,12 @@
 
 	/* Danger */
 	.btn.danger {
-		background: var(--color-error);
-		color: white;
+		background: var(--color-danger);
+		color: var(--color-on-danger);
 	}
 
 	.btn.danger:hover:not(:disabled) {
-		background: #7f1d1d;
+		background: var(--color-danger-hover);
 	}
 
 	/* Ghost */

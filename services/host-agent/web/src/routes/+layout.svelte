@@ -3,9 +3,11 @@
 	import '../app.css';
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
+	import LoadingShell from '$lib/components/LoadingShell.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import Toasts from '$lib/components/Toasts.svelte';
+	import { applyTheme, theme, watchSystemTheme } from '$lib/theme.svelte';
 	import { select, startDashboard, stopTransport } from '$lib/store';
 
 	let { children }: { children: Snippet } = $props();
@@ -18,15 +20,34 @@
 	const session = select((s) => s.session);
 
 	onMount(() => {
+		// The inline script in app.html already put the palette on the document.
+		// This says it again, so a page that got here without that script (a strict
+		// content policy, a cached document) still lands on the right theme, and it
+		// starts the listener that follows the operating system.
+		applyTheme(theme.resolved);
+		const stopWatchingSystem = watchSystemTheme();
 		startDashboard();
-		return () => stopTransport();
+		return () => {
+			stopWatchingSystem();
+			stopTransport();
+		};
 	});
 </script>
 
 {#if session.current.status === 'bootstrapping'}
-	<div class="loading">
-		<div class="spinner"></div>
-	</div>
+	<!-- The shell, in blocks, rather than a spinner on an empty canvas.
+
+	     The session read is what this state waits on, and on a cold start it is a
+	     second or more of a page that shows nothing. Nothing in the shell depends
+	     on the answer: the rail, the header, and the grid are the same shape for
+	     every visitor. The route children stay out of this on purpose. A route
+	     that renders before the session is known reads admin rights as "not an
+	     admin" and redirects Settings to Home, which is a worse bug than the
+	     spinner it replaces.
+
+	     The setup wizard and the sign-in redirect still win when the answer says
+	     so; they just arrive over a page instead of over a blank one. -->
+	<LoadingShell />
 {:else if session.current.setupRequired}
 	<SetupWizard />
 {:else}
@@ -49,29 +70,6 @@
 {/if}
 
 <style>
-	.loading {
-		min-height: 100vh;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--color-bg);
-	}
-
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 3px solid var(--color-border);
-		border-top-color: var(--color-accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
 	.app {
 		display: flex;
 		min-height: 100vh;

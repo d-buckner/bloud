@@ -43,7 +43,7 @@
 		background: var(--color-bg-elevated);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--shadow-md);
 		font-size: 0.875rem;
 		color: var(--color-text);
 		animation: toast-in 0.2s ease;

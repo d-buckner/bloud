@@ -52,7 +52,7 @@
 		height: 100%;
 		border: 1px solid var(--color-border-strong, #d6d3d1);
 		border-radius: 12px;
-		background: rgba(120, 113, 108, 0.03);
+		background: color-mix(in srgb, var(--color-text) 3%, transparent);
 	}
 
 	/* The frame takes the tone for the two states that are true of the whole set:
