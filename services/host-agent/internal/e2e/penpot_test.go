@@ -5,6 +5,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -199,6 +200,100 @@ func tailLines(logs string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// penpotTokenEndpoint resolves the provider's token endpoint the way Penpot's
+// backend does, from the discovery document. The origin is the app's own routed
+// origin rather than the issuer's host: sso.localhost is a name the app
+// containers resolve through an extraHosts pin, not necessarily one this test
+// process can resolve, and Authentik builds the endpoints it advertises from the
+// Host it is asked on, so the document comes back self-consistent either way.
+func penpotTokenEndpoint(t *testing.T) string {
+	t.Helper()
+	origin := penpotPublicURL()
+	var doc struct {
+		TokenEndpoint string `json:"token_endpoint"`
+	}
+	if res, err := http.Get(origin + "/application/o/penpot/.well-known/openid-configuration"); err == nil {
+		defer res.Body.Close()
+		if res.StatusCode == http.StatusOK {
+			_ = json.NewDecoder(res.Body).Decode(&doc)
+		}
+	}
+	if doc.TokenEndpoint == "" {
+		doc.TokenEndpoint = origin + "/application/o/token/"
+	}
+	return doc.TokenEndpoint
+}
+
+// TestPenpotOidcClientCanExchangeAToken performs the one call the browser
+// journey depends on that the browser cannot report. Penpot's backend posts the
+// authorization code to the provider's token endpoint with the credential from
+// the env file, and when that POST does not answer 200 the user sees a login
+// page that silently reloads and the backend logs only "unable to fetch access
+// token". The hint Penpot puts in the browser's URL is that literal sentence:
+// everything that distinguishes the causes is in the provider's answer, which
+// never reaches the browser.
+//
+// The code here is deliberately bogus. Authentik checks the client credential
+// before it looks the code up (TokenParams.__post_init__ compares
+// provider.client_secret, then __post_init_code checks the redirect URI against
+// the provider's registered list and only then loads the code), so the error
+// names whichever input was wrong. invalid_grant is the pass condition: it means
+// the credential Bloud handed Penpot is the credential the provider holds.
+func TestPenpotOidcClientCanExchangeAToken(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	values := envFile(t, filepath.Join(appDataDir("penpot"), "config", "penpot.env"))
+	clientID := values["PENPOT_OIDC_CLIENT_ID"]
+	secret := values["PENPOT_OIDC_CLIENT_SECRET"]
+	if clientID == "" || secret == "" {
+		t.Fatal("the env file carries no client credential to test")
+	}
+	endpoint := penpotTokenEndpoint(t)
+
+	// Penpot builds its own redirect URI: build-redirect-uri in
+	// backend/src/app/auth/oidc.clj is PENPOT_PUBLIC_URI with the path replaced,
+	// and the token request repeats the string the authorize request sent.
+	redirect := strings.TrimSuffix(values["PENPOT_PUBLIC_URI"], "/") + "/api/auth/oidc/callback"
+	t.Logf("exchanging against %s with client %s and redirect %s", endpoint, clientID, redirect)
+
+	exchange := func(usedSecret, usedRedirect string) (int, string) {
+		form := url.Values{
+			"grant_type":    {"authorization_code"},
+			"code":          {"bloud-integration-probe-not-a-real-code"},
+			"client_id":     {clientID},
+			"client_secret": {usedSecret},
+			"redirect_uri":  {usedRedirect},
+		}
+		res, err := http.PostForm(endpoint, form)
+		if err != nil {
+			t.Fatalf("POST %s: %v", endpoint, err)
+		}
+		defer res.Body.Close()
+		body, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(body)
+	}
+
+	status, body := exchange(secret, redirect)
+	t.Logf("token endpoint answered the configured credential: %d %s", status, body)
+	switch {
+	case status == http.StatusOK:
+		t.Errorf("a made-up authorization code exchanged for tokens: %s", body)
+	case strings.Contains(body, "invalid_grant"):
+		t.Log("the provider accepted the credential and rejected only the made-up code")
+	case strings.Contains(body, "invalid_client"):
+		t.Errorf("the provider refused the client credential Penpot boots with, which is the one failure "+
+			"mode the browser can only show as a login page that reloads: %d %s", status, body)
+	default:
+		t.Errorf("unexpected answer from the token endpoint: %d %s", status, body)
+	}
+
+	// The control: a credential that must not work. Without it, an endpoint that
+	// ignored the secret would look identical to one that checked it.
+	if _, wrong := exchange("not-the-client-secret", redirect); !strings.Contains(wrong, "invalid_client") {
+		t.Errorf("the provider accepted a wrong client secret, so the check above proves nothing: %s", wrong)
+	}
 }
 
 // TestPenpotEnvFileStaysOnTheHost checks the delivery channel: the file is read
