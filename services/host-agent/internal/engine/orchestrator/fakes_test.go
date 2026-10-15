@@ -117,10 +117,6 @@ func (f *FakeBlueprintGenerator) GenerateOutpostBlueprint(providers []sso.Forwar
 	return nil
 }
 
-func (f *FakeBlueprintGenerator) GenerateLDAPOutpostBlueprint(apps []sso.LDAPApp, ldapBindPassword string) error {
-	return nil
-}
-
 func (f *FakeBlueprintGenerator) GetLDAPBindPassword() string {
 	return "test-ldap-bind-password"
 }
