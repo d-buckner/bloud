@@ -33,18 +33,11 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Handing app credentials to third-party clients (reveal vs provision) | [features/client-credentials.md](features/client-credentials.md) (shipped); the design record is [plans/archive/client-credentials.md](plans/archive/client-credentials.md) |
 | Pilot: hermes-webui, OIDC for browsers plus a minted password for Hermex | [plans/archive/client-credentials-hermes-webui-pilot.md](plans/archive/client-credentials-hermes-webui-pilot.md) (shipped) |
 | Tools an agent asks Bloud itself, and where wrappers stop | [plans/native-mcp-endpoint.md](plans/native-mcp-endpoint.md) |
-| One MCP provider over Seerr and the arr stack, with many optional integrations | [plans/archive/arr-mcp-provider.md](plans/archive/arr-mcp-provider.md) (shipped) |
-| A standalone MCP container for Home Assistant, and the token it has to mint | [plans/archive/home-assistant-mcp.md](plans/archive/home-assistant-mcp.md) (shipped) |
-| MCP as an ordinary catalog capability, phase by phase | [plans/mcp-integrations.md](plans/mcp-integrations.md) (phases 1-3 shipped) |
-| Replacing the caldav-mcp wrapper with one DAV server | [plans/archive/caldav-mcp-dav-mcp.md](plans/archive/caldav-mcp-dav-mcp.md) (shipped) |
-| Point a catalog app at somebody else's install, and what a remote operator owns | [plans/external-apps.md](plans/external-apps.md) (shipped; two items open) |
-| What Hermes needs to serve native clients (Desktop, Hermex) | [plans/hermes-gateway.md](plans/hermes-gateway.md) |
-| Why inference settings do not need "logical apps" | [plans/inference-provider-settings.md](plans/inference-provider-settings.md) |
-| Wire the media stack end to end (Sonarr, Radarr, qBittorrent, Prowlarr, Seerr) | [plans/media-stack-integration.md](plans/media-stack-integration.md) (app side shipped; framework gaps F2-F6 open) |
-| A personal calendar per person, and one CalDAV endpoint over the app calendars | [plans/per-user-calendars.md](plans/per-user-calendars.md), [plans/radicale-calendar-aggregation.md](plans/radicale-calendar-aggregation.md) |
-| HTTPS with publicly trusted certificates | [plans/tls.md](plans/tls.md) |
-| Why adding an app touches 53% of its files outside `apps/`, and the six derivations that fix it | [plans/archive/app-add-tax.md](plans/archive/app-add-tax.md) (landed) |
-| Putting the media library on a NAS: storage roots, and who may mount NFS | [plans/storage-roots.md](plans/storage-roots.md) |
+| One MCP provider over Seerr and the arr stack, with many optional integrations | [plans/arr-mcp-provider.md](plans/arr-mcp-provider.md) |
+| A standalone MCP container for Home Assistant, and the token it has to mint | [plans/home-assistant-mcp.md](plans/home-assistant-mcp.md) |
+| Why adding an app touches 53% of its files outside `apps/`, and the six derivations that fix it | [plans/app-add-tax.md](plans/app-add-tax.md) |
+| A smaller, clearer app-SDK surface: group `Deps`, one `Secret` type, a binder table, then extract the SDK | [plans/configurator-sdk-surface.md](plans/configurator-sdk-surface.md) |
+| Putting the media library on a NAS: storage roots, and how an unprivileged host agent mounts one | [plans/storage-roots.md](plans/storage-roots.md) |
 | In-flight designs | [plans/](plans/) |
 | Finished plans, kept for the reasoning | [plans/archive/](plans/archive/) |
 
