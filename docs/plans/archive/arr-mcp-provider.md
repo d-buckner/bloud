@@ -1,4 +1,5 @@
-> Status: draft
+> Status: shipped. `apps/arr-mcp` is in the catalog and live-verified. Archived
+> 2026-10-15. The living contract description is [features/mcp.md](../../features/mcp.md).
 
 # Plan: `apps/arr-mcp`, one MCP provider over the request and arr stack
 
@@ -9,7 +10,7 @@
 An agent that can answer "what did someone request and what is stuck" needs Seerr,
 and Bloud has no MCP provider for it. The shape is the one already in the tree: a
 wrapper as an ordinary catalog app that provides the `mcp` contract
-([features/mcp.md](../features/mcp.md)).
+([features/mcp.md](../../features/mcp.md)).
 
 The candidate is [`bardesss/arr-mcp`](https://github.com/bardesss/arr-mcp), one
 server covering Seerr, the Servarrs, Jellyfin and others. It was spiked live
@@ -69,7 +70,7 @@ Two directions, both the standard wrapper shapes.
 
 Bloud generates the token, writes it into arr-mcp's `auth.tokens` as a SHA-256
 hash, and publishes the plaintext under `provides.mcp.secrets.httpToken`. This is
-the rule in [features/mcp.md](../features/mcp.md): the published `httpToken` is
+the rule in [features/mcp.md](../../features/mcp.md): the published `httpToken` is
 always a credential the provider itself validates. It is the reason the first
 candidate was rejected, and arr-mcp passes it: the spike confirmed the listener
 rejects both a missing and an incorrect bearer.
@@ -140,7 +141,7 @@ device on the LAN wins and ends up holding every configured credential.
 The platform already has the answer: **a client credential**. Bloud mints the UI
 password, writes its hash into `config.yaml`, and reveals the plaintext to the
 operator through the existing reveal flow
-([features/client-credentials.md](../features/client-credentials.md)), declared
+([features/client-credentials.md](../../features/client-credentials.md)), declared
 the way `apps/hermes-webui` declares its mobile password:
 
 ```yaml
@@ -190,7 +191,7 @@ covered by this app's own tests against a fake server in
 
 It also has to be added to `validation.yaml` in the `apps:` block, with its auth
 strategy, validation level, file globs and `e2e-project`, per
-[guides/contributing-apps.md](../guides/contributing-apps.md).
+[guides/contributing-apps.md](../../guides/contributing-apps.md).
 
 ## Two things this deliberately does not do
 
@@ -247,13 +248,13 @@ bump as a review of the tool surface rather than a dependency refresh.
 
 ## Related
 
-- [features/mcp.md](../features/mcp.md): the contract, the credential boundary,
+- [features/mcp.md](../../features/mcp.md): the contract, the credential boundary,
   the rule this candidate passes and the first candidate failed.
-- [features/client-credentials.md](../features/client-credentials.md): the reveal
+- [features/client-credentials.md](../../features/client-credentials.md): the reveal
   and rotation mechanism the config UI password uses.
-- [plans/native-mcp-endpoint.md](native-mcp-endpoint.md): the tools no wrapper can
+- [plans/native-mcp-endpoint.md](../native-mcp-endpoint.md): the tools no wrapper can
   write. Orthogonal to this one; installing apps grows that surface, installing
   this grows its own.
-- [plans/media-stack-integration.md](media-stack-integration.md): the app-side
+- [plans/archive/media-stack-integration.md](media-stack-integration.md): the app-side
   wiring this provider reads rather than duplicates.
-- [guides/contributing-apps.md](../guides/contributing-apps.md).
+- [guides/contributing-apps.md](../../guides/contributing-apps.md).

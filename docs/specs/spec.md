@@ -1,7 +1,9 @@
-# Bloud First Release Specification
+# Bloud Runtime and Release Specification
 
-**Status:** Authoritative active plan
-**Last updated:** 2026-07-03
+**Status:** living engineering policy. The product scope in "First Release Scope" is
+**historical**: it is the 2026-07 first-release boundary, which the catalog has since
+grown far past.
+**Last updated:** 2026-10-15
 **Product:** Single-host home cloud\
 **Initial target:** Debian 13, `x86_64`, systemd\
 **Primary risk:** Unreliable implementation and architecture\
@@ -9,23 +11,28 @@
 
 ## Document Authority
 
-This file is the source of truth for product scope, architecture, migration policy, delivery
-order, and release gates. When another document or the current implementation conflicts with
-this specification, update or replace the conflicting material. Do not silently change this
-specification through implementation.
+Four documents are authoritative, each for one question:
+
+| Question | Authority |
+|---|---|
+| What is this product, and which apps ship? | [`../../README.md`](../../README.md). Its catalog list and login table are generated from `apps/*/metadata.yaml` by `./bloud catalogdoc`. |
+| What must the runtime never break? | [`../../AGENTS.md`](../../AGENTS.md), the invariants. |
+| What is the reconciler's contract? | [`reconciler-spec.md`](reconciler-spec.md) |
+| What errors must the system never make? | [`../operations/tech-debt.md`](../operations/tech-debt.md) |
 
 Supporting documents provide rationale, detail, and implementation records:
 
 - `docs/architecture/overview.md`: component overview and diagram
 - `docs/guides/contributing-apps.md`: how to add a new app
-- `docs/specs/reconciler-spec.md`: intent-driven reconciler architecture (implemented)
 
-Supporting documents must defer to this file and must not introduce new authoritative
-requirements.
+This file is **not** a scope authority. It was the product-scope source of truth for the
+first release, when the catalog held two apps. It still carries the engineering policy that
+release still follows: the migration policy, the testing strategy, the application support
+contract shape, and the decision rule. Where its product scope and the catalog disagree, the
+catalog is right.
 
 Any change to release scope, supported environment, architecture boundaries, migration
-policy, phase order, or release gates must update this file in the same commit. Completed
-slices update the migration checkpoint and phase-status table.
+policy, phase order, or release gates must update this file in the same commit.
 
 ## Current Migration Checkpoint
 
@@ -59,13 +66,32 @@ Completed:
   container nodes, connection nodes, and integration edges.
 - E2E lifecycle testing framework works against Lima VM with Playwright browser tests.
 
+Delivered since this checkpoint was written (2026-07-03). The list above is the state at
+that date; these landed afterwards:
+
+- Typed provider outputs and secret references reach configurators. The bindings live in
+  `pkg/bindings` and arrive as `AppState.Integrations`, one typed slice per contract. See
+  AGENTS.md invariant 15.
+- The configurator `changed` return became `PreStartResult{RestartNeeded, Reason}`, so a
+  config write and a recreate request are different signals.
+- `.deb` packaging: `./bloud package`, `.github/workflows/release.yml`, and
+  `deb-verify.yml` against a real Debian 13 package index. See
+  [`../operations/packaging.md`](../operations/packaging.md).
+- The catalog grew from two apps to twenty-two, and the SSO strategy set is now
+  `native-oidc`, `ldap`, `forward-auth`, and `none`.
+- The shared-postgres and shared-redis model is gone: each app that needs a database
+  declares its own container (AGENTS.md invariant 3).
+- A resettable address setting (one public URL), the self-healing reconcile timer, and
+  per-node operation rows.
+
 Not yet implemented:
 
-- Durable desired and observed integration revisions with invalidation tracking
-- Typed provider outputs and secret references passed to configurators
-- Configurator `changed` return value for selective restart
-- `.deb` packaging and `bloud init` with preflight checks
-- Clean Debian VM acceptance testing
+- `bloud init`, the first-run preflight. A fresh `.deb` install still completes first-run
+  host configuration in the dashboard (Settings, then Hosts).
+- Clean Debian VM acceptance as a release gate. CI builds the `.deb` and verifies its
+  dependency model inside a `debian:trixie` container, and the full phase-7 journey below
+  has not been run as written.
+- Durable desired-and-observed integration revisions with invalidation tracking.
 
 ## Product Promise
 
@@ -84,6 +110,11 @@ what they provide and consume, and Bloud continuously keeps those relationships 
 
 ## First Release Scope
 
+> **Historical.** This is the 2026-07 first-release boundary, not the current catalog. The
+> catalog is now twenty-two apps; [`../../README.md`](../../README.md) lists them, and its
+> login table is generated from the app metadata. The "Explicitly Deferred" list below was
+deferred for that release and has largely since been delivered, Immich among it.
+
 ### User-Facing Applications
 
 | Application | Primary value | Architecture exercised |
@@ -96,9 +127,9 @@ what they provide and consume, and Bloud continuously keeps those relationships 
 - Bloud host-agent binary and web dashboard
 - Authentik
 - Traefik
-- PostgreSQL
-- Redis
 - Podman
+- A per-app database, when the app declares one. There is no shared PostgreSQL or Redis:
+  an app that needs one declares its own container (AGENTS.md invariant 3).
 
 ### Explicitly Deferred
 
@@ -126,12 +157,15 @@ separate targets only after they pass the complete release acceptance contract.
 - Local-network access
 - One documented storage layout
 
-Rootless Podman is an intentional first-release choice. It avoids requiring root access for
-container management, isolates the Bloud runtime to a dedicated user, and aligns with
-Podman's default security model. `loginctl enable-linger` keeps the user's systemd
-instance (and the Podman socket the host-agent talks to) alive across logout.
-Traefik binds to unprivileged ports (8080/8443) behind a
-host firewall or reverse proxy for port 80/443 access.
+Rootless Podman is an intentional first-release choice: it avoids requiring root for
+container management, isolates the runtime to a dedicated user, and matches Podman's default
+security model. `loginctl enable-linger` keeps the user's systemd instance (and the Podman
+socket the host-agent talks to) alive across logout.
+
+Traefik's canonical entrypoint is port 80 (AGENTS.md invariant 10). A deployment that cannot
+bind 80, which includes the unprivileged native backend and the dev VMs, serves 8080 instead.
+There is no TLS story yet, so a public deployment still needs a terminator in front: see
+[`../plans/tls.md`](../plans/tls.md).
 
 Unsupported environments must fail during preflight with actionable diagnostics.
 
@@ -838,10 +872,11 @@ Each phase ends with an automated gate.
 | Phase 0: Freeze, Inventory, and Measure | Complete |
 | Phase 1: Extract the Integration Engine | Complete |
 | Phase 2: Implement Reconciler Architecture | Complete |
-| Phase 3: Implement the Engine | Complete; Podman management working on Lima VM |
+| Phase 3: Implement the Engine | Complete; Podman management working on Lima VM. Clean Debian VM validation still open |
 | Phase 4: Port Jellyfin | Complete; LDAP SSO, E2E lifecycle tests passing |
 | Phase 5: Port Navidrome | Complete; forward-auth SSO, E2E tests passing |
-| Phase 7: Package and Release | Not started |
+| (unplanned) Grow the catalog | Twenty-two apps, four SSO strategies, the MCP contract, and external providers |
+| Phase 7: Package and Release | Package builds and publishes; the `bloud init` preflight and the clean-VM acceptance journey are open |
 
 Phase work may overlap only when it does not bypass an earlier phase's release gate or create
 an interface whose requirements have not been established.
@@ -943,8 +978,10 @@ Gate:
 
 - The exact package later published passes repeatedly without manual intervention.
 
-**Status:** Not started. Requires `.deb` packaging, `bloud init`, and clean Debian VM
-validation.
+**Status:** package half done. `./bloud package` builds the `.deb`, `release.yml`
+publishes it as an immutable pre-release, and `deb-verify.yml` checks its dependency model
+against a real Debian 13 package index. Still open: `bloud init`, and steps 3 to 10 of the
+acceptance flow below as a repeatable clean-VM gate.
 
 ## Release Criteria
 
@@ -975,4 +1012,5 @@ the implementation to this specification under tests. Do not preserve obsolete i
 contracts solely for backward compatibility.
 
 Small, fully validated vertical slices are preferred over broad rewrites. Supporting
-documents may explain implementation detail, but this specification remains authoritative.
+documents may explain implementation detail; the authority for each kind of question is the
+table at the top of this file, not this specification alone.

@@ -1,258 +1,56 @@
-> Status: accepted (in progress). PRs 1-3 landed (#85 migrations, #86 operation
-> state, #88 route purity); PR 7 landed 2026-09-20 (SQLite pragmas in the DSN).
-> **PR 6 landed 2026-09-20** (engine silent failures: nil guard, cache lock,
-> queue live-flag), with the orchestrator liveness substrate PR 11 depends on.
-> **PR 4 implemented 2026-09-19** (revised first: its
-> original design was insufficient against a forgeable forwarding header) and
-> verified live against a deployed host-agent.
+> Status: accepted (in progress). The per-slice plan is
+> [`docs/plans/tech-debt-repayment.md`](../plans/tech-debt-repayment.md).
+> PRs 1-4 and 6-9 landed; PR 5 landed as a deletion rather than as a unification
+> (see "Single Orchestrator Builder" below); PR 11 landed in part, and its
+> degraded-payload and startup-gate scope is the open item 10.
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-10-04 (design-debt repayment began: items 26, 28, 29,
-30, and 32 closed by PRs #203, #204, #205, and #206; item 31 deferred with
-rationale. Items 27, 33, and 34 remain open.)  
-Prior update 2026-10-03 (design/complexity findings from the APoSD review
-folded in as items 26-34; see
-[`docs/specs/review-2026-10-03-aposd.md`](../specs/review-2026-10-03-aposd.md)).  
-Prior update 2026-09-30 (item 25 closed: the reconciler now runs on a
-self-healing timer, so convergence no longer depends on somebody submitting
-an intent, and `retryable` on the operation row finally has a driver. See
-"The instance converges on its own" below.)  
-Prior update 2026-09-27 (items 8 and 9 closed: drift is now written
-into the graph node instead of only into the store, so the reconciler acts
-on it, and `Ensure` pulls before it destroys. See "Already Paid" below and
-[`specs/REFACTOR_LATEST.md`](../../specs/REFACTOR_LATEST.md).)
-Prior update 2026-09-25 (item 6 closed: the readiness/wait contract is
-now honored, and the wait budget is single-sourced and harness-enforced).
-Prior update 2026-09-26 (reconciliation audit against the working tree).
-The ranked inventory is whole again: items 5-10 are restored (the table
-previously jumped from 4 to 11, hiding the still-open P1 items 6, 8, 9 and
-10, plus the closed 5 and 7). Item 6's `WaitPolicy` note is corrected: it
-has two explicit consumers (paperless-ngx, vaultwarden) but is still not the
-ready-path default, and the Home Assistant `SkipIf` half is marked closed.
-Item 24 records a catalog-entry mutation race the PR 6 mutex does not cover.
-Prior update 2026-09-20 (PR 6 landed: the engine's three silent-failure
-paths are closed: the catalog nil-deref is guarded, `MemoryCache` is
-lock-protected with a swap-on-refresh, and the intent loop can no longer
-exit on a stale signal token (`WaitAndDrain` returns a live flag; only
-cancellation stops `Start`). The health surface now sees a dead loop via
-`Orchestrator.Stopped()`, and `validation.yaml` runs `-race` over
-`internal/catalog`. Same day: PR 7 landed: the SQLite per-connection
-pragmas travel in the DSN, so every pooled connection opens with
-`foreign_keys=ON` and `busy_timeout=5000`; the lost-cascade and
-lost-write halves of item 5 are closed and pinned by multi-connection
-tests. Same day: a configurator-layer conformance inventory was added;
-its C1-C4, C8 and C13 shipped the same day, see "Closed 2026-09-20".
-Prior update 2026-09-19: item 5 re-observed on a post-PR-4 redeploy, adding a fifth member to
-the silent-failure class: the lost write is a `WARN` nobody sees; earlier
-same-day updates: first-ranked item re-scoped and re-ranked: the loopback admin
-exemption is remotely forgeable, not merely a local-process concern; a new
-second-ranked class records the engine's silent-failure paths; prior update
-2026-09-17: route-generation purity landed, plus versioned migrations + durable
-operation state)
+**Last updated:** 2026-10-15, re-verified against `main` at `e53a817`.  
+This pass re-verified every open entry against the tree and re-scoped ten of them.
+Item 27 closed on the orchestrator half and stays open on `wire.Input`. Items 14,
+16, 22, 23, and 36 each had one half closed and now say which half remains. Items
+17, 20, 21, 29, 31, and 35 had stale citations, stale counts, or an unstated
+condition, now corrected. Most of the app-extension surface findings the
+2026-10-12 review raised are repaid: findings 3.4, 3.5, and 3.6 are closed, and
+3.1, 3.2, and 3.3 are closed on the half the review itself scheduled first. See
+"The app-SDK became a module".
 
-Source for this revision: [`docs/specs/review-2026-09-19.md`](../specs/review-2026-09-19.md)
-(9 parallel subsystem audits, high-severity findings re-verified at source),
-plus a live runtime observation on 2026-09-19 (item 5's lost write, captured
-during a normal convergence pass; see the silent-failure class below).
-Frontend (SSE fallback poller, toast on first observation, dead `sso_launch_path`),
-CLI/validation (`--app` inert, `**` glob makes "medium confidence" dead, `reset`
-wipes every Podman container) and CI/hook findings (no PR gate, post-commit
-timestamp rewriting, `cli` tests absent from precommit) are recorded there and
-are **not** duplicated here. The former `check:app-http` script was folded into
-the `forbidigo` rule in `.golangci.yml` on 2026-09-20, so the raw-HTTP guard now
-runs in the `fast` tier and CI instead of pre-commit only.
+**How to read the dates.** Each dated note records what was true when it was
+written, and every closed item names the change that closed it. The long record of
+closed items is in [`archive/tech-debt-history.md`](archive/tech-debt-history.md);
+revision chatter is not kept at all, because `git log` holds it.
 
-## Biggest Debt: the auth bypass was remote and forgeable (fixed 2026-09-19)
+| Revised | What changed |
+|---|---|
+| 2026-10-15 | Item 34 closed: `operations` is keyed `(app_name, node)`. Item 27 half-closed by the app-SDK extraction. Items 14, 16, 22, 23 re-scoped after a source re-read. |
+| 2026-10-04 | Design-debt repayment began: items 26, 28, 29, 30, and 32 closed (issues #203-#206); item 31 deferred with a recorded reason. |
+| 2026-10-03 | Design and complexity findings from the APoSD review folded in as items 26-34: [`2026-10-03-aposd.md`](../reviews/2026-10-03-aposd.md). |
+| 2026-09-30 | Item 25 closed: the reconciler runs on a self-healing timer, so convergence no longer waits on somebody submitting an intent, and `retryable` on the operation row finally has a driver. |
+| 2026-09-27 | Items 8 and 9 closed: drift is written into the graph node, not only into the store, and `Ensure` pulls before it destroys. Plan archived at [`docs/plans/archive/reality-match-intent.md`](../plans/archive/reality-match-intent.md). |
+| 2026-09-25 | Item 6 closed: the readiness and wait contract is honored, and the wait budget is single-sourced and harness-enforced. The configurator-conformance list closed in the same branch. |
+| 2026-09-20 | PRs 6 and 7 landed: the engine's three silent-failure paths are closed, and the SQLite pragmas travel in the DSN. The configurator-layer conformance inventory was added. |
+| 2026-09-19 | The P0 re-scoped: the loopback admin exemption is remotely forgeable, not merely a local-process concern. Item 5 re-observed on a post-PR-4 redeploy. Source: [`2026-09-19.md`](../reviews/2026-09-19.md), 9 parallel subsystem audits with high-severity findings re-verified at source, plus one live runtime observation. |
 
-> **Status: closed** (working tree; PR 4 of the repayment plan). Kept here as the
-> record of what the rule costs, because the fix is a set of small constraints
-> that are easy to undo one at a time.
-
-**What it was.** The 2026-09-17 version of this entry said loopback requests are
-granted `RoleAdmin` with no credential, so *"network position is the credential"*.
-That framing was too generous to the system. Network position was not required:
-
-| # | Location | Fact |
-|---|---|---|
-| 1 | `apps/traefik/metadata.yaml:15-16` | `apps-traefik` runs `network: host` |
-| 2 | `internal/appconfig/traefik.go:76-80` | entrypoint `web` sets `forwardedHeaders: insecure: true` |
-| 3 | `internal/appconfig/traefik.go:109` | upstream is `http://localhost:<hostAgentPort>` |
-| 4 | `internal/appconfig/traefik.go:118-121` | router `host-api` exposes `PathPrefix('/api')` on the public entrypoint |
-| 5 | `internal/api/router.go:236` | `r.Use(middleware.RealIP)`: global, before the `/api` subtree |
-| 6 | `internal/api/auth_module.go:99-124` | `isLocalRequest` → `ip.IsLoopback()` → `true` |
-| 7 | `internal/api/router.go:546-550` | loopback ⇒ `User{"_cli", RoleAdmin}`, no credential |
-
-Traefik's `XForwarded.ServeHTTP` skips `DeleteXForwardedHeaders` when
-`insecure` is set, so client-supplied `X-Real-Ip` / `X-Forwarded-*` survive
-unmodified; `True-Client-IP` is not a Traefik-managed header at all; chi's
-`realIP` checks `True-Client-IP` first and assigns `r.RemoteAddr` from it
-without validating the sender.
-
-```sh
-curl -H 'True-Client-IP: 127.0.0.1' http://<box>:8080/api/apps/installed
-```
-
-That request is admin. So is `POST /api/apps/immich/uninstall` with
-`clearData`, `PUT /api/settings/public-url`, and `POST /api/admin/users`
-(persist as a real Authentik admin). `:3000` binds every interface
-(`internal/api/server.go:108`), so the direct path works too, and any
-app container can reach the host gateway.
-
-**Fix surface (measured).** `r.RemoteAddr` has exactly two consumers in all of
-host-agent, both inside `isLocalRequest` (`auth_module.go:100,102`); the
-forwarded-header surface is three reads total, all in the same file
-(`:135` `X-Forwarded-Host`, `:161` `X-Forwarded-Proto`). Nothing else uses
-client IP: no rate limiting, no source-keyed audit log. The bypass can
-therefore be removed with no behavioral regression beyond the bypass itself.
-
-**This was a shipping blocker**, and the cheapest high-impact change in the
-repo. **What closed it (2026-09-19):**
-
-- `middleware.RealIP` deleted from `NewRouter`: `r.RemoteAddr` is the real TCP
-  peer again. Nothing else in host-agent consumed client IP (verified: two
-  readers, both inside `isLocalRequest`).
-- The trusted position is now a *scope*, not a credential: admin requires
-  `Authorization: Bearer <apiToken>` **and** a trusted position, checked before
-  the session path (`authMiddlewareFn`). Order matters: a position-first check
-  would force every Traefik-proxied browser request through the token path and
-  lock the dashboard out (Traefik's backend connection is loopback).
-- An empty configured token disables the position path entirely (fail closed).
-- `apiToken` is generated and backfilled by the secrets manager, and written
-  standalone to `<dataDir>/host-agent-api-token` (0600) for the CLI/e2e to read.
-  The name is mirrored, not shared: `cli/executor.DataDirs.APITokenPath`,
-  pinned by `secrets.TestAPITokenFileNameIsStable`.
-- Traefik no longer ships `forwardedHeaders.insecure: true`; its default
-  (discard client-supplied `X-Forwarded-*`/`X-Real-Ip`, then set its own) is the
-  whole config now, pinned by an `appconfig` test.
-- OAuth redirect/logout URLs come from the host set, not the request:
-  `X-Forwarded-Host`/`X-Forwarded-Proto` are no longer read, and the login
-  handler no longer **registers** an unknown redirect URI in Authentik
-  (`AddRedirectURI` deleted from the client and the module interface).
-- `GET /api/setup/status` and `POST /api/setup/create-user` are registered
-  exactly once, on a public bootstrap router (`NewSetupRouter`). They must be
-  public: first-run has no user to authenticate as, and create-user self-limits
-  with a 409 once any user exists.
-- The suite can now see this boundary: a router-classification table test over
-  the **real** tree with a non-loopback `RemoteAddr`, spoofed-header cases, the
-  ordering trap, and the bootstrap routes. The old helper forced loopback, which
-  is why none of this was visible before.
-
-**Verified live** against a deployed host-agent (lima `bloud-dev`), not just in
-unit tests: unauthenticated `GET /api/apps/installed` → 401, including with
-`True-Client-IP` / `X-Real-IP` / `X-Forwarded-For` spoofs, directly and through
-Traefik; `POST /api/apps/jellyfin/uninstall` with a spoof → 401; wrong bearer →
-401; valid bearer (from `./bloud token`) → 200; `/api/setup/status` → 200
-unauthenticated; `/auth/login` with `Host: evil.example` →
-`redirect_uri=http://localhost:8080/auth/callback` (the configured host), and
-nothing registered in Authentik; `./bloud install`/`uninstall` still work end to
-end. Re-verified by `auth_bypass_test.go`, which fails with `200`s against the
-pre-fix tree.
-
-**Remaining verification gap:** the Playwright suites (`./bloud e2e lifecycle`,
-`./bloud e2e app`) have not been run since the change.
-
-## Second: the appliance fails silently (closed 2026-09-20, PR 6)
- 
-> **Status: closed** for the engine members; kept as the record of the class.
-> The four defects below are fixed as of PR 6; item 5's lost-write variant
-> was closed by PR 7 the same day. The health-surface bullet is half closed:
-> a dead intent loop is now visible (`Stopped()` + `LastConverged()` feed
-> `CheckSystemHealth` and `OrchestratorStatus`); the degraded-payload and
-> startup-gate work (PR 11) remains open.
- 
-Four independent defects shared one property (the system stops working and
-reports nothing), and item 5 (below) reached the same end from a fifth
-direction: a write that is dropped, logged at `WARN`, and otherwise ignored.
-This was a ranked class, not a footnote, because each one converted an
-ordinary bug into an unnoticeable outage.
-
-- **`SyncContainerState` nil-deref kills the process.** **FIXED (PR 6).**
-  The catalog result was dereferenced before checking the error;
-  `MemoryCache.Get` returns `(nil, err)` on a miss and `ContainerDefs()`
-  has a pointer receiver. A miss is reachable whenever an installed app's
-  directory is removed or renamed (`catalog/loader.go:43-45` skips dirs
-  without `metadata.yaml`), and the sync runs on every convergence pass.
-  There is **no `recover()` anywhere in host-agent**, so the daemon died.
-  Now: err/nil checked first, the app is skipped with a `WARN`, and
-  `orchestrator_containers_test.go` pins the skip and the repair path.
-- **`MemoryCache` was lock-free across a live refresh.** **FIXED (PR 6).**
-  All access goes through a `sync.RWMutex`; `Refresh` builds the new map
-  off-lock and swaps it in as one write-locked operation, so readers never
-  see a half-filled cache and the disk load does not block them.
-  `cache_test.go` hammers concurrent `Refresh` × readers under `-race`,
-  and the race tier now covers `./internal/catalog/...`.
-- **The intent loop could exit permanently.** **FIXED (PR 6).**
-  `WaitAndDrain` returns `([]Intent, bool)`; cancellation is the only
-  shutdown signal. The stale-token wake returns an empty live batch and
-  `Start` skips it (`orchestrator.go` `Start` loop). Pinned by
-  `TestWaitAndDrain_StaleTokenIsLiveEmptyBatch` and
-  `TestStart_LoopSurvivesStaleSignalTokens`.
-- **The health surface could not see any of it.** **HALF FIXED (PR 6):**
-  `Orchestrator.Stopped()` reports the loop has exited and
-  `LastConverged()` stamps every completed pass; `CheckSystemHealth` now
-  fails on a dead loop, and `OrchestratorStatus` carries both fields for
-  the developer surface. Still open (PR 11): the degraded payload for a
-  missing Podman socket, the startup-gate depth, and the exit-on-failure
-  policy.
-- **Operation-ledger writes are lost to lock contention on one row (item 5,
-  re-observed 2026-09-19).** On a normal convergence pass during a redeploy,
-  `recordOpPhase` → `OperationStore.AdvancePhase` lost the write:
-
-  ```
-  WARN operation recorder: phase failed  app=authentik phase=prestart
-       error="advance operation authentik to prestart: database is locked (5) (SQLITE_BUSY)"
-  ```
-
-  The collision is structural, not a rare interleaving. Every phase record keys
-  on `owner := o.ownerApp(id)` (`orchestrator.go:1023,1054,1066,1091`, …), one
-  row per *app*, while the scheduler dispatches *nodes*, and nodes in one
-  topological level run concurrently. So for a multi-container app, N nodes
-  issue `UPDATE operations … WHERE app_name='authentik'` against a **single row**
-  at the same time. The same log window shows the reproduction exactly:
-
-  ```
-  level work collected              nodes=2 work=2
-  dispatching full lifecycle        app=apps-authentik-worker
-  dispatching full lifecycle        app=apps-authentik-server
-  lifecycle phase: EnsureContainer  app=apps-authentik-worker
-  lifecycle phase: PreStart         app=apps-authentik-server
-  operation recorder: phase failed  app=authentik phase=prestart SQLITE_BUSY
-  ```
-
-  This is item 5 firing, not a separate defect: `db.InitDB` sets
-  `PRAGMA busy_timeout=5000` with `db.Exec` on **one** pooled connection, so
-  every other connection has `busy_timeout=0` and fails immediately instead of
-  waiting for the lock. The recorder is the highest-frequency writer in the
-  system, so it is simply the first to lose. `recordOpPhase` logs and returns
-  (`operation_recorder.go:85`); by design it must never change lifecycle
-  behavior, which also means nothing downstream notices: the row keeps whatever
-  write landed last, and since the operations row is *authoritative for failure
-  context*, the dashboard's diagnostic surface can show a phase that is stale or
-  not the one the drive actually reached, with no visible error. (Container nodes
-  frequently write the same phase value, so many of these losses are
-  value-identical, but each still takes the write lock, and where the nodes'
-  phases differ the surviving value is arbitrary.) The other half of item 5 is
-  worse and fully silent: `foreign_keys=OFF` on those same connections means
-  cascades stop firing and orphan `shares` / `user_app_positions` rows
-  accumulate with no log line at all. **Fixed by repayment PR 7
-  (2026-09-20):** the pragmas now ride the DSN and are applied by the
-  driver at every connection open; see "Already Paid" below.
-
-  The structural half closed later, in #202 (2026-10-15): `operations` is
-  keyed `(app_name, node)`, so the recorder's unit of work matches the
-  engine's and no two nodes write the same row. The app-level answer is now
-  a documented projection rather than whichever write landed last. Ledger
-  item 34.
+Three groups of findings from the 2026-09-19 review are recorded there and are
+**not** duplicated here: the frontend (SSE fallback poller, toast on first
+observation, dead `sso_launch_path`), the CLI and validation layer (`--app`
+inert, the `**` glob making "medium confidence" dead, `reset` wiping every
+Podman container), and CI and hooks (no PR gate, post-commit timestamp
+rewriting, `cli` tests absent from pre-commit). The former `check:app-http`
+script moved into the `forbidigo` rule in `.golangci.yml` on 2026-09-20, so the
+raw-HTTP guard runs in the `fast` tier and in CI instead of in pre-commit only.
 
 ## Open inventory (ranked)
 
-Ranked by risk×cheapness. Severity is the review's, not a guess.
+Ranked by risk×cheapness. Severity is the review's where a dated review set it, and
+this ledger's own judgement where it did not; an entry that this ledger re-scopes
+says so and gives the reason.
 Configurator-layer consistency items are collected in the conformance section
-below (C1-C14) rather than ranked here.
+below (C1-C15) rather than ranked here.
 
 | # | Item | Sev | Evidence |
 |---|---|---|---|
-| 1 | ~~Auth bypass via spoofable forwarding header~~ **FIXED 2026-09-19** (see above) | **P0→closed** | `router.go:236,546-550`; `traefik.go:76-80`; `auth_module.go:99-124` |
+| 1 | ~~Auth bypass via spoofable forwarding header~~ **FIXED 2026-09-19** (see [the history](archive/tech-debt-history.md)) | **P0→closed** | `router.go:236,546-550`; `traefik.go:76-80`; `auth_module.go:99-124` |
 | 2 | ~~`SyncContainerState` nil-deref → process death~~ **FIXED 2026-09-20 (PR 6)**: err/nil checked before the deref, catalog-miss regression tests pin the skip and the repair path | P1→closed | `orchestrator_containers.go:41-56` |
 | 3 | ~~`MemoryCache` data race → unrecoverable fatal~~ **FIXED 2026-09-20 (PR 6)**: RWMutex guards all access; `Refresh` builds off-lock and swaps under the write lock; race test runs in the `fast` tier | P1→closed | `catalog/cache.go`; `catalog/cache_test.go`; `validation.yaml` (`go-host-agent-race`) |
 | 4 | ~~Intent queue exits permanently on a stale token~~ **FIXED 2026-09-20 (PR 6)**: `WaitAndDrain` returns `([]Intent, bool)`; `Start` exits only on cancellation; empty live batches are skipped; liveness exposed via `Stopped()`/`LastConverged()` | P1→closed | `queue.go:77-125`; `orchestrator.go` `Start` loop + loop-liveness tests |
@@ -265,21 +63,21 @@ below (C1-C14) rather than ranked here.
 | 11 | ~~Two orchestrator wirings: the CLI `reconcile` path builds a different graph shape (per-`CatalogID`) and configures no store/runtime/catalog-graph, so it reports success while doing nothing~~ **FIXED 2026-09-25**: the CLI path was deleted for having no caller at all, and `internal/wire` is now the only place a `NewOrchestrator` call happens. Guarded by a config-completeness test. | P1→closed | `cli/distro.go` era `cmd/host-agent/configure.go` (deleted); `internal/wire/wire.go`; `internal/wire/completeness_test.go` |
 | 12 | ~~Two `AppState` builders that disagree on SSO: the CLI path reads legacy `SSOBaseURL`, ignoring admin-set hosts~~ **FIXED 2026-09-25**: the second builder went with the CLI path. `orchestrator.buildAppState` is the only one, and it resolves SSO through the live host set. | P2→closed | `orchestrator.go` `buildAppState` / `resolveSSOURLs` |
 | 13 | ~~An admin-selected **built-in** primary host is never persisted → primary silently reverts to `localhost` on restart, changing the OIDC issuer~~ **CLOSED 2026-09-26 by the model change**: there is no primary selection any more. The address is one URL stored at `settings['public_url']`, and whatever the operator typed is what gets persisted and read back, so there is no built-in-versus-stored case left to get wrong. | P2→closed | `store/settings.go`; `orchestrator/pipeline.go` `applySetPublicURLIntent` |
-| 14 | System-app hiding keys off `category == "infrastructure"`, which no `metadata.yaml` sets (traefik is `network`, authentik is `security`) → both appear as installable user apps, contradicting invariant 5 | P2 | `catalog/cache.go:70-103`; `api/apps_module.go:101` |
+| 14 | System-app hiding still keys off `category == "infrastructure"`, and no `metadata.yaml` sets it (traefik is `network`, authentik is `security`), so `GET /api/apps` still lists both system apps. The dashboard hides them with its own filter, so the user-visible half of the invariant-5 contradiction is gone and the server-side half is not: the API contract is enforced by the client that happens to ship with it. The fix is to read `App.IsSystem`, which both system apps already declare. **Half closed 2026-10-15** | P2 | `catalog/cache.go` `SystemCategories`/`IsSystemApp`/`GetUserApps`; `web/src/lib/clients/catalog.ts` `fetchCatalog`; `apps/traefik/metadata.yaml` |
 | 15 | ~~Sharing module and system module are wired with `nil` (tailnet node, graph, orchestrator) → `POST /api/sharing/invites` always 503~~ **CLOSED 2026-10-05 by removal**: the sharing subsystem never worked end to end and was deleted from the product rather than repaired. The design notes are archived in `docs/plans/archive/` | P2→closed | `internal/sharing/` (deleted) |
-| 16 | `ClearAppDataIntent` is dropped by the drain switch (logged "unhandled"), and `appsModule.ClearData` is unreachable **and** targets `<appsDir>/<name>` (the catalog dir) instead of the data dir: a latent destroyer of `apps/<name>/` | P2 | `intent.go:132-142`; `pipeline.go:31-49`; `apps_module.go:209-245` |
-| 17 | `sso.DeriveSecret` still contains a literal fallback secret; unreachable behind current guards, so invariant 8 now survives only by caller discipline | P2 | `sso/blueprint.go:293-297` |
+| 16 | `ClearAppDataIntent` is a dead intent: nothing submits it, and the drain switch still has no arm for it, so a submitter would get a `WARN` and no effect. The destructive half of this entry is **closed**: `appsModule.ClearData` now removes `dirs.AppDataDir(dataDir, name)` (the writable tree under `BLOUD_DATA_DIR`), never `<appsDir>/<name>`, so it cannot delete a catalog directory. What is left is a dead type plus an intent the queue can carry and the engine cannot honour: delete the intent, or give it an arm | P3 (was P2) | `intent.go` `ClearAppDataIntent`; `pipeline.go` `applyIntents` default arm; `apps_module.go` `ClearData`; `internal/dirs` |
+| 17 | `sso.DeriveSecret` still contains a literal fallback secret (`return context + "-fallback-secret"` when the master secret is empty); unreachable behind current guards, so invariant 8 now survives only by caller discipline | P2 | `internal/sso/blueprint.go` `DeriveSecret` |
 | 18 | Generated Traefik YAML is hand-assembled with app names unquoted and never parsed before the write; no strict YAML decode or metadata validation at load (port, image pin, container name, SSO strategy) | P2 | `traefikgen/generator.go:44-60,216-224`; `catalog/loader.go:110-130` |
-| 19 | `PlanInstall` never sets `CanInstall=false`/`Blockers`, so the consumer's blocker guard is unreachable; `review-2026-09-17.md` §H3 remains open | P2 | `pipeline.go:76-80` |
-| 20 | `primaryContainerNode` = the **last** container def: an order-dependent, undocumented convention that decides inter-app edges and which node owns SSO provisioning | P2 | `pipeline.go:730-737` |
-| 21 | `IconHandler` rejects `/` and `\` but not `..`, and never re-checks the joined path | P2 | `apps_module.go:262-276` |
-| 22 | App networks and orphaned containers are never removed or swept; `ListContainers` is test-only | P2 | no `RemoveNetwork` in tree |
-| 23 | Health checks never reach Podman; the emulated loop reads `retries` as total attempts | P2 | `internal/container/runtime.go`; orchestrator health path |
+| 19 | `PlanInstall` never sets `CanInstall=false`/`Blockers`, so the consumer's blocker guard is unreachable; `docs/reviews/2026-09-17.md` §H3 remains open | P2 | `pipeline.go:76-80` |
+| 20 | `primaryContainerNode` = the **last** container def: an order-dependent convention that decides inter-app edges and which node owns SSO provisioning. It is now written down in one app's metadata (`apps/radicale/metadata.yaml`: "the last container in this list is the app's primary node") and nowhere in the code, so it is documented by example rather than by contract. The consequence is live: Authentik's last def is the LDAP outpost, so every inter-app edge on `authentik` resolves to that node | P2 | `orchestrator/graph_build.go` `primaryContainerNode`; `apps/radicale/metadata.yaml` |
+| 21 | `IconHandler` rejects `/` and `\` but not `..`, and never re-checks the joined path | P2 | `api/apps_module.go` `IconHandler` |
+| 22 | App networks are never removed, and a container orphaned by a crash mid-uninstall is never swept. **Partly closed 2026-10-15**: `container.Runtime.ListContainers` now has production callers (`orchestrator/catalog_update.go` `reconcileCatalogUpdates`, which prunes a labeled container the catalog no longer declares and that once had a graph node, and `pruneContainer`), and the dev fast gate reads the podman client's list. What remains: there is still no `RemoveNetwork` anywhere in the `Runtime` interface, so a network Bloud created for a removed app outlives it, and nothing sweeps a labeled container whose app row is gone rather than whose definition changed | P2 | no `RemoveNetwork` in `internal/container` `Runtime`; `orchestrator/catalog_update.go` `reconcileCatalogUpdates`/`pruneContainer` |
+| 23 | ~~Health checks never reach Podman~~ **CLOSED 2026-10-15**: `runContainerHealthCheck` runs the declared test inside the container through `Runtime.Exec`, with the Docker-style `CMD`/`CMD-SHELL` forms translated, an interval, a per-attempt timeout, and a context deadline. The first probe is immediate (the sleep is guarded by `attempt > 0`), so the window is `(retries-1) x interval`. One residual stays open: the loop reads `retries` as *total* attempts, so a check declared `retries: 3` gets 3 tries where the OCI reading is 1 plus 3 retries. That is one attempt short of what the app author declared, and it is silent | P3 (was P2) | `orchestrator/container_health.go` `runContainerHealthCheck`, `convertHealthCheckTest`; `orchestrator/execution.go` HealthCheck phase |
 | 24 | `appsModule.GetCatalog` mutates cached catalog entries: it writes `app.EstimatedSizeMB` on the `*catalog.App` structs `GetUserApps` returns, which are the same pointers the cache map holds. PR 6's RWMutex guards the map, not the pointed-to structs, so concurrent `GET /api/apps` requests race on that field (and the catalog is no longer purely disk-driven) | P2 | `catalog/cache.go` `GetAll`; `api/apps_module.go` `GetCatalog` |
 | 25 | ~~Nothing re-runs convergence unless an intent is submitted, so an app that lands in `error` stays there indefinitely and the item 8 repair only fires when some other trigger happens to run a pass. `retryable: true` on the operation row was descriptive metadata with no driver: the row promised a retry was expected to help and no retry ever came~~ **CLOSED 2026-09-30**: a `ReconcileIntent` on an idle-based timer (~60s, `BLOUD_RECONCILE_INTERVAL`) submits through the same single-writer queue, and the pass it runs resets `ERROR` nodes whose operation row is retryable. The pass is proven free over a healthy stack: zero container creates, zero config writes, zero node transitions, and no Traefik file rewrite | P1→closed | `orchestrator/selfheal.go`; `orchestrator/selfheal_test.go`; `traefikgen/generator.go` `GenerateAll` |
 
 **Design/complexity debt from the 2026-10-03 APoSD review**
-([`docs/specs/review-2026-10-03-aposd.md`](../specs/review-2026-10-03-aposd.md)).
+([`docs/reviews/2026-10-03-aposd.md`](../reviews/2026-10-03-aposd.md)).
 These are complexity findings (change amplification, obscurity, wide/shallow
 interfaces), not runtime bugs; severity is the review's. They are design debt,
 so "risk×cheapness" here means "how much do they slow the next change".
@@ -287,16 +85,16 @@ so "risk×cheapness" here means "how much do they slow the next change".
 | # | Item | Sev | Evidence |
 |---|---|---|---|
 | 26 | ~~Two catalog models of the same `metadata.yaml`: `App` (`models.go`) and `AppDefinition` (`types.go`), loaded by two near-identical walkers (`LoadAll` → `map[string]*App`, `LoadGraph` → `[]*AppDefinition`). The planner reads one graph, the reconciler the other, so they can disagree by construction, and a new top-level metadata field must be added to both structs, both yaml tags, and both loaders~~ **FIXED 2026-10-04**: `AppGraph` now operates on `*App` (via `CatalogID`), `LoadGraph` is a thin wrapper over `LoadAll`, and `AppDefinition`/`loadAppDefinition` are deleted; `TestLoadGraphAndLoadAllAgree` pins the one-model invariant (#206) | P2→closed | `catalog/graph.go`; `catalog/loader.go`; `catalog/types.go` |
-| 27 | `OrchestratorConfig` is 29 fields and `wire.Input` is 25, hand-copied field-by-field in `buildOrchestratorConfig`. `wire.Output.Config` exists only so a completeness test can assert every field was wired: the test is a symptom that the surface is too wide to wire by eye, and a forgotten field is a runtime nil-deref. Group into subsystem structs (SSO, stores…) so `wire.Input` composes them and the nil-disables decision moves into each subsystem's zero value | P2 | `orchestrator/orchestrator.go` `OrchestratorConfig`; `wire/wire.go` `Input`/`buildOrchestratorConfig`/`Output.Config`; `wire/completeness_test.go` |
+| 27 | ~~`OrchestratorConfig` is 29 fields~~ **half closed**: `OrchestratorConfig` is now six subsystem structs (`Tuning`, `Runtime`, `Stores`, `SSO`, `Hosts`, plus the planner), so `nil` disables a subsystem through its own zero value and no caller hand-copies 29 fields. `wire.Input` is still 24 flat fields copied one by one in `buildOrchestratorConfig`, and `wire.Output.Config` still exists only so the completeness test can assert every field was wired. The remaining move is the same one the closed half made: compose the subsystem structs in `wire.Input` instead of flattening them again | P2 | `orchestrator/subsystems.go`; `orchestrator/orchestrator.go` `OrchestratorConfig`; `wire/wire.go` `Input`/`buildOrchestratorConfig`; `wire/completeness_test.go` |
 | 28 | ~~The sealed `Intent` set is enumerated in two parallel switches: `applyIntents` (the drain) and `intentTypeName` (logging). Adding a twelfth intent forgotten in one of the two compiles clean and fails only at runtime~~ **FIXED 2026-10-04**: `intentTypeName` is derived from the concrete type (`strings.TrimSuffix(reflect.TypeOf(...).Name(), "Intent")`), so the set is enumerated once; `TestIntentTypeName_AllTypes` pins every name (#204) | P3→closed | `orchestrator/pipeline.go` `intentTypeName` |
-| 29 | ~~`AppStore`'s 20-column `SELECT … LEFT JOIN operations` appears verbatim in `GetAll` and `GetByCatalogID`, and `scanApp`/`scanAppRow` are near-identical ~55-line copies of the same `Scan` order and post-processing~~ **FIXED 2026-10-04**: `scanAppColumns(scan func(...any) error)` holds the Scan order and post-processing once; `TestAppStore_ScanPathsAgree` pins `GetAll`/`GetByCatalogID` agreement (#205) | P3→closed | `store/apps.go` `scanAppColumns` |
+| 29 | ~~`AppStore`'s 20-column `SELECT … LEFT JOIN operations` appears verbatim in `GetAll` and `GetByCatalogID`, and `scanApp`/`scanAppRow` are near-identical ~55-line copies of the same `Scan` order and post-processing~~ **FIXED 2026-10-04**: `scanAppColumns(scan func(...any) error)` holds the Scan order and post-processing once; `TestAppStore_ScanPathsAgree` pins `GetAll`/`GetByCatalogID` agreement (#205). Residual (2026-10-15): the column `SELECT` list is still written twice, once per read path, and the old `LEFT JOIN operations` became `attachOperations` | P3→closed, with residual | `store/apps.go` `scanAppColumns` |
 | 30 | ~~The invariant "a running app is never downgraded to `installing`" is enforced by two orchestrator callers, each with its own guard and comment, because `AppStore.Install` unconditionally sets `status='installing'` on conflict~~ **FIXED 2026-10-04**: `Install` preserves the running status via a `CASE` in the `ON CONFLICT`; `TestAppStore_Install_RunningAppNotDowngraded` pins it at the store (#205) | P2→closed | `store/apps.go` `Install` |
-| 31 | `AppStoreInterface` is a 15-method single interface consumed by the orchestrator and the API layer, which use different subsets; method names leak table columns rather than caller intent. **DEFERRED 2026-10-04**: the interface is consumed by 7+ modules (orchestrator + apps/home/system/settings) with overlapping subsets, so a clean two-role split does not emerge; forcing one adds churn without a consumer benefit. Revisit only if it grows | P3 | `store/interfaces.go` `AppStoreInterface` |
+| 31 | `AppStoreInterface` is a 14-method single interface consumed by the orchestrator and the API layer, which use different subsets; method names leak table columns rather than caller intent. **DEFERRED 2026-10-04**: the interface is consumed by 7+ modules (orchestrator + apps/home/system/settings) with overlapping subsets, so a clean two-role split does not emerge; forcing one adds churn without a consumer benefit. Revisit only if it grows | P3 | `store/interfaces.go` `AppStoreInterface` |
 | 32 | ~~Store statuses/phases are bare strings compared to literals throughout, while the graph layer already has a typed status; a typo in a status literal is a silent non-convergence~~ **FIXED 2026-10-04**: `apps.status` is now `store.AppStatus` with a closed set of five values (`store/status.go`); `TestAppStatusClosedSet` pins the set. Operation type/phase/status were already typed constants (#203) | P2→closed | `store/status.go`; `store/apps.go` `InstalledApp.Status`; `store/apps.go` `UpdateStatus` |
 | 33 | ~~`appclient.Call` is one struct carrying three modes: plain request, declared-idempotency request, and readiness wait: with fields inert in the modes they do not serve (`ready`/`interval`/`stable`/`tolerateFailures`/`Within`) and invariants spanning modes (`retriesAllowed` reasons over `ready`/`noRetry`/`declaredContract`/verb at once)~~ **FIXED 2026-10-06**: wait mode is a `Wait` builder over a plain `Call` (`GET(p).Wait(pred).Interval(2s).Within(4m).Do(ctx)`). `Call` carries no wait-only field; the predicate is a required argument of `Call.Wait`, so the "wait with no predicate" runtime error is now a compile error. The idempotency contract (`OK`/`AlreadyDone`/`Ensure`) stays on `Call`, since both the plain and the wait path use it | P3→closed | `pkg/appclient/waits.go` |
 | 34 | ~~The operation recorder keys its row on the owning app (`ownerApp(id)`), one row per app, while `processLevel` dispatches nodes concurrently: so N nodes of a multi-container app contend on one `UPDATE … WHERE app_name=?`. Item 5's `busy_timeout` fix made writes wait instead of fail, but the unit-of-work mismatch and the arbitrary-survivor ambiguity remain. Key per node and aggregate to the app at read time~~ **FIXED 2026-10-15** (#202): `operations` is keyed `(app_name, node)` (migration 13), so each concurrent node writes its own row. `OperationStore.Get` is a documented projection over those rows, not a surviving write: failed beats running beats complete, then most recently updated, then the lower node name. `TestOperationStore_ConcurrentNodesOfOneAppDoNotContend` pins the concurrency claim and `TestAppStore_OperationAggregatesNodeRows` pins the read side | P2→closed | `store/operations.go`; `schema/migrations.go` `keyOperationsByNode`; `orchestrator/operation_recorder.go` |
-| 35 | The provider set still has one copy outside the shared helper: `cli/depgraph_edges.go` `drawnProviders` re-implements it for the README generator, because `cli` is a separate Go module that deliberately parses `metadata.yaml` itself and does not import host-agent. Inside host-agent the rule is now one function (`catalog.DeclaredProviders`, added for #233), read by the resolver, `computeAppDeps`, and the developer graph, with the defunct choice machinery deleted rather than patched. The CLI copy agrees today and is tested, but it is not the same code, so the #227 and #233 divergence can still happen in one and not the other. Repaying it means either giving `cli` a shared catalog module or generating the README from a host-agent-produced `--json` snapshot instead of a second parser | P3 | `catalog/resolution.go`; `cli/depgraph_edges.go` |
-| 36 | **A restarted system app is promoted to `RUNNING` before it can serve.** The Authentik LDAP outpost publishes its port before it can answer a user bind, and the graph promotes its dependents on the container being up rather than on the service answering. Radicale is the victim: its `ldap` backend raises on the failed bind and the server turns that into a 500, so a correct credential reads as a broken app. `waitLDAPReady` papers the gap for tests that call it, but the readiness contract itself is still "port open", and the same window is live for every consumer of a restarted system app in the product path, not just in CI. Repaying it means making readiness a real service probe (a bind that returns the base DN, an HTTP request that returns the expected payload) rather than a container-state read, so no dependent can be promoted into a cold provider | P1 | `orchestrator/levels.go` promotion on `HealthCheck`; `apps/authentik` LDAP outpost readiness; `apps/radicale/configurator.go` `PostStart` (already classifies 500/502/503 as a provider outage rather than an app fault) |
+| 35 | The provider set still has one copy outside the shared helper: `cli/depgraph_edges.go` `drawnProviders` re-implements it for the README generator, because `cli` is a separate Go module that deliberately parses `metadata.yaml` itself and does not import host-agent. Inside host-agent the rule is now one function (`catalog.DeclaredProviders`, added for #233), read by the resolver, `computeAppDeps`, and the developer graph, with the defunct choice machinery deleted rather than patched. The CLI copy agrees today and is tested, but it is not the same code, so the #227 and #233 divergence can still happen in one and not the other. They also do not implement the same rule: the CLI draws only the default provider for a non-`multi` contract, while `DeclaredProviders` returns the whole declared set, so the two agree only while no app declares a non-`multi` contract with more than one compatible provider. **Re-verified 2026-10-15**, with that condition still true and still unchecked. Repaying it means either giving `cli` a shared catalog module or generating the README from a host-agent-produced `--json` snapshot instead of a second parser | P3 | `orchestrator/graph_build.go` `computeAppDeps`; `catalog/resolution.go`; `cli/depgraph_edges.go` |
+| 36 | **A restarted system app can be promoted to `RUNNING` before it can serve.** The Authentik LDAP outpost publishes its port before it can answer a user bind, and the graph promotes its dependents once the declared health check passes. That check is an in-container TCP probe on the LDAP port (`apps/authentik/metadata.yaml`), so promotion means "the socket accepts", not "the service answers". Radicale is the victim: its `ldap` backend raises on the failed bind and the server turns that into a 500, so a correct credential reads as a broken app inside that window. **Partly closed, and re-scoped 2026-10-15**: promotion is gated by the declared probe rather than a container-state read, which is the fix this entry asked for, so what remains is the narrower socket-accepts-versus-service-answers gap, live for every consumer of a restarted system app, not only in CI. Repaying the rest means a real service probe: a bind that returns the base DN, or an HTTP request that returns the expected payload | P2 (was P1) | `orchestrator/execution.go` `runContainerHealthCheck`; `apps/authentik/metadata.yaml` `apps-authentik-ldap` healthCheck; `apps/radicale/configurator.go` `PostStart` (already classifies 500/502/503 as a provider outage rather than an app fault) |
 
 ## Configurator-layer conformance debt (2026-09-20)
 
@@ -315,27 +113,27 @@ C15. Still open: C9. See "Closed 2026-09-25" below.
 
 ### The surface
 
-Thirteen user apps plus the system apps. Every row is covered by the
-conformance harness (`apps/conformance_test.go`), which enumerates the
-registry rather than this table, so the table cannot hide an app.
+Twenty-two user apps and two system apps, and the number moves every time an app
+lands. This section does not list them. `apps/*/metadata.yaml` is the only place
+an app is written down, the conformance harness (`apps/conformance_test.go`)
+enumerates the registry rather than a copy of it, and the README's
+[one login](../../README.md#one-login) table is generated from the same metadata
+by `./bloud catalogdoc`. A hand-copied table here could only be a stale
+photograph, and it was one.
 
-| App | Graph node | SSO strategy | Implementation |
-|---|---|---|---|
-| jellyfin | `apps-jellyfin` | ldap | `apps/jellyfin/` |
-| navidrome | `apps-navidrome` | forward-auth | `apps/navidrome/` |
-| immich | `apps-immich-server` | native-oidc | `apps/immich/` |
-| affine | `apps-affine` | native-oidc | `apps/affine/` |
-| paperless-ngx | `apps-paperless-ngx` | native-oidc | `apps/paperless-ngx/` |
-| homeassistant | `apps-homeassistant` | native-oidc | `apps/homeassistant/` |
-| hermes | `apps-hermes` | native-oidc (loopback issuer) | `apps/hermes/` |
-| vaultwarden | `apps-vaultwarden` | native-oidc | `apps/vaultwarden/` |
-| sonarr | `apps-sonarr` | forward-auth | `apps/sonarr/` (thin over `pkg/servarr`) |
-| radarr | `apps-radarr` | forward-auth | `apps/radarr/` (thin over `pkg/servarr`) |
-| prowlarr | `apps-prowlarr` | forward-auth | `apps/prowlarr/` |
-| qbittorrent | `apps-qbittorrent` | forward-auth | `apps/qbittorrent/` |
-| seerr | `apps-seerr` | forward-auth | `apps/seerr/` |
-| authentik | `apps-authentik-server` | system | `apps/authentik/` + `internal/appconfig/register.go` |
-| traefik | `apps-traefik` | system | `internal/appconfig/traefik.go`; `apps/traefik/` is metadata only |
+What is stable enough to record is the shape:
+
+- Every app implements `NodeLifecycle` for one graph node, including every
+  headless app. Headless means only that the dashboard grid leaves the app out,
+  because it has no page to open: the app is still installed, reconciled, and
+  routed. The MCP wrappers are the headless set today.
+- SSO strategy is one of the four values in invariant 6, and the generated README
+  table groups the apps by it. `none` is not an empty group: it holds the apps
+  that cannot delegate authentication, and the wrapper endpoints Bloud guards with
+  a token it mints.
+- Two apps are system apps (`isSystem: true`): Traefik and Authentik. Traefik has
+  no configurator of its own; `internal/appconfig` builds its config and
+  `apps/traefik/` is metadata plus an icon.
 
 ### Conventions the surface follows
 
@@ -380,7 +178,7 @@ registry rather than this table, so the table cannot hide an app.
 | C6 | ~~The `changed` return conflates "a mounted file changed" with "recreate the container".~~ **FIXED 2026-09-25**: `PreStart` returns `PreStartResult{RestartNeeded, Reason}`. The field is named for the orchestrator's side effect, so a self-heal signal and a config diff can no longer be mistaken for each other, and every recreate is traceable to the reason that caused it. Deliberately no `ConfigWritten` field: writing a file is not what the orchestrator acts on. | P3→closed | `services/host-agent/pkg/configurator/interface.go`; `orchestrator.go` |
 | C7 | ~~Bootstrap-account logic is copy-pasted with divergent names and failure semantics.~~ **FIXED 2026-09-25**: `pkg/bootstrap` owns the login-fast-path / create / verify sequence and one policy: an unverifiable admin is a reported condition (`Outcome`), never a terminal error, because SSO users do not depend on the internal account. Navidrome, Immich and Paperless-ngx map their APIs onto two callbacks and carry no policy of their own. The account names stay as shipped: renaming would orphan the credential in every existing install. | P3→closed | `services/host-agent/pkg/bootstrap/bootstrap.go`; `apps/navidrome/configurator.go`; `apps/immich/configurator.go`; `apps/paperless-ngx/configurator.go` |
 | C8 | ~~Transient-versus-terminal `PostStart` error handling inconsistent and undocumented~~ **FIXED 2026-09-20**: the contract is stated on `NodeLifecycle.PostStart` (an error is terminal; resolve transients inside). jellyfin's initial-user wait is now best-effort instead of returning a transient error, and affine's unreachable `return ""` is a real error return. | P2→closed | `services/host-agent/pkg/configurator/interface.go`; `apps/jellyfin/api.go`; `apps/affine/configurator.go` |
-| C9 | Test coverage is uneven for the same contract: none for authentik or traefik; immich is 1.7 KB against jellyfin's 35 KB and Home Assistant's 31 KB. | P3 | app package listings |
+| C9 | Test depth is uneven for the same contract. The "none for authentik or traefik" half is **closed**: the Authentik server configurator has 12 KB of tests and Traefik's config builder has 11 KB in `internal/appconfig`. The gap that remains is between the apps with a large API surface and the ones without one: Hermes (64 KB), AFFiNE (62 KB), Home Assistant (50 KB), Jellyfin (36 KB), and Paperless-ngx (29 KB) against Immich (3.9 KB) and Navidrome (2.1 KB). The conformance harness covers the floor for every app; it does not exercise an app's own API, so an app whose API is thin needs fewer tests by design | P3 | app package listings |
 | C10 | ~~Cross-file constants are enforced only by comment: the constructor's port default must equal `metadata.yaml`'s `port`, and nothing pinned any of them.~~ **FIXED 2026-09-25**: the conformance harness reads each `metadata.yaml` and asserts the configurator's default port matches, alongside name, idempotency, offline-`PreStart`, empty-`Deps` and honest-teardown checks. It caught two wrong port guesses (Hermes 9119, qBittorrent 8081) and one live version bug on its first run. | P3→closed | `apps/configtest/configtest.go`; `apps/conformance_test.go` |
 | C11 | ~~Registration style drifts: Home Assistant registers `NewConfigurator(8123, deps)` while every other app passes `0`.~~ **FIXED 2026-09-25**: every app declares one `nodeName` constant used by both `Name()` and `registration.go`, passes `0` for the port, and keeps its default as a named constant the harness checks against metadata. | P3→closed | `apps/*/registration.go`; `apps/configtest/configtest.go` |
 | C12 | ~~Cross-app coupling through a file path: navidrome's user sync reads `<dataDir>/authentik/api-token`, written by authentik's server configurator, and the two agree only because `ownerApp("apps-authentik-server")` is `authentik`.~~ **FIXED 2026-09-21**: authentik declares `provides.sso.secrets: [apiToken]` and publishes the token through `SetAppSecret`; navidrome reads it from its `sso` integration binding, so no app path name crosses a boundary. The same change removed the Servarr sibling reads (`pkg/servarr.SiblingConfigPath`, deleted) and the consumer-side provider port constants. See invariant 15. | P3→closed | `apps/navidrome/configurator.go` (`authentikToken`); `apps/authentik/server_configurator.go`; `services/host-agent/pkg/configurator/interface.go` |
@@ -478,264 +276,63 @@ and the orchestrator case proving a configurator with no `Remover` still has
 its node deleted on removal. Verified with `go test ./...` in all three Go
 modules, `npm run lint:go` (0 issues) and gofmt.
 
-## Corrections to earlier "Already Paid" entries (2026-09-19)
+## Recently paid
 
-Two claims in the history below do not hold up against the code:
+The newest repayment, and the one the 2026-10-12 review is graded against.
+Every earlier closing, with its reasoning and its measurements, is in
+[`archive/tech-debt-history.md`](archive/tech-debt-history.md).
 
-- **"Persist only externally issued artifacts"**: the direction is right, but
-  the claim that integration credentials are *not* stored is already violated:
-  `sso/blueprint.go:284-287` persists the HKDF-derived OAuth client secret via
-  `secrets.SetAppSecret(app, "oauthClientSecret", …)`, and the field's own
-  comment in `secrets/manager.go:52-53` says "derived from SSOHostSecret".
-  Nothing reads it back, so today it is dead persisted state, not a split brain.
-  Delete the write, or make the derivation authoritative and drop the field.
-- **"Versioned migrations + the `user_app_positions` schema fork"**: the ledger
-  itself is correct and worth keeping, but entry 6 cannot fire: the grid table
-  shape already existed before the ledger ran, so the "fork fix" is a permanent
-  no-op. The migration path is still an improvement; the described bug fix is
-  not evidence of one.
+### The app-SDK became a module (2026-10-14, the 2026-10-12 review's findings 3.1-3.6)
 
-## Already Paid
+The goal the 2026-10-12 review measured everything against: *adding an app, and
+updating an app later, should be a change scoped to `apps/<name>/`*. Four changes
+closed the structural half of that finding list.
 
-### The instance converges on its own (2026-09-30, item 25)
+- **`Deps` is grouped, not flat** (#335). The eleven-field bag is four leaf fields
+  plus three subsystem values, so an app author reads the four they can use and
+  the rest is namespaced. This is the same move ledger item 27 asked the
+  orchestrator config to make, and `pkg/configurator/deps.go` is now smaller than
+  the `interface.go` it came out of.
+- **One `Secret` type states the unpublished-credential rule once** (#333). The
+  rule "a credential field is empty until the provider publishes it" was prose,
+  repeated per binding type. It is now a type, so a configurator cannot read an
+  unpublished credential by forgetting a comment.
+- **Contract binders are a table with a completeness test** (#325). `bindContract`
+  was an eleven-arm string switch whose `default:` arm only logged. Now
+  `contractBinders` maps a contract name to its binder, and
+  `contract_binders_test.go` fails a binder that names no declared contract and a
+  payload-bearing contract with no binder. The one contract outside the table,
+  `inference`, is an allowlist entry with its reason, and an allowlist entry that
+  guards nothing is itself a failure. A forgotten binding is a build failure
+  instead of a consumer that silently receives nothing.
+- **The SDK is a module** (#341). Everything under `services/host-agent/pkg/` moved
+  to a top-level `pkg/` module (`codeberg.org/d-buckner/bloud/pkg`), and
+  `apps/go.mod` now requires that instead of the runtime, with `replace => ../pkg`.
+  The author contract and the contract vocabulary are separate packages
+  (`pkg/configurator`, `pkg/bindings`), and `Deps.HTTP`/`Deps.Assets` are inverted
+  so the SDK does not reach into the host. `pkg/configurator/interface.go` went
+  from 576 lines to 249. Invariant 14 is what made this cheap: the shared packages
+  never imported host internals, so the move was a move rather than a surgery.
 
-The invariant this closes: **reality is made to match intent without a
-human in the loop.** Item 8 put the repair machinery in place, but it sat
-behind a trigger that only user actions pulled. A container that died
-overnight stayed dead, and an app that landed in `error` stayed there with
-`retryable: true` on its operation row, which was a promise nothing kept.
+Two facts about the result are worth keeping, because both were the argument
+against doing it. The move is nine packages, not the seven the review listed:
+`apps/` also imported `authentik` and `bootstrap`, and leaving either behind keeps
+a `require` on the runtime module. And the `bindings` split is roughly 40 files of
+mechanical churn, which is why it came last and not first: the plan that ordered
+it measured the call sites before it scheduled the move.
 
-- **The trigger is an intent, not a second driver** (`selfheal.go`).
-  `startSelfHealing` submits a `ReconcileIntent` into the same queue every
-  other trigger uses. A second goroutine calling `converge` directly would
-  have been a second writer into the engine, which is the one thing
-  invariant 1 forbids.
-- **The timer is idle-based, not a ticker.** Every completed pass pings the
-  loop and pushes the next one out a full interval, so the interval is a
-  floor on the gap between passes. A ticker would have stacked a pass
-  100ms behind a user install that happened to land at t+59.9s, and a
-  pass that outlives the interval would have turned the loop into a tight
-  submit cycle.
-- **`retryable` gets its driver.** `retryErroredNodes` resets an `ERROR`
-  node whose owning app's operation row is failed-and-retryable, which is
-  the case with no other answer: the settings-change path deliberately
-  does not force a failing app, so without this the change would never
-  reach it. `ERROR` stays terminal for every other trigger, and a failure
-  marked non-retryable is left alone, so the pass cannot hammer a cause no
-  retry can fix.
-- **A no-op pass is proven free, not assumed free.** The issue called this
-  the deliverable rather than an afterthought, and it is the reason the
-  feature is safe at all: a once-a-minute pass that restarted something
-  would replace a rare bug with a 60-second reboot cycle.
-  `TestSelfHeal_IdlePassChangesNothing` converges a healthy stack twice and
-  asserts zero container creates, zero removals, zero node status writes,
-  and zero configurator `PreStart`/`PostStart` calls.
-- **The route file was the one thing that was not idempotent.**
-  `GenerateAll` wrote atomically on every pass regardless of content, so
-  Traefik reloaded the whole dynamic config once a minute forever. It now
-  compares the rendered bytes to what is on disk and skips the write when
-  they match.
+*Still open from that review.* Three things, and the review named each of them as
+the expensive half:
 
-Tunable with `BLOUD_RECONCILE_INTERVAL` (Go duration syntax; `off`
-disables). The default is `DefaultSelfHealInterval`, 60s, applied by
-`wire.Build` so a hand-built orchestrator in a unit test stays quiet unless
-it asks for a timer.
-
-### Reality matches intent for container drift and image pulls (2026-09-27, items 8-9)
-
-The invariant this closes: **a graph node must never claim `RUNNING` while
-its container is not running.** `collectWorkForLevel` drives all work off
-exactly one comparison, `TargetStatus != ActualStatus`, so any observation
-that contradicts a node's actual status has to be written into the node.
-Writing it into the store instead produces a system that knows something is
-wrong and can act on none of it.
-
-- **Drift is repaired, not just recorded** (`orchestrator_containers.go`).
-  `repairDriftedNode` resets a `RUNNING` node whose container is not
-  running to `INITIALIZING` with a reason, so the same convergence pass
-  re-dispatches the full lifecycle. Safety rests on invariant 2:
-  configurators are idempotent, so a re-drive is the normal case, not a
-  special one. `ERROR` is terminal and is deliberately not retried, and an
-  intermediate status means a drive is already in flight, so neither is a
-  drift candidate.
-- **Multi-container apps are covered.** The `len(defs) != 1` skip was
-  justified by a comment claiming their lifecycle was "tracked via graph
-  events, not this path". That division of labor did not exist, and the
-  skip excluded exactly the apps with sidecars (postgres, redis, ML) where
-  one dead container takes the app down. Each def is now inspected and each
-  node repaired independently; app-level status still aggregates through
-  the existing `allContainersRunning`.
-- **Uninstalling apps are excluded before any repair can fire**, so drift
-  detection cannot resurrect an app the user is removing, and an
-  uninspectable container is omitted rather than assumed gone, so a
-  transient runtime error cannot reset healthy nodes.
-- **`Ensure` pulls before it destroys** (`internal/container/runtime.go`).
-  The order is `guard → pull → remove → create → start`. A registry
-  outage, rate limit, or digest mismatch now fails while the previous
-  container is still running, instead of after it has been removed with
-  `force=true` and with no rollback.
-- **One ownership guard.** The `io.bloud.managed` check is extracted to
-  `isManaged` and called by both destructive paths. Previously `Remove`
-  enforced it and `Ensure` bypassed it, so the guard lived only where it
-  was not needed and a name collision outside Bloud was destroyed without
-  a look.
-
-Contract tests: drift on a single-container node, drift on one node of a
-multi-container app with the healthy node left untouched, `ERROR` not
-retried, uninstalling not re-driven, no reset when the container is
-genuinely running (so the repair cannot become a per-pass recreate loop),
-pull failure leaves the running container present and unremoved, unmanaged
-container refused on the recreate path, and the exact call sequence
-`pull, remove, create, start`.
-
-`TestSyncContainerState_MultiContainerSkipped` was deleted rather than
-adapted: it asserted the wrong contract, so preserving it in any form would
-have preserved the bug as a requirement.
-
-Plan: [`specs/REFACTOR_LATEST.md`](../../specs/REFACTOR_LATEST.md).
-
-*Still open from this area:* the live end-to-end check (`./bloud e2e
-lifecycle`, plus manually `podman rm -f apps-jellyfin` against a running
-host-agent and watching the next pass recreate it) has not been run; and
-item 10's visibility half remains, since a repaired drift is silent by
-design and an unavailable Podman socket still has no degraded signal.
-
-### The engine's silent failures closed (2026-09-20, PR 6)
-
-The three crash/hang members of the silent-failure class, each with its
-contract test:
-
-- **Catalog nil-deref** (`orchestrator_containers.go`): err/nil checked
-  before the deref; a catalog miss skips the app with a `WARN` instead of
-  panicking the daemon on the next convergence pass. Tests pin the skip
-  (no runtime call, status untouched) and the single-container repair path.
-- **`MemoryCache` race** (`internal/catalog/cache.go`): `sync.RWMutex`
-  guards every read/write; `Refresh` builds off-lock, swaps once. New
-  concurrent `Refresh` × readers test under `-race`;
-  `validation.yaml`'s `go-host-agent-race` tier now runs
-  `./internal/engine/orchestrator/... ./internal/catalog/...` (the
-  2026-09-19 validation-bar ask: the old selection could not see this).
-- **Intent queue stale-token exit** (`queue.go`, `orchestrator.go`):
-  `WaitAndDrain` returns `([]Intent, bool)`; `live=false` only on
-  context cancellation, queued intents are returned even then. `Start`
-  treats an empty live batch as nothing-to-do. Tests: the deterministic
-  stale-token reproduction, loop-survives-tokens, and
-  `TestStart_ExposesLoopLivenessAndConvergenceStamp`.
-
-Plus the liveness substrate PR 11 needed: `Orchestrator.Stopped()`,
-`Orchestrator.LastConverged()`, both surfaced in `OrchestratorStatus`
-(`LoopStopped`, `LastConverged`), and `Server.CheckSystemHealth()` fails
-when the loop has exited.
-
-### SQLite pragmas travel in the DSN (2026-09-20, PR 7)
-
-`db.InitDB` no longer applies `journal_mode` / `busy_timeout` /
-`foreign_keys` with a one-off `db.Exec`: that configured exactly one
-pooled connection, leaving every other connection with cascades off and
-`busy_timeout=0` (the observed `SQLITE_BUSY` phase-loss and the silent
-orphan accumulation). The settings now ride in the SQLite DSN, which
-the modernc driver executes at every connection open (busy_timeout
-first, per the driver's own ordering requirement). `db.MemoryDSN()`
-hands the same DSN query to `internal/testdb`, so the test and
-production configurations are built from one source and cannot drift;
-testdb keeps its single-connection pinning, which is still correct for
-per-connection `:memory:` databases.
-
-Contract tests (`internal/db/pragmas_test.go`; all three fail against
-the pre-fix Exec-loop tree):
-
-- every connection in a widened pool reports `foreign_keys=1` and
-  `busy_timeout=5000` (not just the boot connection);
-- a fresh connection rejects an orphan `user_app_positions` insert and the
-  `user_preferences` DELETE actually cascades to the dependent position;
-- a write contended by a held RESERVED lock blocks in the busy handler
-  and succeeds after the commit, instead of failing instantly with
-  `SQLITE_BUSY`.
-
-The recorder keeps its log-and-return contract: with a real busy-wait
-the lost-write window narrows to >5 s lock starvation, and the
-multi-container single-row contention (nodes of one app racing one
-`operations` row) remains a design constraint, not a correctness bug:
-the surviving phase value is last-writer-wins by ledger semantics.
-
-### Route generation no longer owns runtime side effects (2026-09-17)
-
-The "Biggest Debt" of the previous version, a route config step that
-silently started gateways and mutated proxies, is closed:
-
-- `SyncRoutes()` (`internal/engine/orchestrator/orchestrator_containers.go`)
-  is pure with respect to the runtime: no gateway calls, no proxy mutation.
-  It reads the installed set from the store and hands it to the generator;
-  the config write is its only effect.
-- Contract tests (`route_sync_test.go`): the sync starts no runtime and writes
-  only the route config; an uninstall stops routing the removed app in the same
-  step that deletes its store row.
-
-*Still open from this area:* `SyncRoutes` errors are logged only, promotion to
-RUNNING is unconditional, and the generated YAML is never validated (item 18).
-
-### Durable lifecycle operation state (2026-09-17)
-
-The "Biggest Debt" of the 2026-09-16 version, no readable state behind the
-orchestrator's phases, is closed for the backend:
-
-- `store/operations.go`: one row per app, the current-or-last drive:
-  `{id, type, phase, status, retryable, cause, timestamps}`, migrated as
-  ledger version 7 (`internal/schema/migrations.go`, `schema.sql`).
-- `internal/engine/orchestrator/operation_recorder.go`: the drive path
-  reports phase boundaries. Every helper is best-effort; recorder failure
-  logs and never changes lifecycle behavior.
-- Write ordering is "last entered phase, never last completed":
-  `runFullLifecycle` records each phase *before* entering it, so a running
-  row plus a dead process is a crash trace, not a lie.
-- Startup orphan rule: `Start` flips surviving `running` rows to
-  failed/retryable ("interrupted by restart") before first convergence;
-  normal reconciliation re-drives the work. No resume cursors by design.
-- User intent outcome is preserved: failed installs keep their failure row;
-  RemoveApp never leaves a failed removal untracked; staleness re-runs heal
-  or fail the row without resurrecting completed drives.
-- Read surface: `GET` payloads embed `operation` on each installed app
-  (LEFT JOIN in `store/apps.go`); the SSE home snapshot carries it
-  unchanged. `apps.status` remains the narrowed user projection: the
-  operation row is authoritative for failure context only, so the
-  three-vocabulary overload on `apps.status` is broken.
-- Tests: `store/operations_test.go` (transition matrix),
-  `orchestrator/operation_recorder_test.go` (failure recording,
-  status-sync completion, orphan flip, steady-state no-write guard),
-  `-race` clean across levels.
-
-Design doc: `docs/plans/archive/operation-state-design.md` (landed).
-
-### Versioned migrations + the `user_app_positions` schema fork (2026-09-17)
-
-`internal/db.runMigrations` (seven `_, _ = db.Exec` calls with the version
-only in a comment) is replaced by the ordered, checked ledger in
-`internal/schema/migrations.go`: a `schema_migrations` table records each
-applied version; a failing migration aborts boot instead of half-migrating
-durable state. The fork itself, v6's dead
-`(user_id, app_id, position)` shape silently shadowing the grid schema via
-`CREATE TABLE IF NOT EXISTS`, is migrated by ledger entry 6
-(`fix: user_app_positions shape fork`). The landmine the previous version of
-this doc flagged as first-ranked is defused; every future migration inherits
-the checked path instead of the ad hoc one.
-
-*Correction 2026-09-19:* entry 6 is a permanent no-op in practice: see
-"Corrections" above. The migration ledger itself stands.
-
-### Earlier (since 2026-09-14)
-
-- Status progression moved fully into the orchestrator: zero `go func(`
-  launches in non-test `internal/api` code; `Submit()` records the immediate
-  user-visible effect, `setupStatusSync()` owns the transition mapping.
-  Invariant 1 holds in practice, not just by convention.
-- App-client (S1-S10) gave configurators a deep client layer: `appclient`
-  owns transport, retry policy, readiness polling, and asset provenance. All
-  five user apps adopted it uniformly with a typed `api.go`. No second
-  integration idiom. *(The retry-policy surface has since been found partly
-  inert; see item 6.)*
-- Hardcoded fallback secrets: `config.Load` is fallible
-  (env > `secrets.json` > error); the corrupt-file fault-downgrade is closed;
-  Jellyfin's bootstrap password moved to the secrets manager.
+- The contract vocabulary is still catalog code under `internal/`, so a genuinely
+  new contract is still a runtime edit (finding 3.3's "later" half).
+- The host plumbing (`Deps`, `AppSecretsProvider`, `Registry`) still lives in the
+  same package as the author contract, and `appclient` and `appasset` types are
+  still in every configurator's compile closure (findings 3.1 and 3.2).
+- The declarative-only path is still not what the author guide leads with
+  (finding 3.7). Every one of the 22 user apps registers a configurator, and
+  `docs/guides/contributing-apps.md` opens with "A configurator (Go code)" rather
+  than with the question of whether the reader needs one.
 
 ## Revised Repayment Plan
 
@@ -746,7 +343,7 @@ landed; PR 4 revised, PRs 6-11 added 2026-09-19).
 
 ### 1. Close the auth bypass (P0): DONE 2026-09-19
 
-Shipped as described in "Biggest Debt" above, with the router-level table test
+Shipped as described in [the history](archive/tech-debt-history.md), with the router-level table test
 and live verification. Two deviations from the original sketch: host-agent is
 **not** bound to loopback (QEMU's slirp presents forwarded connections from
 `10.0.2.2`, so a loopback-only bind breaks the qemu dev loop and the CLI/e2e API
@@ -795,7 +392,7 @@ harness refuses a declared wait that could not run inside it. `MaxWaitBudget`
 
 Pragmas moved into the DSN; the `Exec` loop deleted. Tests open the
 real `InitDB` path with 2+ connections and assert the cascade fires
-and the contended write waits. See "Already Paid" above.
+and the contended write waits. See the history file.
 
 ### 5. Make reality match intent (P1, items 8-9): DONE 2026-09-27
 
@@ -853,19 +450,38 @@ genuinely worth persisting is state we do not derive because something else
 issued it: an upstream provider's own credential, a certificate the CA
 returned, a version pin chosen at install.
 
-### 8. Honest surfaces and dead code (items 13-16, 18-23)
+### 8. Honest surfaces and dead code (items 13-16, 18-23): partly done 2026-10-15
 
-Filter system apps by `IsSystem`; delete
-`ClearAppDataIntent`, `appsModule.ClearData` and its vacuous 404 test, and
-`NewAuthRouter`; stop trusting `category` as a system marker.
+The plan said: filter system apps by `IsSystem`; delete `ClearAppDataIntent`,
+`appsModule.ClearData` and its vacuous 404 test, and `NewAuthRouter`; stop
+trusting `category` as a system marker.
+
+Closed since the plan was written: `appsModule.ClearData` is reachable and removes
+the app's data directory rather than its catalog directory (item 16's destructive
+half), health checks reach Podman (item 23), and `ListContainers` has a
+production caller (item 22's second half).
+
+What is left, cheapest first:
+
+1. `catalog.IsSystemApp` reads `App.IsSystem`, so `GetUserApps` stops returning
+   the system apps. The dashboard filter that compensates today is a client
+   enforcing a server's contract (item 14).
+2. Delete `ClearAppDataIntent`, or give the drain an arm for it (item 16).
+3. Delete `NewAuthRouter`. The production router builds its own auth routes, and
+   only tests call the exported helper.
+4. `sso.DeriveSecret`'s literal fallback (item 17), the hand-built Traefik YAML
+   with unquoted app names and no parse before the write (item 18), `PlanInstall`
+   never setting `CanInstall: false` so the consumer's blocker guard cannot fire
+   (item 19), `primaryContainerNode`'s undocumented "last def wins" convention
+   (item 20), and `IconHandler` accepting `..` (item 21).
 
 ## Non-Goals
 
 - Do not persist derived state (secrets, OIDC inputs) that can be recomputed
   from the host secret. The derivation is the source of truth.
 - Do not extend trust-by-network-position, and do not add a new
-  client-controlled input to an authorization decision. The P0 above is what
-  that path costs.
+  client-controlled input to an authorization decision. The P0 record in
+  [the history](archive/tech-debt-history.md) is what that path costs.
 - Do not let a subsystem fail silently: a component that can stop working must
   either be visible in the health surface or be impossible to stop.
 - Do not split files just to reduce line count.
@@ -896,19 +512,21 @@ any of the P0/P1 items:
   `initOrchestratorHelper`), not a hand-assembled fake wiring
 - multi-connection coverage for anything applied per-connection (SQLite pragmas)
 - `-race` widened beyond `internal/engine/orchestrator` (the catalog cache race
-  above is invisible to the current selection)
+  in [the history](archive/tech-debt-history.md) is invisible to the current
+  selection)
 
 Current baseline as of this note:
 
 ```sh
 cd services/host-agent && go test ./...   # pass
 cd apps && go test ./...                  # pass
-cd cli && go test ./...                   # red on darwin: TestResolveBackendPrecedence
+cd cli && go test ./...                   # pass
 ```
 
-The CLI failure is environment-dependent: `TestResolveBackendPrecedence`
-(`cli/preferences_test.go:92`) expects the stored `qemu` preference, but macOS
-auto-resolves to its single available backend, so it passes on the Linux CI and
-fails on the platform `AGENTS.md` calls the default dev platform. It is also
-invisible to the pre-commit hook, which omits cli tests. Do not paper over it by
-re-pinning the test; fix the expectation for single-backend hosts.
+The CLI suite used to read `red on darwin` here, on a test named
+`TestResolveBackendPrecedence`. That test is gone, and the resolution-order cases
+it left behind call `precedenceRelease` (`cli/preferences_test.go`) to pin a host
+where every backend is available. They therefore exercise the resolution order
+instead of the machine's own backend list, and the suite passes on Linux and on a
+single-backend host. It is also in the `fast` tier, so a regression cannot hide
+behind a hook that skipped `cli`.

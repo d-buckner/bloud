@@ -5,10 +5,10 @@
 own server), all consumed by Hermes. AFFiNE's own MCP server is deliberately not
 exposed.
 **Last updated:** 2026-10-14
-**Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md),
-[plans/arr-mcp-provider.md](../plans/arr-mcp-provider.md) for a provider that
+**Roadmap:** [plans/archive/mcp-integrations.md](../plans/archive/mcp-integrations.md),
+[plans/arr-mcp-provider.md](../plans/archive/arr-mcp-provider.md) for a provider that
 fills several contracts at once,
-[plans/home-assistant-mcp.md](../plans/home-assistant-mcp.md) for a provider whose
+[plans/home-assistant-mcp.md](../plans/archive/home-assistant-mcp.md) for a provider whose
 target has no bearer of its own, and
 [plans/native-mcp-endpoint.md](../plans/native-mcp-endpoint.md) for the tools a
 wrapper cannot write
@@ -68,7 +68,7 @@ provider that shows what the original shape costs and buys: see below.
 The wrapper shape costs a second container to vet and a boundary that can drift
 from the target's API. It buys the tool surface the built-in server does not
 have. Those trade-offs are recorded here rather than hidden:
-[plans/mcp-integrations.md](../plans/mcp-integrations.md) carries the decision
+[plans/archive/mcp-integrations.md](../plans/archive/mcp-integrations.md) carries the decision
 history, including the point where the built-in provider was removed.
 
 ### What the third provider changed about the shape
@@ -381,7 +381,7 @@ c.secrets.SetAppContractValue("affine", "appApi", "workspaceId", sharedWorkspace
 Nothing above says who published the credential, and that is the point of the
 contract. There is a second fill path: an operator who runs the target somewhere
 Bloud does not reach registers it as an external app
-([plans/external-apps.md](../plans/external-apps.md)), and the same fields arrive
+([plans/archive/external-apps.md](../plans/archive/external-apps.md)), and the same fields arrive
 from the registration form instead of a configurator. `BaseURL` is the endpoint
 they typed, `password` is the credential they minted on that instance, and
 `username` is the account they named, where the app has an account name to ask

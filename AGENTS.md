@@ -251,6 +251,64 @@ host-agent; Lima forwards to loopback and needs none.
 ./bloud destroy           # delete the VM
 ```
 
+## Write prose in Simplified Technical English
+
+Write prose in ASD-STE100 Simplified Technical English (STE). That covers every
+tracked document (`docs/`, `README.md`, this file), the `description` text in
+`apps/*/metadata.yaml`, the comments in source files, the commit message, and the
+pull request title and description. STE comes from the aerospace industry, which
+built it for aircraft maintenance documentation. Issue 9 (January 2025) is an
+international standard: 53 writing rules and a dictionary of about 900 approved
+words. The AeroSpace and Defence Industries Association of Europe (ASD) owns and
+maintains the specification. See [Simplified Technical
+English](https://en.wikipedia.org/wiki/Simplified_Technical_English) on Wikipedia
+for the standard and its history. The reason is not style. The reader is often
+not a native English speaker, and there is no author to ask.
+
+The rules that change the most writing:
+
+| Rule | Write this | Not this |
+|---|---|---|
+| Active voice, and name the actor | `The orchestrator writes the route file.` | `The route file is written.` |
+| Simple tenses only: present, past, future | `The check found two errors.` | `The check has found two errors.` |
+| One main point per sentence: 20 words in an instruction, 25 in a description | two short sentences | one 40-word sentence with three clauses |
+| One word per idea, with no rotation for variety | `token` in every sentence | `token`, then `credential`, then `bearer` |
+| The plainest common verb | `use`, `start`, `check`, `stop` | `utilize`, `commence`, `terminate` |
+| A verb, not a noun made from a verb | `Install the app.` | `Perform an installation of the app.` |
+| Fixed modality: `must` is required, `should` is recommended, `may` is allowed | `You must restart the service.` | `should` on something required |
+| No idiom, and no vague phrasal verb | `start the service` | `spin up the service` |
+| No marketing adjective | `It writes three files.` | `It is a robust, seamless writer.` |
+| Three words maximum in a noun cluster | `app config file` | `public URL redirect URI allowlist` |
+| Spell out an abbreviation once, then use only the short form | `Simplified Technical English (STE)`, then `STE` | an acronym nobody defined |
+| Name the members instead of `etc.` | `for example A, B, and C` | `A, B, etc.` |
+
+Four limits on that table:
+
+- STE governs prose, not code. An identifier, a command, a config key, a file
+  path, log output, or a quoted error stays verbatim. A rewrite of an exact
+  string is a lie.
+- Precision wins. If a short sentence would drop a condition, a scope qualifier,
+  or a number, keep the longer sentence and say why in the pull request.
+- The standard does not do the thinking. ASD states that STE works with other
+  specifications and style guides, not on its own.
+- Do not copy the ASD dictionary into this repository. ASD owns the copyright.
+  Link to it at [asd-ste100.org](https://asd-ste100.org/).
+
+A pull request carries the same standard. Name the area, then the change, in the
+imperative: `docs: write prose in Simplified Technical English`. In the
+description, state what changes and why, one behavior per sentence. Quote the
+exact error, command, or string a reader must see. Do not recount the process
+that got you there.
+
+The house style keeps three relaxations, and this section records them so the
+standard and the linter do not contradict each other. `.vale.ini` keeps the
+semicolon, the parenthetical aside, and the contraction, because the whole tree
+uses them. `Bloud.EmDash` is stricter than the standard: it rejects the em dash
+everywhere. The checks cover a small part of STE. Vale enforces the house rules
+(`npm run lint:prose`), and `npm run check:no-emdash` enforces the em dash ban.
+Nothing checks sentence length, tense, or word choice, so the writer carries
+those.
+
 ## Validation & testing
 `validation.yaml` is the single source of truth for what to run. `./bloud validate`
 writes a JSON ledger per run to `.bloud/validation/` (timestamped + `latest.json`,
@@ -448,6 +506,8 @@ It is pinned in
   contain a word that `accept.txt` already accepts.
 - `.vale/styles/Bloud/` holds the house rules. `Bloud.EmDash` rejects em dashes;
   write a colon, semicolon, comma, or parentheses instead.
+- The prose standard these house rules serve is ASD-STE100: see [Write prose in
+  Simplified Technical English](#write-prose-in-simplified-technical-english).
 - Vale exits nonzero only on `error`-severity alerts, which is why a rule can
   gate CI only when its level is `error` (see the pinning note in `.vale.ini`).
 
@@ -711,10 +771,13 @@ combined with instance/SSH-target env vars). Instance overrides:
    vouch for the session and keeps the cookie on purpose, so covering 503 left
    a browser sitting on "re-loading" over a healthy install while the app's own
    diagnosis was thrown away. See `apps/hermes/INTEGRATION.md`.
-6. **SSO strategies** are exactly: `native-oidc`, `ldap`, `forward-auth`, `none`
-   (Immich + AFFiNE + Hermes + Paperless-ngx: native-oidc, Jellyfin: ldap,
-   Navidrome: forward-auth). `none` means the app does not join the identity
-   provider and carries its own credential end-to-end (no current catalog app).
+6. **SSO strategies** are exactly: `native-oidc`, `ldap`, `forward-auth`, `none`.
+   Which app sits in which group is catalog data, and the README's
+   [one login](README.md#one-login) table is generated from `apps/*/metadata.yaml`
+   by `./bloud catalogdoc`, so this file does not copy the list. `none` means the
+   app does not join the identity provider and carries its own credential
+   end-to-end, whether that credential is a machine token Bloud mints or a sign-in
+   password Bloud generates once and shows once.
    Native-oidc apps use Bloud's verified-email scope mapping (Authentik's
    managed one reports `email_verified: false`, which apps like AFFiNE
    reject). Native-oidc clients are confidential by default; a `sso.clientType:
@@ -881,13 +944,19 @@ combined with instance/SSH-target env vars). Instance overrides:
     subcommands of the host-agent binary. A remote outpost or control
     plane (a different machine) earns its own `services/<name>/` module when
     it gets built.
-14. **Shared packages stay free of host-agent internals.** Anything under `pkg/`
-    is a candidate for extraction to a shared `pkg/` module, so it must not
-    import `store`/`config`/host-agent-internal machinery: a token format,
-    protocol constant, or envelope type that reaches for the store cannot be
-    moved without a surgery. `pkg/` importing only `pkg/` (and stdlib) is the
-    rule, and it holds today: `pkg/appclient`, `pkg/managedfile`, and
-    `pkg/slug` pull in nothing from `internal/`.
+14. **The app-SDK module stays free of host-agent internals.** Everything an app
+    author compiles against lives in the top-level `pkg/` module
+    (`codeberg.org/d-buckner/bloud/pkg`): `appasset`, `appclient`, `authentik`,
+    `bindings`, `bootstrap`, `configurator`, `managedfile`, `servarr`, `slug`,
+    and `xmlutil`. Both `apps/` and `services/host-agent/` depend on it, and
+    nothing in it may import `store`/`config`/host-agent-internal machinery: a
+    token format, protocol constant, or envelope type that reaches for the store
+    cannot be read by an app author without the whole runtime. `pkg/` importing
+    only `pkg/` (and stdlib) is the rule, and it holds today: `pkg/appclient`,
+    `pkg/managedfile`, and `pkg/slug` pull in nothing from `internal/`. This is
+    the boundary the module made real in 2026-10-14; before it, `apps/go.mod`
+    required the runtime module and "build the apps" meant "build against all of
+    host-agent".
 15. **Cross-app wiring goes through typed integration contracts.** A contract
     (`internal/catalog/contracts.go`) is the one place the vocabulary lives: the
     label a consumer declares under `integrations:`, the secret names a provider
@@ -898,17 +967,19 @@ combined with instance/SSH-target env vars). Instance overrides:
     secret names, validated against the contract), and **only those are
     resolved**: declaring a contract gets an app the provider's address, never a
     credential by default. The orchestrator resolves each declared contract into
-    `AppState.Integrations`, **one typed slice per contract** (`PVRs`,
-    `MediaServers`, `DownloadClients`, `SSO`, `ModelSources`, `Inference`,
-    `AgentAPIs`, `Transcription`),
+    `AppState.Integrations`, **one typed slice per contract**; the field list
+    lives in `bindings.Integrations` and is the only place it is written down,
     each binding embedding `ProviderRef` (`App`, `Installed`, `Node`, `Port`,
     `BaseURL`, `LocalURL` where `BaseURL` is what the app stores and
     `LocalURL` what the configurator calls) plus that contract's payload.
     Credentials come from the
     host store (`AppSecretsProvider.SetAppSecret`); values are static metadata.
     Never add a field to a shared binding struct: a new capability is a contract
-    entry, a payload type in `pkg/configurator`, and one arm in
-    `bindContract`. An app **never** reads or writes another app's files: not
+    entry, a payload type in `pkg/bindings`, and one entry in the orchestrator's
+    `contractBinders` table. That table is keyed by contract name and a
+    completeness test fails a payload-bearing contract with no binder and a binder
+    that names no declared contract, so a forgotten wiring is a build failure and
+    not a consumer that silently receives nothing. An app **never** reads or writes another app's files: not
     that app's data directory (`dataDir/<app>`), not a config file, whatever its
     format. The shared trees Bloud owns for the whole stack (`media/`,
     `downloads/`) are declared as volumes in metadata; they are not an app's
@@ -1029,17 +1100,30 @@ combined with instance/SSH-target env vars). Instance overrides:
    avatar; the `icon:` field in `models.go` is not the mechanism and no app in
    the catalog sets it. An app the set does not cover keeps its upstream icon,
    and its `INTEGRATION.md` says where the file came from.
-3. `apps/<name>/configurator.go`. Implements `NodeLifecycle`
-   (`Name()`, `PreStart(ctx, *AppState) (changed bool, err error)`,
-   `PostStart(ctx, *AppState) error`) from `pkg/configurator`. Teardown is
+3. `apps/<name>/configurator.go`. **First ask whether you need this file at
+   all.** The orchestrator drives a node with no registered configurator: it
+   creates the containers `metadata.yaml` declares, generates the route, and
+   promotes the node to `RUNNING` (see `execution.go`, where a nil `cfg` is a
+   handled case, not an error). An app whose whole behavior is static containers
+   and declared SSO needs no Go. Write the configurator only for what a
+   declaration cannot say.
+
+   It implements `NodeLifecycle` (`Name()`,
+   `PreStart(ctx, *AppState) (PreStartResult, error)`,
+   `PostStart(ctx, *AppState) error`) from `pkg/configurator`. `PreStart` returns
+   a `PreStartResult`, not a bare bool: `MustRestart(reason)` says "recreate the
+   container, and here is why", and `NoRestart()` says the config already matched.
+   Teardown is
    optional: the orchestrator removes containers and data itself, and calls the
    `configurator.Remover` method (`Remove(ctx, *AppState, clearData bool)
    error`) only when a configurator implements it. `AppState` carries `DataPath`,
-   `BloudDataPath`, `SSOEnabled`, typed `LDAP` / `OIDC` outputs. Self-register
+   `BloudDataPath`, `SSOEnabled`, typed `LDAP` / `OIDC` outputs, and the typed
+   `Integrations` bindings. Self-register
    it: add `apps/<name>/registration.go` with an `init()` calling
    `configurator.MustRegisterFactory("<node-name>", ...)` (factory is
    instantiated lazily on first lookup), and add the blank import and node name
-   to `apps/registry.go`; `TestRegisterAll` fails if the two drift apart.
+   to `apps/registry.go`; `TestRegisterAll` fails if the two drift apart, and
+   `TestNodeNamesStable` pins the node names so a rename must be an explicit edit.
    Host-agent's `internal/appconfig/register.go` is for system apps only
    (Traefik, Authentik, registered as lazy factories in `RegisterSystem`); user
    apps never touch it.
@@ -1092,40 +1176,61 @@ postgres, compose service naming, no graph ordering).
 cleanup assertions). The Playwright suite (`e2e/tests/*.spec.ts`) remains the
 mandatory regression gate for changes to install/reconcile behavior.
 
-## Known debt (re-verified 2026-09-19)
+## Known debt (re-verified 2026-10-15)
 
 The ledger is the source of truth; the notes below are a pointer, not a
 mirror. Full backend-debt ledger with the repayment plan:
-[`docs/operations/tech-debt.md`](docs/operations/tech-debt.md). Top open
-items: the **auth bypass is remotely forgeable**, not just a local-process
-concern (`middleware.RealIP` + Traefik `forwardedHeaders.insecure: true` +
-loopback=admin), so a single `True-Client-IP: 127.0.0.1` header grants admin.
-That is the shipping blocker. Everything else this paragraph used to list is
-closed in the ledger: the engine's silent-failure paths (catalog nil-deref,
-lock-free `MemoryCache`, an intent queue that could exit permanently),
-`appclient.Call.Timeout`, container drift never being repaired while the
-process is alive, and duplicated orchestrator wiring (CLI vs router).
-Recently paid: durable lifecycle operation state
-(`store/operations.go` + orchestrator recorder, plan archived), versioned schema
-migrations, route-generation purity (PR #88), per-connection SQLite pragmas
-moved into the DSN (PR 7), and the periodic self-healing pass
-(`orchestrator/selfheal.go`, 2026-09-30: a `ReconcileIntent` on an idle
-~60s timer, which is also what gives `retryable` on the operation row a
-driver). Two earlier claims are
+[`docs/operations/tech-debt.md`](docs/operations/tech-debt.md).
+
+**The shipping blocker this section used to lead with is closed.** The auth bypass
+was remotely forgeable: `middleware.RealIP`, Traefik
+`forwardedHeaders.insecure: true`, and loopback-means-admin together let one
+`True-Client-IP: 127.0.0.1` header grant admin. It closed 2026-09-19. `RealIP` is
+gone, admin now requires a bearer token **and** a trusted position, and an empty
+configured token disables the position path entirely.
+
+Top open items, by the ledger's ranking:
+
+- **The health surface is still blind to the runtime** (item 10, the only P1 left).
+  A dead intent loop is now visible; an unavailable Podman socket is not, the
+  startup gate is SQLite-only, and a failed system-app convergence still exits the
+  process.
+- **A restarted system app can be promoted to `RUNNING` on "the socket accepts"**
+  (item 36, P2). The Authentik LDAP outpost declares a TCP probe on its LDAP port,
+  so promotion waits for the port rather than for the service to answer; Radicale
+  turns the failed bind into a 500, so a correct credential reads as a broken app
+  inside that window.
+- A P2 cluster of honest-surface and dead-code items, listed in the ledger's
+  section 8: `catalog.IsSystemApp` still trusts `category` over `isSystem`, so the
+  API lists the system apps and only the dashboard hides them; `PlanInstall` never
+  sets `CanInstall: false`; the generated Traefik YAML is hand-built and never
+  parsed back before the write; `IconHandler` accepts `..`; `sso.DeriveSecret`
+  keeps one literal fallback; app networks are never swept.
+
+Paid since the last verification: the app-SDK module extraction (invariant 14, the
+`pkg/` module), the contract-binder table and its completeness test (invariant 15),
+operation rows keyed per node, the derived debug-port list, and the derived
+validation registry.
+
+Two earlier claims are
 corrected in the ledger: the `user_app_positions` fork fix is a no-op (the grid
 shape already existed), and the derived OAuth client secret *is* currently
-persisted. Review findings:
-[`docs/specs/review-2026-09-17.md`](docs/specs/review-2026-09-17.md) and the newer
-[`docs/specs/review-2026-09-19.md`](docs/specs/review-2026-09-19.md) (e.g. §C2
+persisted. Reviews, oldest first:
+[`docs/reviews/2026-09-17.md`](docs/reviews/2026-09-17.md),
+[`docs/reviews/2026-09-19.md`](docs/reviews/2026-09-19.md) (e.g. §C2
 in-memory `MapRepository`, which the 2026-09-16 re-audit reframes:
 HKDF-derived credentials make restart reconstruction work, so only
 ERROR-terminal semantics is lost. §C1's inert install path is fixed: the router
-wires the catalog graph). Highlights:
+wires the catalog graph),
+[`docs/reviews/2026-10-03-aposd.md`](docs/reviews/2026-10-03-aposd.md),
+and
+[`docs/reviews/2026-10-12-aposd-appsurface.md`](docs/reviews/2026-10-12-aposd-appsurface.md).
+Highlights:
 
 - ~~Config ships hardcoded fallback secrets~~ **Fixed 2026-09-14**: `config.Load`
   is fallible with no static fallback (env > `secrets.json` > error). Still open:
-  one literal fallback survives in `sso.DeriveSecret`, and loopback requests are
-  granted admin, and that rule is forgeable from any client (see above).
+  one literal fallback survives in `sso.DeriveSecret`. Loopback requests are no
+  longer granted admin on position alone.
 - ~~Keep the `apps:` registry in `validation.yaml` in sync with `apps/`~~ **Fixed
   2026-10-14**: the registry is now derived from `apps/*/metadata.yaml` at
   runtime (`deriveApps` in `cli/inference.go`), so there is nothing to keep in
@@ -1147,7 +1252,8 @@ to the right doc. When a doc moves, update it in both places.
 
 | Question | Read |
 |---|---|
-| What are we building / release plan | [specs/spec.md](docs/specs/spec.md) |
+| What we are building / which apps ship | [README.md](README.md) (the catalog list and login table are generated from the app metadata) |
+| Runtime and release engineering policy | [specs/spec.md](docs/specs/spec.md) |
 | Orchestrator/reconciler design | [specs/reconciler-spec.md](docs/specs/reconciler-spec.md) |
 | Component overview + data flows | [architecture/overview.md](docs/architecture/overview.md) |
 | The full app + container graph (generated) | [README.md#the-full-graph](README.md#the-full-graph) (the Mermaid block `depgraph --write` refreshes) |
@@ -1157,10 +1263,11 @@ to the right doc. When a doc moves, update it in both places.
 |Build the .deb release package|[operations/packaging.md](docs/operations/packaging.md)|
 |Back up, restore, and update an install|[operations/backup-restore.md](docs/operations/backup-restore.md)|
 |Sharing/federation (removed)|archived design in [docs/plans/archive/](docs/plans/archive/)|
-|MCP servers as catalog apps (shipped: `apps/affine-mcp` providers, Hermes consumes)|[features/mcp.md](docs/features/mcp.md)|
+|MCP servers as catalog apps (shipped: the catalog carries MCP providers, and Hermes is a consumer)|[features/mcp.md](docs/features/mcp.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
 | Agent API + multi-port apps (`extraPorts`, `agentApi` contract) | [features/agent-api.md](docs/features/agent-api.md) |
 | Speech-to-text endpoint the instance declares (`transcription` contract) | [features/transcription.md](docs/features/transcription.md) |
-| Dated review findings|[specs/review-2026-09-17.md](docs/specs/review-2026-09-17.md)|
-| Latest architecture/code review (2026-09-19)|[specs/review-2026-09-19.md](docs/specs/review-2026-09-19.md)|
+| How client credentials work (declare, reveal, rotate, revoke) | [features/client-credentials.md](docs/features/client-credentials.md) |
+| Dated reviews, oldest first | [reviews/](docs/reviews/) (its README is the index) |
+| Design and complexity reviews, APoSD lens | [2026-10-03-aposd](docs/reviews/2026-10-03-aposd.md) (the runtime's module shapes), [2026-10-12-aposd-appsurface](docs/reviews/2026-10-12-aposd-appsurface.md) (the app-extension surface) |
 | In-flight designs | [plans/](docs/plans/) |

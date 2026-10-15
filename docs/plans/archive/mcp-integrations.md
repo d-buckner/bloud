@@ -1,9 +1,11 @@
-> Status: Phase 3 shipped. The provider is `apps/affine-mcp`; AFFiNE's built-in
-> MCP server and the Manticore search sidecar were removed. Phase 2 and 4 pending.
+> Status: Phase 3 shipped; archived 2026-10-15. The provider is `apps/affine-mcp`;
+> AFFiNE's built-in MCP server and the Manticore search sidecar were removed.
+> Phases 2 and 4 stay open. [features/mcp.md](../../features/mcp.md) documents how
+> the shipped provider works; this file keeps the roadmap and the decision record.
 
 # Plan: MCP as an ordinary catalog capability
 
-> The design lives in [features/mcp.md](../features/mcp.md): the contract
+> The design lives in [features/mcp.md](../../features/mcp.md): the contract
 > model, the credential boundary, the reachability story, and the security
 > properties. This file is the roadmap. It records the decisions and the order
 > they got built in, including the reversal; read the feature doc for how the

@@ -19,9 +19,9 @@ or away from that.
 **Relationship to prior artifacts.** This is the third review in the series, and
 it is the one aimed at the goal above:
 
-- [`review-2026-10-03-aposd.md`](review-2026-10-03-aposd.md) reviewed the
+- [`2026-10-03-aposd.md`](2026-10-03-aposd.md) reviewed the
   *runtime's* module shapes (orchestrator config, store interfaces, appclient).
-- [`../plans/app-add-tax.md`](../plans/app-add-tax.md) measured the *workflow*
+- [`../plans/archive/app-add-tax.md`](../plans/archive/app-add-tax.md) measured the *workflow*
   tax: which files outside `apps/<name>/` an app add touches, and six shippable
   derivations to remove it.
 - This review covers the *architecture of the extension surface itself*: why the
@@ -32,6 +32,29 @@ it is the one aimed at the goal above:
 Where a finding overlaps the ledger, the ledger
 ([`../operations/tech-debt.md`](../operations/tech-debt.md)) is the source of
 truth and is referenced rather than duplicated.
+
+---
+
+## 0. Status since publication (updated 2026-10-15)
+
+This review is a snapshot of `e66f2f6`. Two days of work closed most of it. The
+findings below are left as written, because the reasoning is the value; this table
+says what is true now so a reader does not act on a closed item.
+
+| Finding | Severity | Now | What closed it |
+|---|---|---|---|
+| 3.1 One package, three audiences | C1 | Partly closed | `bindings` split out of `pkg/configurator` (#341); `interface.go` went from 576 lines to 249. The host plumbing (`Deps`, `AppSecretsProvider`, `Registry`) still shares the author-contract package. |
+| 3.2 `Deps` is a flat god-parameter | C2 | Partly closed | Four leaf fields plus three subsystem values (#335). `appclient` and `appasset` types are still in every configurator's compile closure. |
+| 3.3 The contract triangle | C1 | Partly closed | The `bindContract` switch became the `contractBinders` table, and `contract_binders_test.go` fails a payload-bearing contract with no binder (#325). The "later" half, moving the vocabulary out of `internal/`, is open. |
+| 3.4 Three in-module registries | C2 | Closed, at the scope this review endorsed | `DefaultPort` left the conformance table; the configurator reports its own port (#334). `NodeNames()` and the flags stayed, which is what this review argued for. |
+| 3.5 The module boundary is not a boundary | C2 | Closed | `apps/go.mod` requires `codeberg.org/d-buckner/bloud/pkg`, and `services/host-agent/pkg/` is gone (#341). |
+| 3.6 "Empty means not-ready" re-derived in prose | C2 | Closed | One `Secret` type states the rule once (#333). |
+| 3.7 The declarative-only path is real but not led with | C3 | Open | Nothing changed. Every user app still registers a configurator, and the author guide still opens with the Go file. |
+
+The two plans this review produced both shipped and are archived:
+[app-add-tax.md](../plans/archive/app-add-tax.md) (all six derivations) and
+[configurator-sdk-surface.md](../plans/archive/configurator-sdk-surface.md) with
+its child [app-sdk-module.md](../plans/archive/app-sdk-module.md).
 
 ---
 
@@ -251,7 +274,7 @@ with build failures. `apps/affine-mcp`, `apps/ha-mcp`, `apps/arr-mcp`, and
 `apps/dav-mcp` each added a contract in the last two months, so this is not a
 theoretical path: it is the most actively edited surface in the tree.
 
-**Direction.** Two steps, as `../plans/app-add-tax.md` change C already lays out,
+**Direction.** Two steps, as `../plans/archive/app-add-tax.md` change C already lays out,
 reframed here as the architecture question it is:
 
 - **Now (cheap, no behavior change):** replace the `bindContract` switch with a
@@ -443,7 +466,7 @@ any code.
 
 ## 6. How to know it worked
 
-Measure against the goal, using the same method as `../plans/app-add-tax.md`:
+Measure against the goal, using the same method as `../plans/archive/app-add-tax.md`:
 
 | Metric | Today | Target |
 |---|---|---|

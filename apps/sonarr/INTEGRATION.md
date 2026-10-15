@@ -233,7 +233,7 @@ pass, or a staleness re-run. Uninstalling qBittorrent deletes its node, and a
 removed node does not re-queue its dependents, so the stored entry survives until
 Sonarr next runs its phases (a reboot, `./bloud dev`, or a reinstall). Making the
 framework invalidate consumers when a provider is removed is the open
-desired-state item in `docs/plans/media-stack-integration.md` §9 (F2).
+desired-state item in `docs/plans/archive/media-stack-integration.md` §9 (F2).
 
 A provider that is not installed is never an error: the instance works without a
 download client, and a later reconciliation (or the provider's own staleness

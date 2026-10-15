@@ -34,7 +34,7 @@ The replacement candidate found in its place was
 media services, 76 stars, mandatory bearer, released daily. It was spiked live
 against Seerr v3.4.1 and it works. It was adopted, not rejected: the plan that
 shipped it, with the scope that made the concerns below moot, is
-[arr-mcp-provider.md](arr-mcp-provider.md). This document is the case for the
+[arr-mcp-provider.md](archive/arr-mcp-provider.md). This document is the case for the
 tools no wrapper can write, which arr-mcp does not and cannot cover.
 
 ## The decision rule
@@ -88,7 +88,7 @@ store, which all stayed as packages under `internal/`. So this is a router under
 ### It provides the `mcp` contract through a zero-container app
 
 Hermes consumes `mcp` providers and picks its own set
-([plans/mcp-integrations.md](mcp-integrations.md) decision 8). The native
+([plans/archive/mcp-integrations.md](archive/mcp-integrations.md) decision 8). The native
 endpoint should not be special-cased into Hermes; it should look like every other
 provider. A catalog app that declares no container does that:
 
@@ -183,7 +183,7 @@ question, not to a document tool surface.
 ## Relationship to arr-mcp
 
 arr-mcp was adopted and shipped as `apps/arr-mcp`; the decision and the scope
-are in [arr-mcp-provider.md](arr-mcp-provider.md). Its shape, several optional
+are in [arr-mcp-provider.md](archive/arr-mcp-provider.md). Its shape, several optional
 contracts rather than one, is what moves the "across apps" row in the table
 above out of Bloud-only reach: a wrapper can join the apps it declares. What it
 still cannot see is the instance itself, which is the remaining moat and the
@@ -215,9 +215,9 @@ complementary rather than competing, and this plan stays deferred.
 
 - [features/mcp.md](../features/mcp.md): the contract, the credential boundary,
   the shipped providers.
-- [plans/mcp-integrations.md](mcp-integrations.md): the decision history for the
+- [plans/archive/mcp-integrations.md](archive/mcp-integrations.md): the decision history for the
   wrapper shape, including why the built-in AFFiNE provider was removed.
-- [plans/media-stack-integration.md](media-stack-integration.md): the app-side
+- [plans/archive/media-stack-integration.md](archive/media-stack-integration.md): the app-side
   wiring this endpoint would expose rather than duplicate.
 - [architecture/overview.md](../architecture/overview.md),
   [guides/contributing-apps.md](../guides/contributing-apps.md).

@@ -233,11 +233,6 @@ func (m *MockBlueprintGenerator) GenerateOutpostBlueprint(providers []sso.Forwar
 	return args.Error(0)
 }
 
-func (m *MockBlueprintGenerator) GenerateLDAPOutpostBlueprint(apps []sso.LDAPApp, ldapBindPassword string) error {
-	args := m.Called(apps, ldapBindPassword)
-	return args.Error(0)
-}
-
 func (m *MockBlueprintGenerator) GetLDAPBindPassword() string {
 	args := m.Called()
 	return args.String(0)

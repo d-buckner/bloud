@@ -1,7 +1,8 @@
-> Status: draft
-
+> Status: app side landed 2026-09-19; framework gaps F2-F6 open. Archived
+> 2026-10-15. No framework files were changed; the two candidate framework
+> changes are listed in §9.
+>
 > Implemented app-side and verified on a live runtime; see "Implementation status" at the end.
-> No framework files were changed; the two candidate framework changes are listed in §9.
 
 # Plan: Wire the media stack end to end (Sonarr / Radarr / qBittorrent / Prowlarr / Seerr)
 
@@ -260,7 +261,7 @@ change to the automations above. What a bundle needs (separate design):
   type;
 - install-intent expansion into N member installs (a `required`-style "install these" list, which
   is the same path `PlanInstall`'s `Choices` already models);
-- user integration choices being honored (`review-2026-09-17.md §H3`), which is what a bundle would use to
+- user integration choices being honored (`docs/reviews/2026-09-17.md §H3`), which is what a bundle would use to
   pick providers.
 
 ## 9. Framework candidates (NOT in this plan: need an explicit decision)

@@ -12,16 +12,31 @@ For the broader component overview, see
 
 ## How it all fits together
 
-A Bloud app contribution has two halves:
+A Bloud app contribution has two halves, and the second one is optional:
 
 1. **A declaration** (`metadata.yaml`). This is what the app *is*: its containers,
    ports, volumes, databases, and how it wants SSO. The catalog reads this and
    the orchestrator builds the dependency graph from it.
-2. **A configurator** (Go code). The runtime glue that can't be expressed
-   statically: talking to the app's own API, writing config files it expects,
-   completing any setup wizards.
+2. **A configurator** (Go code), only if you need one. The runtime glue that
+   cannot be expressed statically: talking to the app's own API, writing config
+   files it expects, completing any setup wizards.
 
-The orchestrator is the engine that turns both into reality. It continuously
+### Do you need a configurator at all?
+
+Ask this before you write any Go. The orchestrator drives a node that has no
+registered configurator: it creates the containers `metadata.yaml` declares,
+waits on the declared `healthCheck:`, generates the route, and promotes the node
+to `RUNNING`. A declarative-only app is a supported shape, not a degenerate one.
+
+You need a configurator when the app must be *told* something after it starts, or
+must be *asked* something: it has a setup wizard, it reads a config file Bloud has
+to write, it needs an API key from another app, or it joins SSO through a protocol
+that needs provisioning beyond environment variables. You do not need one when
+environment variables and mounted volumes carry every setting. Start from
+`apps/<name>/metadata.yaml` alone, run the install, and add Go only for what is
+still missing.
+
+The orchestrator is the engine that turns both halves into reality. It continuously
 compares the desired state (your declaration) with the actual state and runs a
 cycle per app node to close the gap:
 
@@ -199,6 +214,9 @@ exception that matches nothing, so an exception cannot quietly outlive its
 justification.
 
 ## Step 2: configurator.go
+
+Skip this step if `metadata.yaml` alone already gets your app to `RUNNING`. See
+[Do you need a configurator at all?](#do-you-need-a-configurator-at-all).
 
 This is where you do the work that a static container definition can't: create
 config files the app expects, call its API to finish setup, register OIDC

@@ -1,10 +1,13 @@
 # Third-party client credentials
 
-> Status: draft. This plan needs one explicit decision before any of it is
-> built: whether Bloud offers a *persistent* credential reveal, or only a
-> one-time reveal at enable time. Section "The fork: one-time versus persistent
-> reveal" lays out why the answer is different for those two options, and why
-> the answer is currently "one-time, until the auth bypass is repaid".
+> Status: shipped, then archived 2026-10-15. The living description of the
+> shipped feature is [`../../features/client-credentials.md`](../../features/client-credentials.md);
+> this file is the design record for how it was decided. The pilot is
+> [`client-credentials-hermes-webui-pilot.md`](client-credentials-hermes-webui-pilot.md).
+>
+> The original open question below (one-time versus persistent reveal) was
+> resolved in favour of the one-time reveal, and the answer no longer depends on
+> the auth bypass, which closed on 2026-09-19.
 >
 > This answers open questions 3 and 4 of
 > [`hermes-gateway.md`](hermes-gateway.md) at the platform level rather than

@@ -86,9 +86,10 @@ func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.App
 		return configurator.NoRestart(), fmt.Errorf("read auth.yaml: %w", err)
 	}
 
-	// The server container mounts this file read-only at
-	// /blueprints/default/flow-default-authentication-flow.yaml.
-	dstPath := filepath.Join(state.DataPath, "authentik-auth-flow.yaml")
+	// The server and worker containers mount this file read-only at
+	// /blueprints/default/flow-default-authentication-flow.yaml. The worker is
+	// the one that applies it; PostStart sees that it has.
+	dstPath := filepath.Join(state.DataPath, authFlowFile)
 	blueprintChanged, err := managedfile.Write(dstPath, src, managedfile.ModeSharedConfig)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("write auth flow blueprint: %w", err)
@@ -114,6 +115,7 @@ func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.App
 //  1. Ensures Bloud's API token exists, through the API when it answers and
 //     through the container's Django shell when it does not
 //  2. Ensures the admin account exists and is an Authentik admin
+//     2b. Makes the worker apply the auth flow blueprint PreStart wrote
 //  3. Pushes branding CSS to the Authentik brand API
 //  4. Applies the login page configuration (flow title, username-only identification)
 //  5. Creates LDAP provider, application, outpost, and service account
@@ -158,6 +160,14 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 		if err := c.deps.Secrets.SetAppSecret(appName, secretAPIToken, c.params.TokenKey); err != nil {
 			return fmt.Errorf("publish API token: %w", err)
 		}
+	}
+
+	// Step 2b: the worker applies the auth flow blueprint PreStart wrote, which
+	// it does not do on its own after a rewrite (see ensureAuthFlowApplied).
+	// Before step 4, because an apply resets the flow title that step sets, and
+	// before step 5, whose LDAP provider binds through a flow the file declares.
+	if err := c.ensureAuthFlowApplied(ctx, client, state.DataPath); err != nil {
+		return err
 	}
 
 	// Step 3: Push branding CSS.

@@ -238,7 +238,7 @@ func TestExternalAppLocalAndExternalDoNotCrossFeeds(t *testing.T) {
 }
 
 // TestExternalAppProducesNoGraphNodesContainersOrRoutes is the non-negotiable
-// regression gate from docs/plans/external-apps.md: the external record's
+// regression gate from docs/plans/archive/external-apps.md: the external record's
 // catalog metadata still declares three containers and an SSO strategy, and
 // none of it may ever be built, routed, or provisioned.
 func TestExternalAppProducesNoGraphNodesContainersOrRoutes(t *testing.T) {

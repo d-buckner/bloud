@@ -18,6 +18,18 @@ const (
 	ldapOutpostName     = "Bloud LDAP Outpost"
 	ldapServiceUsername = "ldap-service"
 	ldapServiceTokenID  = "ldap-service-bind-token"
+
+	// ldapBindFlowSlug is the flow the outpost runs for a bind, declared in
+	// apps/authentik/auth.yaml. Its login stage sets the session lifetime, and
+	// in cached bind mode that lifetime is how long a bind is remembered.
+	ldapBindFlowSlug = "bloud-ldap-bind"
+	// ldapBindMode caches a successful bind in the outpost for the life of the
+	// session the bind flow issued, so a repeat bind costs no flow execution
+	// (~0.1s instead of ~1.8s). The flip side: a password changed or a user
+	// deactivated in Authentik keeps binding from the cache until that session
+	// expires, which ldapBindFlowSlug's login stage bounds at one hour.
+	ldapBindMode   = "cached"
+	ldapSearchMode = "direct"
 )
 
 // EnsureLDAPInfrastructure creates the LDAP provider, application, outpost, and service account
@@ -61,9 +73,9 @@ func (c *Client) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword 
 		return fmt.Errorf("ensuring LDAP service token: %w", err)
 	}
 
-	// 6. Set the service account's password for LDAP direct bind.
-	// The app_password token alone is not sufficient: Authentik's LDAP outpost
-	// in direct bind mode requires the user's actual password.
+	// 6. Set the service account's password for LDAP bind.
+	// The app_password token alone is not sufficient: a bind the outpost has not
+	// cached runs the bind flow, whose password stage checks the actual password.
 	if err := c.setUserPassword(ctx, serviceAccountID, ldapBindPassword); err != nil {
 		return fmt.Errorf("setting service account password: %w", err)
 	}
@@ -76,24 +88,24 @@ func (c *Client) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword 
 	return nil
 }
 
-// ensureLDAPProvider creates the LDAP provider if it doesn't exist. searchGroupID
-// is the already-resolved pk of the group the directory search is scoped to; the
-// caller has it because it needs the same group for the bind account.
+// ensureLDAPProvider creates the LDAP provider, or brings an existing one onto
+// the bind flow and modes above. searchGroupID is the already-resolved pk of the
+// group the directory search is scoped to; the caller has it because it needs
+// the same group for the bind account.
 func (c *Client) ensureLDAPProvider(ctx context.Context, searchGroupID string) (int, error) {
-	// Check if provider exists
+	bindFlowID, err := c.findFlowID(ctx, ldapBindFlowSlug)
+	if err != nil {
+		return 0, fmt.Errorf("finding LDAP bind flow: %w", err)
+	}
+
 	providerID, err := c.findProviderID(ctx, "ldap", ldapProviderName)
 	if err != nil {
 		return 0, err
 	}
 	if providerID != 0 {
-		return providerID, nil // Already exists
+		return providerID, c.ensureLDAPProviderModes(ctx, providerID, bindFlowID)
 	}
 
-	// Find required flows
-	authFlowID, err := c.findFlowID(ctx, "default-authentication-flow")
-	if err != nil {
-		return 0, fmt.Errorf("finding auth flow: %w", err)
-	}
 	invalidFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
 	if err != nil {
 		return 0, fmt.Errorf("finding invalidation flow: %w", err)
@@ -102,11 +114,11 @@ func (c *Client) ensureLDAPProvider(ctx context.Context, searchGroupID string) (
 	// Create the provider
 	payload := map[string]any{
 		"name":               ldapProviderName,
-		"authorization_flow": authFlowID,
+		"authorization_flow": bindFlowID,
 		"invalidation_flow":  invalidFlowID,
 		"search_group":       searchGroupID,
-		"bind_mode":          "direct",
-		"search_mode":        "direct",
+		"bind_mode":          ldapBindMode,
+		"search_mode":        ldapSearchMode,
 	}
 	var result struct {
 		PK int `json:"pk"`
@@ -116,6 +128,39 @@ func (c *Client) ensureLDAPProvider(ctx context.Context, searchGroupID string) (
 	}
 
 	return result.PK, nil
+}
+
+// ensureLDAPProviderModes moves an existing provider onto the bind flow and
+// modes. Installs created before the bind cache bound through the 90-day
+// default flow in direct mode; this is what carries them over. It only writes
+// when something drifted, so a steady-state pass issues no PATCH. The bind flow
+// and the cached mode are written together: cached mode on the default flow
+// would remember a bind for 90 days.
+func (c *Client) ensureLDAPProviderModes(ctx context.Context, providerID int, bindFlowID string) error {
+	reqPath := fmt.Sprintf("/api/v3/providers/ldap/%d/", providerID)
+	var provider struct {
+		AuthorizationFlow string `json:"authorization_flow"`
+		BindMode          string `json:"bind_mode"`
+		SearchMode        string `json:"search_mode"`
+	}
+	if err := c.cl.GET(reqPath).OK(http.StatusOK).DoInto(ctx, &provider); err != nil {
+		return fmt.Errorf("fetching LDAP provider: %w", err)
+	}
+
+	if provider.AuthorizationFlow == bindFlowID &&
+		provider.BindMode == ldapBindMode &&
+		provider.SearchMode == ldapSearchMode {
+		return nil
+	}
+	patch := map[string]any{
+		"authorization_flow": bindFlowID,
+		"bind_mode":          ldapBindMode,
+		"search_mode":        ldapSearchMode,
+	}
+	if err := c.cl.PATCH(reqPath).JSON(patch).OK(http.StatusOK).Exec(ctx); err != nil {
+		return fmt.Errorf("patching LDAP provider: %w", err)
+	}
+	return nil
 }
 
 // ensureLDAPApplication creates the LDAP application if it doesn't exist

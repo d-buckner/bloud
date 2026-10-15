@@ -1,10 +1,17 @@
 # Plan: A smaller, clearer app-SDK surface (`pkg/configurator`)
 
-> Status: draft (2026-10-12). Not started. Measured against `main` at `e66f2f6`.
-> Companion to [review-2026-10-12-aposd-appsurface.md](../specs/review-2026-10-12-aposd-appsurface.md)
+> Status: landed 2026-10-14. Archived 2026-10-15. All four steps shipped: step 1
+> grouped `Deps` (#335), step 2 added the `Secret` type (#333), step 3 replaced the
+> `bindContract` switch with the `contractBinders` table and its completeness test
+> (#325), and step 4 extracted the `pkg/` module and split `bindings` (#341). What
+> the plan deliberately left out stays open: the contract vocabulary is still
+> catalog code under `internal/`, and the host plumbing still shares a package with
+> the author contract.
+> Written 2026-10-12 against `main` at `e66f2f6`.
+> Companion to [2026-10-12-aposd-appsurface.md](../../reviews/2026-10-12-aposd-appsurface.md)
 > (findings 3.1, 3.2, 3.5, 3.6) and to
 > [app-add-tax.md](app-add-tax.md) (whose change C is the binder half of this plan).
-> Debt ledger: [tech-debt.md](../operations/tech-debt.md).
+> Debt ledger: [tech-debt.md](../../operations/tech-debt.md).
 
 ## Why
 

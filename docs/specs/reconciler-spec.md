@@ -8,7 +8,7 @@
 > convergence loop described below are exactly what the orchestrator implements today.
 > Read this as the architecture-as-built, with the component name updated to *orchestrator*.
 > One deviation from this spec is now permanent and documented in
-> [review-2026-09-17.md](review-2026-09-17.md): the lifecycle graph uses an
+> [../reviews/2026-09-17.md](../reviews/2026-09-17.md): the lifecycle graph uses an
 > in-memory repository rather than its SQLite backing.
 
 ## Motivation

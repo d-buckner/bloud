@@ -184,9 +184,12 @@ func affectedE2EProjects(changedFiles []string, manifest *validationManifest) []
 }
 
 // isDocumentation reports whether a path is prose that cannot change runtime
-// behavior, so the e2e matrix can ignore it.
+// behavior, so the e2e matrix can ignore it. The whole `docs/` tree counts, not
+// only its Markdown: an image or a data file under it is documentation too.
+// Treating one as code ran every app's Playwright project for a change that
+// touched none of them (deleting one unreferenced image did exactly that).
 func isDocumentation(path string) bool {
-	return strings.HasSuffix(path, ".md")
+	return strings.HasSuffix(path, ".md") || strings.HasPrefix(path, "docs/")
 }
 
 // e2eProjects returns every e2e project declared in validation.yaml.
