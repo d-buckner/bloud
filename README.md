@@ -338,19 +338,6 @@ are machine endpoints guarded by a token Bloud mints, and Podly is a person-faci
 cannot join a provider at all, so its sign-in password is one Bloud generates and shows you
 once, from the app's menu on the dashboard.
 
-## what is not done yet
-
-Alpha in specific ways, so you know which gaps you're signing up for.
-
-- **No TLS.** Plain HTTP only, and this is the biggest gap. Let's Encrypt on Traefik, or
-  Tailscale Serve, is the planned follow-up. Fine on your LAN if you accept it; not acceptable
-  off-LAN.
-- **No `bloud init`.** First-run host config happens in the dashboard.
-- **Debian 13 only.** A support contract has to be true somewhere before it spreads.
-- **The loop is not yet hardened against every failure mode.** The auth bypass is remotely
-  forgeable and is the current shipping blocker. Full ledger:
-  [docs/operations/tech-debt.md](docs/operations/tech-debt.md).
-
 ## developing it
 
 ```bash
