@@ -458,11 +458,22 @@ func TestMCPPublisherToleratesMissingDeps(t *testing.T) {
 }
 
 func TestMCPKeyQueryIsScopedToTheOperator(t *testing.T) {
-	q := strings.ToLower(mcpKeyQuery)
+	q := strings.ToLower(MCPKeyQuery("operator@example.com"))
+	require.NotEmpty(t, q, "a plain address must produce a query")
 	assert.Contains(t, q, "t.type = 'mcp'", "never return a general access token")
-	assert.Contains(t, q, "p.email = :'email'", "the operator's own profile, quoted as a literal")
+	assert.Contains(t, q, "p.email = 'operator@example.com'", "the operator's own profile, quoted as a literal")
 	assert.Contains(t, q, "expires_at", "an expired key is not published")
 	assert.Contains(t, q, "limit 1")
+}
+
+// TestMCPKeyQueryRefusesAnUnquotableEmail pins the injection defense. The address
+// is placed inside a SQL string literal, so an address that cannot be quoted
+// produces no query at all rather than an escaped one: the lookup is optional and
+// declining it is a logged no-op.
+func TestMCPKeyQueryRefusesAnUnquotableEmail(t *testing.T) {
+	for _, email := range []string{`a'b@example.com`, "a b@example.com", `a\b@example.com`, `a"b@example.com`} {
+		assert.Empty(t, MCPKeyQuery(email), "an address that cannot be quoted must produce no query")
+	}
 }
 
 // TestMetadataAgreesWithCode pins the two halves of the app together: the

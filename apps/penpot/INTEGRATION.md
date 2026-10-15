@@ -212,6 +212,18 @@ The consequences of that shape are what the configurator has to respect:
    Penpot, not a Bloud limitation, and it is worth saying out loud because every
    other MCP provider in the catalog answers without a human present.
 
+6. **The read is a SQL literal, not a bound parameter.** Bloud asks Penpot's own
+   Postgres for the key with `psql -c`, and psql does not interpolate `-v`
+   variables into a `-c` command string (it does interpolate them when the same
+   text arrives as a script on stdin, and the exec channel carries no stdin). A
+   query written as `p.email = :'email'` therefore reached Postgres as syntax it
+   could not parse, and because every failure in the sync is a logged nil, the
+   whole symptom was a contract that never appeared plus a WARN in a log nobody
+   reads. `MCPKeyQuery` builds the quoted literal itself and refuses an address it
+   cannot quote, and `TestPenpotMCPLookupQueryRunsAgainstTheRealDatabase` runs
+   that same text against a live Penpot database, which is the only place a parse
+   error in it can be caught.
+
 The MCP container publishes no port of its own. It is reachable only through the
 routed Penpot origin, behind the user's key, which is also how Penpot's own
 compose file runs it.

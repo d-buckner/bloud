@@ -32,11 +32,33 @@ const mcpStreamPath = "/mcp/stream?userToken="
 // 'mcp' that have not expired: it cannot return a normal access token, and it
 // cannot return another person's key. An operator who has not enabled MCP in
 // Penpot has no row, which is the intended answer, not a failure.
+//
+// The %s is the operator's email, filled in by MCPKeyQuery. psql does not
+// interpolate -v variables into a -c command string (it does when the same text
+// arrives as a script on stdin, which is the distinction that made `:'email'`
+// fail with "syntax error at or near :" on every pass until a container log
+// caught it), and the exec channel carries no stdin, so the literal is built
+// here. lookupableEmail is what makes that safe rather than clever.
 const mcpKeyQuery = `SELECT t.token FROM access_token t
 JOIN profile p ON p.id = t.profile_id
-WHERE p.email = :'email' AND t.type = 'mcp'
+WHERE p.email = '%s' AND t.type = 'mcp'
   AND (t.expires_at IS NULL OR t.expires_at > now())
 ORDER BY t.created_at DESC LIMIT 1`
+
+// MCPKeyQuery fills the operator's email into the query. Callers must have
+// checked lookupableEmail first; that check is the whole injection defense, so
+// this function refuses to build a query for an address it would not vouch for.
+//
+// It is exported so the integration tier can run this exact text against a real
+// Penpot database. A unit test can pin the query's shape but cannot say whether
+// Postgres accepts it, and a version of this query that psql could not parse
+// failed as a warning in a log rather than as a failed test.
+func MCPKeyQuery(email string) string {
+	if !lookupableEmail(email) {
+		return ""
+	}
+	return fmt.Sprintf(mcpKeyQuery, email)
+}
 
 // mcpPublisher keeps the install's `mcp` contract offer in step with what Penpot
 // itself currently has.
@@ -120,17 +142,21 @@ func (p *mcpPublisher) sync(ctx context.Context) {
 
 // lookupKey runs the read inside Penpot's own postgres container.
 //
-// The email is passed as a psql variable and interpolated with `:'email'`, which
-// quotes it as a SQL literal: the value never becomes syntax. It travels in the
-// command line rather than the environment because psql has no env channel for
-// variables, and an email address is not the secret here; the secret is what the
-// query returns, and that leaves only through stdout.
+// The email reaches the query as a quoted literal built by MCPKeyQuery,
+// which is only callable with an address lookupableEmail vouches for. It travels
+// in the command line rather than the environment because the exec channel has
+// neither stdin nor a psql variable channel, and an email address is not the
+// secret here; the secret is what the query returns, and that leaves only
+// through stdout.
 func (p *mcpPublisher) lookupKey(ctx context.Context, email string) (string, error) {
+	query := MCPKeyQuery(email)
+	if query == "" {
+		return "", fmt.Errorf("refusing to look up MCP key for %q", email)
+	}
 	out, err := p.exec(ctx, postgresNode, nil, []string{
 		"psql", "-U", "penpot", "-d", "penpot", "-At",
 		"-v", "ON_ERROR_STOP=1",
-		"-v", "email=" + email,
-		"-c", mcpKeyQuery,
+		"-c", query,
 	})
 	if err != nil {
 		return "", fmt.Errorf("query penpot database: %w", err)
@@ -148,9 +174,9 @@ func (p *mcpPublisher) lookupKey(ctx context.Context, email string) (string, err
 	return token, nil
 }
 
-// lookupableEmail reports whether an address is safe to hand to psql as a
-// literal. Emails that contain whitespace or quotes are legal in the spec and
-// would need escaping to survive interpolation; they are rare enough that
+// lookupableEmail reports whether an address is safe to place inside a SQL
+// string literal. Emails that contain whitespace or quotes are legal in the spec
+// and would need escaping to survive interpolation; they are rare enough that
 // declining the lookup is better than building a quoting layer for them.
 func lookupableEmail(email string) bool {
 	return !strings.ContainsAny(email, " \t\n\r'\"\\")
