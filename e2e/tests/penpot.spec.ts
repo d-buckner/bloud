@@ -77,7 +77,27 @@ describeApp('penpot', (app) => {
       // poll for the form within a deadline rather than checking once.
       const loginPage = new LoginPage(penpot);
       const backInPenpot = appUrlPattern('penpot', '/#/(?!auth/login)');
-      const deadline = Date.now() + 240_000;
+
+      // Every way Penpot's callback can fail ends the same way: a 302 back to
+      // /#/auth/login with ?error=...&hint=... . A browser test that reports
+      // only "still on the login page" throws away the half sentence Penpot
+      // wrote to explain itself, so keep the callback response, where it
+      // pointed the browser, and any provider-side error along the way.
+      let callback = 'no /api/auth/oidc/callback response was observed';
+      const failures: string[] = [];
+      penpot.on('response', (res) => {
+        const url = res.url();
+        if (url.includes('/api/auth/oidc/callback')) {
+          callback = `${res.status()} ${url}`;
+          void res.headerValue('location').then((location) => {
+            callback += ` location=${location ?? '(none)'}`;
+          });
+        } else if (res.status() >= 400 && /\/application\/o\/|\/api\//.test(url)) {
+          failures.push(`${res.status()} ${url}`);
+        }
+      });
+
+      const deadline = Date.now() + 150_000;
       for (;;) {
         if (backInPenpot.test(penpot.url())) break;
         if (Date.now() > deadline) break;
@@ -88,10 +108,23 @@ describeApp('penpot', (app) => {
         await penpot.waitForTimeout(500);
       }
 
+      if (!backInPenpot.test(penpot.url())) {
+        const seen = (await penpot.locator('body').innerText().catch(() => ''))
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 300);
+        throw new Error(
+          `the OIDC round trip did not sign in\n` +
+            `  url:      ${penpot.url()}\n` +
+            `  callback: ${callback}\n` +
+            `  errors:   ${failures.slice(-3).join(' | ') || '(none)'}\n` +
+            `  page:     "${seen}"`,
+        );
+      }
+
       // Penpot created the account from the provider's claims (matched by
       // email) and landed the browser on the dashboard rather than back on the
       // login page.
-      await expect(penpot).toHaveURL(backInPenpot, { timeout: 120_000 });
       await expect(penpot).toHaveURL(/#\/dashboard/, { timeout: 60_000 });
 
       // The login affordance is gone: the session is Penpot's own now.
