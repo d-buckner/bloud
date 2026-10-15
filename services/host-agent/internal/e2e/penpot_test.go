@@ -210,20 +210,87 @@ func tailLines(logs string, n int) string {
 // Host it is asked on, so the document comes back self-consistent either way.
 func penpotTokenEndpoint(t *testing.T) string {
 	t.Helper()
-	origin := penpotPublicURL()
+	base := getEnvDefault("BLOUD_SSO_BASE_URL", "http://localhost:8080")
+	res, err := http.Get(base + "/application/o/penpot/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatalf("GET %s/application/o/penpot/.well-known/openid-configuration: %v", base, err)
+	}
+	defer res.Body.Close()
 	var doc struct {
 		TokenEndpoint string `json:"token_endpoint"`
 	}
-	if res, err := http.Get(origin + "/application/o/penpot/.well-known/openid-configuration"); err == nil {
-		defer res.Body.Close()
-		if res.StatusCode == http.StatusOK {
-			_ = json.NewDecoder(res.Body).Decode(&doc)
-		}
-	}
-	if doc.TokenEndpoint == "" {
-		doc.TokenEndpoint = origin + "/application/o/token/"
+	if err := json.NewDecoder(res.Body).Decode(&doc); err != nil || doc.TokenEndpoint == "" {
+		t.Fatalf("%s/application/o/penpot/.well-known/openid-configuration is not a discovery document (status %d)",
+			base, res.StatusCode)
 	}
 	return doc.TokenEndpoint
+}
+
+// penpotProviderHoldsTheEnvFileCredential asks Authentik over its API which
+// client credential it actually stores for this app and compares it to the one
+// the install handed Penpot. A mismatch is invisible everywhere else: the
+// authorize request carries only the client_id, so the browser is handed a code
+// and the backend's token exchange is the first place the two values meet.
+func penpotProviderHoldsTheEnvFileCredential(t *testing.T, wantID, wantSecret string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, authentikURL+"/api/v3/providers/oauth2/?search=penpot", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+authentikToken(t))
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("listing OAuth2 providers: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("listing OAuth2 providers: status %d", res.StatusCode)
+	}
+
+	var out struct {
+		Results []struct {
+			PK           int    `json:"pk"`
+			Name         string `json:"name"`
+			ClientID     string `json:"client_id"`
+			ClientType   string `json:"client_type"`
+			ClientSecret string `json:"client_secret"`
+			RedirectURIs []struct {
+				URL string `json:"url"`
+			} `json:"redirect_uris"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding the provider list: %v", err)
+	}
+
+	found := 0
+	for _, p := range out.Results {
+		t.Logf("provider pk=%d name=%q client_id=%q client_type=%q", p.PK, p.Name, p.ClientID, p.ClientType)
+		for _, u := range p.RedirectURIs {
+			t.Logf("  registered redirect uri %s", u.URL)
+		}
+		if p.ClientID != wantID {
+			continue
+		}
+		found++
+		switch {
+		case p.ClientSecret == "":
+			t.Log("the API did not expose the stored client_secret; the exchange below is the check")
+		case p.ClientSecret != wantSecret:
+			t.Errorf("Authentik stores a different client_secret for %s than the env file Penpot boots from (%d characters stored, %d in the file)",
+				wantID, len(p.ClientSecret), len(wantSecret))
+		default:
+			t.Logf("the stored client_secret matches the env file (%d characters)", len(wantSecret))
+		}
+	}
+	if found == 0 {
+		t.Errorf("no OAuth2 provider carries client_id %q; the search returned %d rows", wantID, len(out.Results))
+	}
+	if found > 1 {
+		t.Errorf("%d providers carry client_id %q; the token endpoint takes the first match, which need not be this app's",
+			found, wantID)
+	}
 }
 
 // TestPenpotOidcClientCanExchangeAToken performs the one call the browser
@@ -251,6 +318,7 @@ func TestPenpotOidcClientCanExchangeAToken(t *testing.T) {
 		t.Fatal("the env file carries no client credential to test")
 	}
 	endpoint := penpotTokenEndpoint(t)
+	penpotProviderHoldsTheEnvFileCredential(t, clientID, secret)
 
 	// Penpot builds its own redirect URI: build-redirect-uri in
 	// backend/src/app/auth/oidc.clj is PENPOT_PUBLIC_URI with the path replaced,
