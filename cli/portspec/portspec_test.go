@@ -222,6 +222,7 @@ func TestDeriveRealCatalog(t *testing.T) {
 		"3010 AFFiNE",
 		"3389 Authentik (ldap)",
 		"4533 Navidrome",
+		"4534 Navidrome MCP",
 		"5001 Podly",
 		"5055 Seerr",
 		"5232 Radicale",

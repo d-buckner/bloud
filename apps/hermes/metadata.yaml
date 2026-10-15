@@ -71,6 +71,12 @@ integrations:
       # long-lived token Bloud minted for the owner account. Same shape as the
       # other wrappers: Hermes changes nothing when the app appears.
       - app: ha-mcp
+      # The music library. Navidrome holds the collection and `apps/navidrome-mcp`
+      # exposes it as a tool namespace over one Navidrome account, which is what
+      # answers "what have I actually been listening to" and builds the playlist
+      # the answer suggests. It reaches whichever Navidrome the instance has: the
+      # container Bloud runs, or one the operator registered from elsewhere.
+      - app: navidrome-mcp
       # The design file. Penpot is the one provider that is the app rather than a
       # wrapper: its own MCP server runs as a container in the install, and Bloud
       # publishes the key Penpot minted for the operator. This is also the one

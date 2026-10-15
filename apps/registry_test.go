@@ -45,6 +45,7 @@ func TestNodeNamesStable(t *testing.T) {
 		"apps-immich-server",
 		"apps-jellyfin",
 		"apps-navidrome",
+		"apps-navidrome-mcp",
 		"apps-paperless-ngx",
 		"apps-penpot-backend",
 		"apps-penpot-frontend",
