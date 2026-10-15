@@ -14,10 +14,10 @@ import (
 const CalDAVServiceUsername = "caldav-service"
 
 // EnsureCalDAVServiceAccount creates the CalDAV service account if it does not
-// exist and sets its password for LDAP direct bind. It mirrors the service
-// account half of EnsureLDAPInfrastructure: the app_password token alone is not
-// sufficient, because Authentik's LDAP outpost in direct bind mode requires the
-// user's actual password.
+// exist and sets its password for LDAP bind. It mirrors the service account
+// half of EnsureLDAPInfrastructure: the app_password token alone is not
+// sufficient, because a bind the outpost has not cached runs the bind flow,
+// whose password stage checks the user's actual password.
 func (c *Client) EnsureCalDAVServiceAccount(ctx context.Context, password string) error {
 	return c.ensureServiceAccount(ctx, CalDAVServiceUsername, "CalDAV Service Account", password)
 }

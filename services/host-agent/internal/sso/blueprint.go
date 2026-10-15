@@ -117,7 +117,8 @@ func (g *BlueprintGenerator) generateForwardAuthBlueprint(app *catalog.App) erro
 }
 
 // generateLDAPBlueprint creates app-specific groups for LDAP authentication
-// The LDAP provider and outpost are created separately via GenerateLDAPOutpostBlueprint
+// The LDAP provider and outpost are created by the Authentik server configurator
+// (pkg/authentik EnsureLDAPInfrastructure)
 func (g *BlueprintGenerator) generateLDAPBlueprint(app *catalog.App) error {
 	launchURL := appSubdomainURL(g.primaryBaseURL(), app.CatalogID)
 

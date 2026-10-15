@@ -20,10 +20,6 @@ type BlueprintGeneratorInterface interface {
 	// GenerateOutpostBlueprint creates or updates the outpost blueprint with all forward-auth providers
 	GenerateOutpostBlueprint(providers []ForwardAuthProvider) error
 
-	// GenerateLDAPOutpostBlueprint creates the LDAP provider, service account, and outpost
-	// This is called when any app with LDAP strategy is installed
-	GenerateLDAPOutpostBlueprint(apps []LDAPApp, ldapBindPassword string) error
-
 	// GetLDAPBindPassword returns the LDAP bind password for apps to use
 	GetLDAPBindPassword() string
 
