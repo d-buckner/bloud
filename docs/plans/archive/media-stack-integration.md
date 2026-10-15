@@ -261,7 +261,7 @@ change to the automations above. What a bundle needs (separate design):
   type;
 - install-intent expansion into N member installs (a `required`-style "install these" list, which
   is the same path `PlanInstall`'s `Choices` already models);
-- user integration choices being honored (`review-2026-09-17.md §H3`), which is what a bundle would use to
+- user integration choices being honored (`docs/reviews/2026-09-17.md §H3`), which is what a bundle would use to
   pick providers.
 
 ## 9. Framework candidates (NOT in this plan: need an explicit decision)

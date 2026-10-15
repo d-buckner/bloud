@@ -231,7 +231,7 @@ operator's entry for the same implementation points elsewhere and is theirs. The
 prune runs when `PostStart` runs, so an uninstall alone leaves the entry until
 Prowlarr's next full lifecycle pass: the framework does not re-queue consumers
 when a provider's node is removed
-(`docs/plans/media-stack-integration.md` §9 F2).
+(`docs/plans/archive/media-stack-integration.md` §9 F2).
 
 A PVR that is installed but has published no key yet is a third case:
 `binding.APIKey` stays empty until the provider's own configurator has run and

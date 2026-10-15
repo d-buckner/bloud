@@ -1210,15 +1210,15 @@ Two earlier claims are
 corrected in the ledger: the `user_app_positions` fork fix is a no-op (the grid
 shape already existed), and the derived OAuth client secret *is* currently
 persisted. Reviews, oldest first:
-[`docs/specs/review-2026-09-17.md`](docs/specs/review-2026-09-17.md),
-[`docs/specs/review-2026-09-19.md`](docs/specs/review-2026-09-19.md) (e.g. §C2
+[`docs/reviews/2026-09-17.md`](docs/reviews/2026-09-17.md),
+[`docs/reviews/2026-09-19.md`](docs/reviews/2026-09-19.md) (e.g. §C2
 in-memory `MapRepository`, which the 2026-09-16 re-audit reframes:
 HKDF-derived credentials make restart reconstruction work, so only
 ERROR-terminal semantics is lost. §C1's inert install path is fixed: the router
 wires the catalog graph),
-[`docs/specs/review-2026-10-03-aposd.md`](docs/specs/review-2026-10-03-aposd.md),
+[`docs/reviews/2026-10-03-aposd.md`](docs/reviews/2026-10-03-aposd.md),
 and
-[`docs/specs/review-2026-10-12-aposd-appsurface.md`](docs/specs/review-2026-10-12-aposd-appsurface.md).
+[`docs/reviews/2026-10-12-aposd-appsurface.md`](docs/reviews/2026-10-12-aposd-appsurface.md).
 Highlights:
 
 - ~~Config ships hardcoded fallback secrets~~ **Fixed 2026-09-14**: `config.Load`
@@ -1262,6 +1262,6 @@ to the right doc. When a doc moves, update it in both places.
 | Agent API + multi-port apps (`extraPorts`, `agentApi` contract) | [features/agent-api.md](docs/features/agent-api.md) |
 | Speech-to-text endpoint the instance declares (`transcription` contract) | [features/transcription.md](docs/features/transcription.md) |
 | How client credentials work (declare, reveal, rotate, revoke) | [features/client-credentials.md](docs/features/client-credentials.md) |
-| Dated reviews, oldest first | [review-2026-09-17](docs/specs/review-2026-09-17.md), [review-2026-09-19](docs/specs/review-2026-09-19.md) |
-| Design and complexity reviews, APoSD lens | [review-2026-10-03](docs/specs/review-2026-10-03-aposd.md) (the runtime's module shapes), [review-2026-10-12](docs/specs/review-2026-10-12-aposd-appsurface.md) (the app-extension surface) |
+| Dated reviews, oldest first | [reviews/](docs/reviews/) (its README is the index) |
+| Design and complexity reviews, APoSD lens | [2026-10-03-aposd](docs/reviews/2026-10-03-aposd.md) (the runtime's module shapes), [2026-10-12-aposd-appsurface](docs/reviews/2026-10-12-aposd-appsurface.md) (the app-extension surface) |
 | In-flight designs | [plans/](docs/plans/) |

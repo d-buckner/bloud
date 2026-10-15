@@ -8,7 +8,7 @@
 > catalog code under `internal/`, and the host plumbing still shares a package with
 > the author contract.
 > Written 2026-10-12 against `main` at `e66f2f6`.
-> Companion to [review-2026-10-12-aposd-appsurface.md](../../specs/review-2026-10-12-aposd-appsurface.md)
+> Companion to [2026-10-12-aposd-appsurface.md](../../reviews/2026-10-12-aposd-appsurface.md)
 > (findings 3.1, 3.2, 3.5, 3.6) and to
 > [app-add-tax.md](app-add-tax.md) (whose change C is the binder half of this plan).
 > Debt ledger: [tech-debt.md](../../operations/tech-debt.md).

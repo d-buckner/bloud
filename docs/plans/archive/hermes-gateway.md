@@ -6,6 +6,10 @@
 > non-SSO credential on an app Bloud already SSOs, plus a dashboard reveal
 > for it. See "Goal 2" and open question 3.
 >
+> Archived 2026-10-15. The shipped half is documented in
+> [`docs/features/agent-api.md`](../../features/agent-api.md); the Hermex decision
+> stays open and this file keeps the research behind it.
+>
 > Verified against the pinned image `docker.io/nousresearch/hermes-agent:v2026.9.14`
 > (code_version 0.21.3), upstream issues, the Hermex client source, and
 > Bloud's own Authentik blueprint templates, 2026-10-05. The network claims
@@ -221,7 +225,7 @@ The gateway exposes an OpenAI-compatible endpoint on port 8642 that any
 OpenAI-format frontend can drive: a scoped bearer token, no login page. It is
 offered under a new `agentApi` contract rather than folded into `inference`, on
 a newly declared `extraPorts` surface, routed through Traefik. See
-[`docs/features/agent-api.md`](../features/agent-api.md) for the platform
+[`docs/features/agent-api.md`](../../features/agent-api.md) for the platform
 shape and `apps/hermes/INTEGRATION.md` for the app-specific facts.
 
 **The blocker named here was not the blocker.** App-to-app traffic never touches
