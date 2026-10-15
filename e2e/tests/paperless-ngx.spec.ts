@@ -103,7 +103,12 @@ describeApp('paperless-ngx', (app) => {
       await paperless.close();
     }
   });
-}, { label: 'Paperless-ngx' });
+}, {
+  label: 'Paperless-ngx',
+  // Four containers (the app plus its postgres, redis, and the
+  // gotenberg/tika sidecars), so the default budget is short on a cold VM.
+  convergeTimeoutMs: 15 * 60_000,
+});
 
 /**
  * Start the authorization-code flow from the app's sign-in page. allauth

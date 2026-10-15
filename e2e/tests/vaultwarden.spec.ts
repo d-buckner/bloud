@@ -102,7 +102,12 @@ describeApp('vaultwarden', (app) => {
       await vault.close();
     }
   });
-}, { label: 'Vaultwarden' });
+}, {
+  label: 'Vaultwarden',
+  // A single container on its own SQLite database: the smallest convergence
+  // in the catalog, so it gets the smallest budget.
+  convergeTimeoutMs: 10 * 60_000,
+});
 
 /**
  * Start the SSO login from the web vault's sign-in page: type an email, click

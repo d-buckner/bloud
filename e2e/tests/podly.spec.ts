@@ -58,7 +58,13 @@ describeApp('podly', (app) => {
       await podly.close();
     }
   });
-}, { label: 'Podly' });
+}, {
+  label: 'Podly',
+  // The lite image is a small pull, but first boot runs a long Alembic
+  // migration chain before the listener opens, and the pass then reconciles
+  // two accounts over the app's own API.
+  convergeTimeoutMs: 360_000,
+});
 
 /**
  * The password a person types into Podly, obtained the way an operator gets it.

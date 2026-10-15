@@ -15,10 +15,9 @@ const PROVIDER_LABEL = /bloud sso/i;
 
 // Penpot is a seven-container install (its own postgres, valkey, the JVM
 // backend, the headless-chromium exporter, the MCP server, the admin console,
-// and the frontend), so the convergence rung gets the longest budget in the
-// suite. If this one fails, everything after it is skipped, which is what
+// and the frontend), so the convergence rung gets a longer budget than the
+// default. If that rung fails, everything after it is skipped, which is what
 // separates "the images never came down" from "the login is broken".
-const CONVERGENCE_TIMEOUT = 14 * 60_000;
 
 describeApp('penpot', (app) => {
   test('SSO gates the app: the login page launches the OIDC flow to the prompt', async ({
@@ -155,7 +154,10 @@ describeApp('penpot', (app) => {
       await context.close();
     }
   });
-}, { label: 'Penpot' });
+}, {
+  label: 'Penpot',
+  convergeTimeoutMs: 14 * 60_000,
+});
 
 /**
  * Drive Penpot's unauthenticated UI to the OIDC redirect. An unauthenticated

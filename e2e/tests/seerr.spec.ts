@@ -52,4 +52,13 @@ describeApp('seerr', (app) => {
     }
   });
 
-}, { label: 'Seerr' });
+}, {
+  label: 'Seerr',
+  // Seerr's onboarding needs a media server: the configurator connects the
+  // two and completes Seerr's first-run wizard, and the rung above asserts
+  // exactly that state. Nothing else installs Jellyfin (the full suite only
+  // passes because jellyfin.spec.ts runs first), so a per-app leg has to
+  // bring its own prerequisite. Two installs, so the longest budget.
+  prerequisites: ['jellyfin'],
+  convergeTimeoutMs: 20 * 60_000,
+});
