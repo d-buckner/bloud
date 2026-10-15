@@ -65,12 +65,12 @@ func (o *Orchestrator) RemoveApp(ctx context.Context, appName string, clearData 
 	// Guarantee a drive row: the Submit-created uninstall row is
 	// continued when present; otherwise the removal is recorded as a
 	// fresh drive so a failed removal never goes untracked.
-	o.ensureOpDrive(appName)
+	o.ensureOpDrive(appName, appName)
 	if err := o.removeApp(ctx, appName, clearData); err != nil {
-		o.recordOpFail(appName, store.OpPhaseTopology, err)
+		o.recordOpFail(appName, appName, store.OpPhaseTopology, err)
 		return err
 	}
-	o.recordOpComplete(appName)
+	o.recordOpComplete(appName, appName)
 	return nil
 }
 

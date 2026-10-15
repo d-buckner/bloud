@@ -71,6 +71,7 @@ var Migrations = []Migration{
 		)`)
 		return err
 	}},
+	{13, "operations: key per node, not per app", keyOperationsByNode},
 }
 
 // retiredChange is the body of a ledger entry whose subject no longer
@@ -459,4 +460,74 @@ func columnExists(db queryable, table, column string) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// keyOperationsByNode rebuilds `operations` so its key names the
+// container node, not just the owning app.
+//
+// The engine dispatches the nodes of one app concurrently
+// (`processLevel` converges a topological level in parallel), so with
+// one row per app every node of Immich issued `UPDATE ... WHERE
+// app_name = ?` against the same row. The busy_timeout fix made those
+// writes wait rather than fail, but two things stayed wrong: the
+// recorder's unit of work was coarser than the engine's, and the phase
+// the app row ended in was whichever node wrote last. Re-keying per node
+// gives each writer its own row and moves the app-level answer from a
+// race to a documented aggregation on the read side.
+//
+// SQLite cannot alter a primary key, so this is a table rebuild. An
+// existing row described the app as a whole, and the app's own node
+// carries the app's catalog id (`ownerApp` returns the app id for it),
+// so `node = app_name` carries each old row forward unchanged in meaning.
+//
+// The rebuild is guarded on the column, so it is a verified no-op on a
+// database where schema.sql already created the composite key.
+func keyOperationsByNode(tx *sql.Tx) error {
+	ok, err := tableExists(tx, "operations")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	hasNode, err := columnExists(tx, "operations", "node")
+	if err != nil {
+		return err
+	}
+	if hasNode {
+		return nil
+	}
+
+	const rebuilt = `CREATE TABLE operations_new (
+		app_name   TEXT NOT NULL,
+		node       TEXT NOT NULL,
+		id         TEXT NOT NULL,
+		type       TEXT NOT NULL,
+		phase      TEXT NOT NULL,
+		status     TEXT NOT NULL,
+		retryable  INTEGER NOT NULL DEFAULT 1,
+		cause      TEXT NOT NULL DEFAULT '',
+		started_at TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+		PRIMARY KEY (app_name, node)
+	)`
+	if _, err := tx.Exec(rebuilt); err != nil {
+		return fmt.Errorf("create operations_new: %w", err)
+	}
+
+	const copied = `INSERT INTO operations_new
+			(app_name, node, id, type, phase, status, retryable, cause, started_at, updated_at)
+		SELECT app_name, app_name, id, type, phase, status, retryable, cause, started_at, updated_at
+		FROM operations`
+	if _, err := tx.Exec(copied); err != nil {
+		return fmt.Errorf("copy operations rows: %w", err)
+	}
+
+	if _, err := tx.Exec(`DROP TABLE operations`); err != nil {
+		return fmt.Errorf("drop app-keyed operations: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE operations_new RENAME TO operations`); err != nil {
+		return fmt.Errorf("rename node-keyed operations: %w", err)
+	}
+	return nil
 }

@@ -252,8 +252,8 @@ func TestAppStore_ReadsJoinOperations(t *testing.T) {
 	assert.Nil(t, app.Operation)
 
 	// A failed install drive surfaces on both read paths.
-	require.NoError(t, ops.Start("jellyfin", "op-1", OpTypeInstall, OpPhasePoststart))
-	require.NoError(t, ops.Fail("jellyfin", OpPhasePoststart, "wizard timeout", true))
+	require.NoError(t, ops.Start("jellyfin", "jellyfin", "op-1", OpTypeInstall, OpPhasePoststart))
+	require.NoError(t, ops.Fail("jellyfin", "jellyfin", OpPhasePoststart, "wizard timeout", true))
 
 	app, err = apps.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
@@ -295,7 +295,7 @@ func TestAppStore_ScanPathsAgree(t *testing.T) {
 
 	require.NoError(t, store.Install("radarr", "Radarr", "5.0.0",
 		map[string]string{"downloadClient": "qbittorrent"}, &InstallOptions{Port: 7878}))
-	require.NoError(t, ops.Start("radarr", "op-1", OpTypeInstall, OpPhaseTopology))
+	require.NoError(t, ops.Start("radarr", "radarr", "op-1", OpTypeInstall, OpPhaseTopology))
 
 	all, err := store.GetAll()
 	require.NoError(t, err)
@@ -317,4 +317,33 @@ func TestAppStore_ScanPathsAgree(t *testing.T) {
 	assert.Equal(t, all[0].Operation.Type, one.Operation.Type)
 	assert.Equal(t, all[0].Operation.Phase, one.Operation.Phase)
 	assert.Equal(t, all[0].Operation.Status, one.Operation.Status)
+}
+
+// The apps read used to LEFT JOIN `operations`, which was sound only while
+// that table held one row per app. It now holds one row per node, so the
+// read side folds the node rows into one projection. A join left in place
+// would have returned the app once per node instead.
+func TestAppStore_OperationAggregatesNodeRows(t *testing.T) {
+	db := testdb.SetupTestDB(t)
+	apps := NewAppStore(db)
+	ops := NewOperationStore(db)
+
+	require.NoError(t, apps.Install("immich", "Immich", "1.0", nil, nil))
+	require.NoError(t, ops.Start("immich", "apps-immich-postgres", "op-1", OpTypeInstall, OpPhaseHealth))
+	require.NoError(t, ops.Complete("immich", "apps-immich-postgres"))
+	require.NoError(t, ops.Start("immich", "apps-immich-ml", "op-1", OpTypeInstall, OpPhaseHealth))
+	require.NoError(t, ops.Fail("immich", "apps-immich-ml", OpPhaseHealth, "model download failed", true))
+
+	one, err := apps.GetByCatalogID("immich")
+	require.NoError(t, err)
+	require.NotNil(t, one.Operation)
+	assert.Equal(t, OpStatusFailed, one.Operation.Status, "the failed node is the app's answer")
+	assert.Equal(t, "apps-immich-ml", one.Operation.Node)
+	assert.Equal(t, "model download failed", one.Operation.Cause)
+
+	all, err := apps.GetAll()
+	require.NoError(t, err)
+	require.Len(t, all, 1, "one app is one row, not one row per node")
+	require.NotNil(t, all[0].Operation)
+	assert.Equal(t, one.Operation.Node, all[0].Operation.Node)
 }
