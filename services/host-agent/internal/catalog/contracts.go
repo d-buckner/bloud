@@ -123,6 +123,20 @@ var contracts = []Contract{
 	// account Bloud named for it; a Jellyfin the operator registered from down
 	// the hall has whatever account they made there, and a hardcoded constant
 	// cannot describe both.
+	//
+	// The contract carries the login, and it makes no promise about how the
+	// consumer spends it. Most consumers trade it for a long-lived API key of
+	// their own and cache that. A server reached over the Subsonic protocol has
+	// no key to mint, so `apps/navidrome-mcp` signs every request with the
+	// account itself and holds nothing it could revoke. Both are honest uses of
+	// the same two fields, and minting a key is not part of the contract: it is
+	// `apps/jellyfin`'s `EnsureAPIKey` helper, which a consumer reuses when its
+	// provider offers one.
+	//
+	// What decides which providers arrive is the consumer's `compatible:` list,
+	// not the contract name. A household runs Jellyfin for the TV and Navidrome
+	// for the music; each consumer names the providers it means, so neither is
+	// ever handed the other's login.
 	{Name: "mediaServer", Secrets: []string{"adminPassword"}, Values: []ValueSpec{{Key: "adminUsername"}}},
 
 	// The identity provider hands the consumer the API token it generated for

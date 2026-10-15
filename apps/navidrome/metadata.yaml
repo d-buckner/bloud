@@ -23,6 +23,35 @@ integrations:
       - app: authentik
         default: true
 
+# The music library a consumer browses and changes. The credential is the
+# internal bootstrap admin's password: it is the only account password this app
+# holds, because every other account here is synced from Authentik and Bloud
+# never learns a password for one.
+#
+# A consumer reaches Navidrome over the Subsonic API, which the `sso` block below
+# already leaves unauthenticated at `/rest/`. So an account password is both what
+# that protocol needs and enough to use it.
+provides:
+  mediaServer:
+    secrets: [adminPassword]
+    # The contract's secret name is the consumer's wire field, not the operator's
+    # word for it. Someone registering a Navidrome Bloud does not run types the
+    # password of whichever account they chose, and "Admin password" would ask
+    # for a role that account may not have.
+    secretLabels:
+      adminPassword: Account password
+    secretHelp:
+      adminPassword: >-
+        Any Navidrome account that can read your library. The Subsonic API signs
+        each request with the password itself, so an account whose password is
+        held only by an identity provider cannot be used here.
+    # The name below is the account `bootstrapAdminUsername` creates in
+    # apps/navidrome/configurator.go, and it is true only of an install Bloud
+    # booted, so the remote-install form asks instead of prefilling it.
+    values:
+      adminUsername: bloud-admin
+    operatorValues: [adminUsername]
+
 # SSO via Authentik forward auth; Subsonic API clients use their own token auth.
 # /rest/ bypasses forward-auth so Subsonic clients can authenticate directly
 # against Navidrome using the Subsonic credential scheme (accepted trade-off:
