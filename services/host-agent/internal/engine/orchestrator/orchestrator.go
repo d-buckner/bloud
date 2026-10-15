@@ -286,7 +286,7 @@ func (o *Orchestrator) recordInstallNow(appName string) {
 		o.logger.Error("submit: failed to record install row", "app", appName, "error", err)
 		return
 	}
-	o.recordOpStart(appName, store.OpTypeInstall, store.OpPhasePlanning)
+	o.recordOpStart(appName, appName, store.OpTypeInstall, store.OpPhasePlanning)
 }
 
 // Start runs an initial convergence pass and then processes intents as they

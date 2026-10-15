@@ -54,11 +54,9 @@ func (s *AppStore) notify() {
 
 func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 	rows, err := s.db.Query(`
-		SELECT a.id, a.catalog_id, a.display_name, a.version, a.status, a.last_error, a.port, a.is_system, a.integration_config, a.installed_at, a.updated_at,
-			op.id, op.type, op.phase, op.status, op.retryable, op.cause, op.started_at, op.updated_at
-		FROM apps a
-		LEFT JOIN operations op ON op.app_name = a.catalog_id
-		ORDER BY a.catalog_id
+		SELECT id, catalog_id, display_name, version, status, last_error, port, is_system, integration_config, installed_at, updated_at
+		FROM apps
+		ORDER BY catalog_id
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query apps: %w", err)
@@ -73,18 +71,22 @@ func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 		}
 		apps = append(apps, app)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to query apps: %w", err)
+	}
 
+	if err := s.attachOperations(apps); err != nil {
+		return nil, err
+	}
 	return apps, nil
 }
 
 // GetByCatalogID returns an installed app by catalog ID
 func (s *AppStore) GetByCatalogID(catalogID string) (*InstalledApp, error) {
 	row := s.db.QueryRow(`
-		SELECT a.id, a.catalog_id, a.display_name, a.version, a.status, a.last_error, a.port, a.is_system, a.integration_config, a.installed_at, a.updated_at,
-			op.id, op.type, op.phase, op.status, op.retryable, op.cause, op.started_at, op.updated_at
-		FROM apps a
-		LEFT JOIN operations op ON op.app_name = a.catalog_id
-		WHERE a.catalog_id = ?`, catalogID)
+		SELECT id, catalog_id, display_name, version, status, last_error, port, is_system, integration_config, installed_at, updated_at
+		FROM apps
+		WHERE catalog_id = ?`, catalogID)
 
 	app, err := s.scanAppRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -94,6 +96,9 @@ func (s *AppStore) GetByCatalogID(catalogID string) (*InstalledApp, error) {
 		return nil, fmt.Errorf("failed to get app: %w", err)
 	}
 
+	if err := s.attachOperations([]*InstalledApp{app}); err != nil {
+		return nil, err
+	}
 	return app, nil
 }
 
@@ -342,17 +347,21 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 	return s.scanAppColumns(row.Scan)
 }
 
-// scanAppColumns scans one apps+operations row through the provided scanner
-// and folds it into an InstalledApp. Both *sql.Rows and *sql.Row satisfy the
-// scan func, so the column order and post-processing live exactly once: a
-// schema change touches one Scan list, not two near-identical copies.
+// scanAppColumns scans one apps row through the provided scanner and
+// folds it into an InstalledApp. Both *sql.Rows and *sql.Row satisfy the
+// scan func, so the column order and post-processing live exactly once:
+// a schema change touches one Scan list, not two near-identical copies.
+//
+// The recorded operation is not part of this scan. It used to arrive on a
+// LEFT JOIN against `operations`, which was sound only while that table
+// held one row per app. It now holds one row per node, so a join would
+// multiply app rows and pick a survivor at random; attachOperations
+// folds the per-node rows into one projection by rule instead.
 func (s *AppStore) scanAppColumns(scan func(dest ...any) error) (*InstalledApp, error) {
 	var app InstalledApp
 	var port sql.NullInt64
 	var configJSON sql.NullString
 	var installedAt, updatedAt string
-	var opID, opType, opPhase, opStatus, opCause, opStarted, opUpdated sql.NullString
-	var opRetry sql.NullInt64
 
 	err := scan(
 		&app.ID,
@@ -366,14 +375,6 @@ func (s *AppStore) scanAppColumns(scan func(dest ...any) error) (*InstalledApp, 
 		&configJSON,
 		&installedAt,
 		&updatedAt,
-		&opID,
-		&opType,
-		&opPhase,
-		&opStatus,
-		&opRetry,
-		&opCause,
-		&opStarted,
-		&opUpdated,
 	)
 	if err != nil {
 		return nil, err
@@ -392,25 +393,53 @@ func (s *AppStore) scanAppColumns(scan func(dest ...any) error) (*InstalledApp, 
 		}
 	}
 
-	if opID.Valid {
-		app.Operation = opFromJoin(app.CatalogID, opID, opType, opPhase, opStatus, opRetry, opCause, opStarted, opUpdated)
-	}
-
 	return &app, nil
 }
 
-// opFromJoin assembles the operation side of the apps LEFT JOIN
-// operations read. NULL join columns mean "no recorded operation".
-func opFromJoin(catalogID string, opID, opType, opPhase, opStatus sql.NullString, opRetry sql.NullInt64, opCause, opStarted, opUpdated sql.NullString) *Operation {
-	return &Operation{
-		AppName:   catalogID,
-		ID:        opID.String,
-		Type:      opType.String,
-		Phase:     opPhase.String,
-		Status:    opStatus.String,
-		Retryable: opRetry.Int64 != 0,
-		Cause:     opCause.String,
-		StartedAt: opStarted.String,
-		UpdatedAt: opUpdated.String,
+// attachOperations folds each app's per-node operation rows into the one
+// Operation the app reports, using the ranking OperationStore.Get
+// documents. Apps with no recorded operation keep a nil Operation, which
+// is how a reader tells "never driven" from "driven and finished".
+//
+// One query for the whole set, not one per app: GetAll runs on every
+// dashboard read and every status poll.
+func (s *AppStore) attachOperations(apps []*InstalledApp) error {
+	wanted := make(map[string]*InstalledApp, len(apps))
+	for _, app := range apps {
+		if app != nil {
+			wanted[app.CatalogID] = app
+		}
 	}
+	if len(wanted) == 0 {
+		return nil
+	}
+
+	rows, err := s.db.Query(`
+		SELECT app_name, node, id, type, phase, status, retryable, cause, started_at, updated_at
+		FROM operations`)
+	if err != nil {
+		return fmt.Errorf("failed to query operations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	best := map[string]*Operation{}
+	for rows.Next() {
+		op, err := scanOperation(rows)
+		if err != nil {
+			return fmt.Errorf("failed to scan operation: %w", err)
+		}
+		if cur, ok := best[op.AppName]; !ok || ranksAbove(op, cur) {
+			best[op.AppName] = op
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to query operations: %w", err)
+	}
+
+	for name, op := range best {
+		if app, ok := wanted[name]; ok {
+			app.Operation = op
+		}
+	}
+	return nil
 }

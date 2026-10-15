@@ -148,8 +148,8 @@ func (o *Orchestrator) runResyncPreStart(ctx context.Context, id, appID string, 
 	prestart, err := cfg.PreStart(pctx, state)
 	if err != nil {
 		o.logger.Warn("resync: PreStart failed", "app", id, "error", err)
-		o.ensureOpDrive(appID)
-		o.recordOpFail(appID, store.OpPhasePrestart, opCause(id, appID, err))
+		o.ensureOpDrive(appID, id)
+		o.recordOpFail(appID, id, store.OpPhasePrestart, opCause(id, appID, err))
 		return configurator.PreStartResult{}, false
 	}
 	o.logger.Info("resync: PreStart complete",
@@ -212,11 +212,11 @@ func (o *Orchestrator) runResyncPostStart(ctx context.Context, id, appID string,
 	o.logger.Info("resync: running PostStart", "app", id)
 	if err := o.runPostStart(ctx, cfg, state); err != nil {
 		o.logger.Warn("resync: PostStart failed", "app", id, "error", err)
-		o.ensureOpDrive(appID)
-		o.recordOpFail(appID, store.OpPhasePoststart, opCause(id, appID, err))
+		o.ensureOpDrive(appID, id)
+		o.recordOpFail(appID, id, store.OpPhasePoststart, opCause(id, appID, err))
 		return
 	}
-	o.healOp(appID)
+	o.healOp(appID, id)
 	o.logger.Info("resync: PostStart complete", "app", id)
 }
 
@@ -446,7 +446,7 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	}
 
 	owner := o.ownerApp(id)
-	o.ensureOpDrive(owner)
+	o.ensureOpDrive(owner, id)
 
 	// A full drive is an intentional event: an install, a reboot, a crash
 	// recovery, or an explicit reset. Whatever the resync watchdog was
@@ -491,7 +491,7 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 func (o *Orchestrator) failNode(id, owner, phase string, err error, msg string) {
 	o.logger.Warn(msg, "app", id, "error", err)
 	_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-	o.recordOpFail(owner, phase, opCause(id, owner, err))
+	o.recordOpFail(owner, id, phase, opCause(id, owner, err))
 }
 
 // runPreStartPhase runs the configurator's PreStart and reports whether the
@@ -501,7 +501,7 @@ func (o *Orchestrator) runPreStartPhase(ctx context.Context, id, owner string, c
 		return configurator.PreStartResult{}, true
 	}
 	o.logger.Info("lifecycle phase: PreStart", "app", id)
-	o.recordOpPhase(owner, store.OpPhasePrestart)
+	o.recordOpPhase(owner, id, store.OpPhasePrestart)
 	_ = o.graph.SetActualStatus(id, graph.StatusPreStartConfig, "")
 	pctx, cancel := o.appPhaseCtx(ctx)
 	defer cancel()
@@ -528,7 +528,7 @@ func (o *Orchestrator) runContainerPhases(ctx context.Context, id, owner string,
 		_ = o.config.Runtime.Containers.Remove(ctx, def.Name)
 	}
 	o.logger.Info("lifecycle phase: EnsureContainer", "app", id)
-	o.recordOpPhase(owner, store.OpPhaseTopology)
+	o.recordOpPhase(owner, id, store.OpPhaseTopology)
 	_ = o.graph.SetActualStatus(id, graph.StatusStarting, "")
 	if err := o.ensureContainerFromDef(ctx, def, appCatalogID); err != nil {
 		o.failNode(id, owner, store.OpPhaseTopology, err, "EnsureContainer failed")
@@ -542,7 +542,7 @@ func (o *Orchestrator) runContainerPhases(ctx context.Context, id, owner string,
 // context, so a container that never becomes healthy cannot pin the pass.
 func (o *Orchestrator) runHealthPhase(ctx context.Context, id, owner string, def *catalog.ContainerDef) bool {
 	o.logger.Info("lifecycle phase: HealthCheck", "app", id)
-	o.recordOpPhase(owner, store.OpPhaseHealth)
+	o.recordOpPhase(owner, id, store.OpPhaseHealth)
 	healthCtx := ctx
 	if o.config.Tuning.HealthCheckTimeout > 0 {
 		var cancel context.CancelFunc
@@ -566,12 +566,12 @@ func (o *Orchestrator) runHealthPhase(ctx context.Context, id, owner string, def
 // re-converges, rather than parking a shutdown in ERROR (R3).
 func (o *Orchestrator) runPostStartPhase(ctx context.Context, id, owner string, cfg configurator.NodeLifecycle, state *configurator.AppState) bool {
 	o.logger.Info("lifecycle phase: PostStart", "app", id)
-	o.recordOpPhase(owner, store.OpPhasePoststart)
+	o.recordOpPhase(owner, id, store.OpPhasePoststart)
 	_ = o.graph.SetActualStatus(id, graph.StatusPostStartConfig, "")
 	if err := o.runPostStart(ctx, cfg, state); err != nil {
 		if ctx.Err() != nil {
 			o.logger.Info("PostStart interrupted by shutdown; leaving status for re-converge", "app", id, "error", err)
-			o.recordOpFail(owner, store.OpPhasePoststart, opCause(id, owner, fmt.Errorf("interrupted by shutdown: %w", err)))
+			o.recordOpFail(owner, id, store.OpPhasePoststart, opCause(id, owner, fmt.Errorf("interrupted by shutdown: %w", err)))
 			return false
 		}
 		o.failNode(id, owner, store.OpPhasePoststart, err, "PostStart failed")

@@ -29,7 +29,7 @@ func (o *Orchestrator) setupStatusSync() {
 			case graph.StatusRunning:
 				_ = o.appStore.UpdateStatus(appID, store.AppStatusRunning)
 				_ = o.appStore.SetLastError(appID, "")
-				o.recordOpComplete(appID)
+				o.recordOpComplete(appID, node.ID)
 			case graph.StatusError:
 				_ = o.appStore.UpdateStatus(appID, store.AppStatusError)
 				_ = o.appStore.SetLastError(appID, node.Error)
@@ -43,10 +43,13 @@ func (o *Orchestrator) setupStatusSync() {
 			_ = o.appStore.UpdateStatus(appID, store.AppStatusError)
 			_ = o.appStore.SetLastError(appID, node.Error)
 		case graph.StatusRunning:
+			// The node reached RUNNING, so this node's own drive row is
+			// done. Whether the app as a whole is Running is the separate,
+			// aggregated question on the next line.
+			o.recordOpComplete(appID, node.ID)
 			if o.allContainersRunning(appID) {
 				_ = o.appStore.UpdateStatus(appID, store.AppStatusRunning)
 				_ = o.appStore.SetLastError(appID, "")
-				o.recordOpComplete(appID)
 			}
 		}
 	})

@@ -136,7 +136,7 @@ func TestRecorder_RemoveAppTerminalStates(t *testing.T) {
 	require.NoError(t, g.AddNode("app2"))
 	require.NoError(t, g.SetTargetStatus("app2", graph.StatusRunning))
 	// Seed the uninstall row that Submit would have created.
-	require.NoError(t, ops.Start("app2", "op-u", store.OpTypeUninstall, store.OpPhaseTopology))
+	require.NoError(t, ops.Start("app2", "app2", "op-u", store.OpTypeUninstall, store.OpPhaseTopology))
 
 	require.NoError(t, orch.RemoveApp(context.Background(), "app2", false))
 	op, _ = ops.Get("app2")
@@ -150,7 +150,7 @@ func TestRecorder_StartFlipsOrphans(t *testing.T) {
 	orch, _, _ := newRecordingOrchestrator(t, ops, NewFakeAppStore())
 
 	// A running row from a previous process = drive died mid-phase.
-	require.NoError(t, ops.Start("app1", "op-x", store.OpTypeInstall, store.OpPhaseHealth))
+	require.NoError(t, ops.Start("app1", "app1", "op-x", store.OpTypeInstall, store.OpPhaseHealth))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

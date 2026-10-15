@@ -158,7 +158,7 @@ func (o *Orchestrator) applyUninstallIntent(intent UninstallAppIntent, pendingCl
 		o.logger.Error("failed to mark app as uninstalling", "app", intent.AppName, "error", err)
 		return
 	}
-	o.recordOpStart(intent.AppName, store.OpTypeUninstall, store.OpPhaseTopology)
+	o.recordOpStart(intent.AppName, intent.AppName, store.OpTypeUninstall, store.OpPhaseTopology)
 	pendingClearData[intent.AppName] = intent.ClearData
 }
 
@@ -297,7 +297,7 @@ func (o *Orchestrator) convergeUninstalls(ctx context.Context, apps []*store.Ins
 		if err := o.deprovisionAppSSO(ctx, app); err != nil {
 			o.logger.Warn("uninstall: SSO deprovision failed, deferring the uninstall for retry",
 				"app", app.CatalogID, "error", err)
-			o.recordOpFail(app.CatalogID, store.OpPhaseTopology, err)
+			o.recordOpFail(app.CatalogID, app.CatalogID, store.OpPhaseTopology, err)
 			continue
 		}
 		if err := o.RemoveApp(ctx, app.CatalogID, clearData); err != nil {

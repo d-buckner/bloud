@@ -410,8 +410,8 @@ func TestSelfHeal_RetriesARetryableFailure(t *testing.T) {
 	// Reproduce the reported state: node in ERROR, row says a retry may help.
 	require.NoError(t, f.g.SetActualStatus(healContainer, graph.StatusError, "permission denied"))
 	require.NoError(t, f.apps.UpdateStatus(healApp, "error"))
-	require.NoError(t, ops.Start(healApp, "op-1", store.OpTypeInstall, store.OpPhasePrestart))
-	require.NoError(t, ops.Fail(healApp, store.OpPhasePrestart, "permission denied", true))
+	require.NoError(t, ops.Start(healApp, healContainer, "op-1", store.OpTypeInstall, store.OpPhasePrestart))
+	require.NoError(t, ops.Fail(healApp, healContainer, store.OpPhasePrestart, "permission denied", true))
 
 	// The cause is cleared: the configurator now succeeds.
 	f.converge(NewReconcileIntent())
@@ -433,8 +433,8 @@ func TestSelfHeal_LeavesNonRetryableFailureTerminal(t *testing.T) {
 	f.orch.config.Stores.Operations = ops
 
 	require.NoError(t, f.g.SetActualStatus(healContainer, graph.StatusError, "unsupported license"))
-	require.NoError(t, ops.Start(healApp, "op-1", store.OpTypeInstall, store.OpPhasePrestart))
-	require.NoError(t, ops.Fail(healApp, store.OpPhasePrestart, "unsupported license", false))
+	require.NoError(t, ops.Start(healApp, healContainer, "op-1", store.OpTypeInstall, store.OpPhasePrestart))
+	require.NoError(t, ops.Fail(healApp, healContainer, store.OpPhasePrestart, "unsupported license", false))
 
 	f.converge(NewReconcileIntent())
 
@@ -452,8 +452,8 @@ func TestSelfHeal_DoesNotResurrectAnUninstallingApp(t *testing.T) {
 
 	require.NoError(t, f.g.SetActualStatus(healContainer, graph.StatusError, "boom"))
 	require.NoError(t, f.apps.UpdateStatus(healApp, "uninstalling"))
-	require.NoError(t, ops.Start(healApp, "op-1", store.OpTypeInstall, store.OpPhasePrestart))
-	require.NoError(t, ops.Fail(healApp, store.OpPhasePrestart, "boom", true))
+	require.NoError(t, ops.Start(healApp, healContainer, "op-1", store.OpTypeInstall, store.OpPhasePrestart))
+	require.NoError(t, ops.Fail(healApp, healContainer, store.OpPhasePrestart, "boom", true))
 
 	f.orch.retryErroredNodes()
 

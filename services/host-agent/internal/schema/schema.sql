@@ -70,12 +70,20 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
--- Durable lifecycle operation state: current-or-last drive per app.
--- Graph state controls convergence; this row explains user-intent
+-- Durable lifecycle operation state: current-or-last drive per container
+-- node. Graph state controls convergence; these rows explain user-intent
 -- outcome (which phase, retryability, cause) and crash visibility.
--- See docs/plans/operation-state-design.md.
+--
+-- The key is (app_name, node), not app_name. The engine dispatches the
+-- nodes of one app concurrently, so one row per app put every node of
+-- Immich (postgres, redis, server, ml) behind a single UPDATE and left
+-- the app-level answer to whichever write landed last. One row per node
+-- means a writer only ever touches its own row, and the app-level view
+-- is an aggregation the read side computes by rule instead of by race.
+-- See docs/operations/tech-debt.md item 34.
 CREATE TABLE IF NOT EXISTS operations (
-    app_name   TEXT PRIMARY KEY,
+    app_name   TEXT NOT NULL,
+    node       TEXT NOT NULL,
     id         TEXT NOT NULL,
     type       TEXT NOT NULL,
     phase      TEXT NOT NULL,
@@ -83,7 +91,8 @@ CREATE TABLE IF NOT EXISTS operations (
     retryable  INTEGER NOT NULL DEFAULT 1,
     cause      TEXT NOT NULL DEFAULT '',
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (app_name, node)
 );
 
 -- Operator-declared pointers to things Bloud does not run: a launcher tile,
