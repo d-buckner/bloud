@@ -122,6 +122,23 @@ describeApp('penpot', (app) => {
         );
       }
 
+      // A provider identity is not yet a Penpot account. On a first sign-in
+      // Penpot hands the browser a prepared-registration token and asks what
+      // to call the person, with the name field prefilled from the provider's
+      // claims, so the step is one click. Bloud sets disable-email-
+      // verification, which Penpot's flag parser subtracts from the default
+      // set, and register-profile treats an absent :email-verification as
+      // "active on creation": the account is live and its session is minted by
+      // the same call, so nothing asks anyone to check an inbox they do not have.
+      // On a rerun against an install that already has the account, Penpot skips
+      // this step and goes straight to the dashboard.
+      if (penpot.url().includes('/auth/register/validate')) {
+        await expect(penpot.getByRole('heading', { name: /your name/i })).toBeVisible({
+          timeout: 30_000,
+        });
+        await penpot.getByRole('button', { name: /create an account/i }).click();
+      }
+
       // Penpot created the account from the provider's claims (matched by
       // email) and landed the browser on the dashboard rather than back on the
       // login page.

@@ -1,6 +1,6 @@
 # Penpot Integration
 
-## Status: implemented; booted in CI, which is where the three things that only a real boot can catch were caught
+## Status: implemented; the CI boot is where the things only a real boot can catch were caught
 
 `penpot` is [Penpot](https://penpot.app): an open-source design platform for
 interfaces, design systems, and prototypes. It is the first catalog app that
@@ -26,10 +26,11 @@ through the `mcp` contract rather than through `inference`.
 Everything below marked as read-from-source was checked against the pinned
 `2.18.3` tag on 2026-10-14 (the frontend image's entrypoint and nginx templates,
 the backend config and SSRF modules, the Integrations page, the compose
-topology), and against the published tags on Docker Hub. What has *not* happened
-yet is running the stack: the install through the API, the graph, and the OIDC
-round trip are the integration tier's `penpot` leg and the
-`e2e/tests/penpot.spec.ts` journey, and both are new with this app.
+topology), and against the published tags on Docker Hub. The install through the
+API, the graph, and the OIDC round trip run in CI: the `penpot` leg of the
+integration tier and the `e2e/tests/penpot.spec.ts` journey, both new with this
+app. The two findings that only a live request can produce, the lost token-exchange
+body and the registration prompt, came from those legs and are recorded below.
 
 ## The configuration is one file, and the file is the only channel that works
 
@@ -228,6 +229,41 @@ that offers h2c hits this. And
 rather than with Go's `http.Client`, because Go manages `Connection` and
 `Upgrade` itself and would not be trustworthy as a reproduction.
 
+## A first sign-in ends on a name prompt, and one click finishes it
+
+The OIDC round trip does not land a brand-new person on the dashboard. Penpot's
+`callback-handler` (`app/auth/oidc.clj`, retrieved 2026-10-14) looks up the
+provider's email, finds no profile, and hands the browser a
+`prepared-register` token at `/#/auth/register/validate`. The page that renders
+is a single field, *Your name*, prefilled from the provider's claims, and a
+**Create an account** button.
+
+That step is not an obstacle Bloud has to route around, and it is not the email
+verification step either. `register-profile` (`app/rpc/commands/auth.clj`) decides
+activation as:
+
+```clojure
+(or (boolean (:is-active claims))
+    (boolean (:email-verified claims))
+    (not (contains? cf/flags :email-verification)))
+```
+
+and `app/common/flags.cljc` parses `disable-email-verification` by subtracting
+`:email-verification` from the default set (the default carries
+`:enable-email-verification`). So with the flags Bloud writes, the account is
+active on creation and the same call mints the session: nobody is asked to open
+an inbox that does not exist. The e2e journey clicks that button and asserts the
+dashboard, which is the only place this step is provable.
+
+Two details that look like mistakes and are not. `disable-registration` does not
+block this path: the callback accepts either `:registration` or
+`:oidc-registration`, and Penpot's own flag comment describes
+`enable-oidc-registration` as taking effect "only when general `registration` is
+disabled", which is exactly the pairing Bloud wants: no open sign-up form, but a
+provider-verified person can become a user. And on a second sign-in with the same
+email the prompt is gone, because the profile now exists and is active, so the
+callback takes its login branch straight through.
+
 ## MCP: Bloud reads the key, it does not make one
 
 Penpot's MCP is three pieces, and only one of them is a container
@@ -393,7 +429,7 @@ defaults is not visible in a TCP connect.
 | `apps/conformance_test.go` | both nodes are registered and satisfy `NodeLifecycle` |
 | `catalog/resolution_test.go` | Penpot is a `mcp` provider the resolver can wire to Hermes |
 | `internal/e2e/penpot_test.go` (integration tier) | install through the real API; `config.js` served on the direct and routed origins; the backend actually reached its issuer; the env file's mode and contents; the MCP contract stays unpublished on a fresh install; uninstall cleans up 7 containers, data, routes, and Authentik |
-| `e2e/tests/penpot.spec.ts` | the browser journey: the login page offers **Bloud SSO**, the round trip through Authentik lands on the Penpot dashboard |
+| `e2e/tests/penpot.spec.ts` | the browser journey: the login page offers **Bloud SSO**, the round trip through Authentik completes Penpot's first-run name prompt, and the dashboard renders |
 
 ## Open questions
 
