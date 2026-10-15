@@ -33,6 +33,7 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/immich"
 	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
 	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
+	_ "codeberg.org/d-buckner/bloud/apps/navidrome-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/paperless-ngx"
 	_ "codeberg.org/d-buckner/bloud/apps/penpot"
 	_ "codeberg.org/d-buckner/bloud/apps/podly"
@@ -70,6 +71,7 @@ func NodeNames() []string {
 		"apps-immich-server",
 		"apps-jellyfin",
 		"apps-navidrome",
+		"apps-navidrome-mcp",
 		"apps-paperless-ngx",
 		"apps-penpot-backend",
 		"apps-penpot-frontend",

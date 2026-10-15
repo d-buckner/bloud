@@ -724,3 +724,105 @@ func TestExternalHomeAssistantFillsHaMCPBindingFromTheRealCatalog(t *testing.T) 
 	assert.NotEqual(t, "bloud-bootstrap-admin", binding.Username,
 		"the name this instance would have minted authenticates against nothing out there")
 }
+
+// TestExternalNavidromeFillsNavidromeMCPBindingFromTheRealCatalog is the same
+// claim as the Home Assistant case above, for the music library: an operator who
+// already runs Navidrome somewhere else registers it once, and the MCP wrapper
+// that consumes it gets that address and that account without either the
+// consumer's metadata or its configurator learning that the provider is remote.
+//
+// Every field that decides the outcome is read from a checked-in metadata.yaml:
+// navidrome's `provides.mediaServer` (the secret name, the `adminUsername` value,
+// and the `operatorValues` claim that the account name is the operator's) and
+// navidrome-mcp's `integrations.mediaServer` (which declares `adminPassword`
+// under `requires`, so the credential is handed over at all). A synthetic app
+// cannot fail in the way that matters here: the two real files drifting apart.
+func TestExternalNavidromeFillsNavidromeMCPBindingFromTheRealCatalog(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	for _, app := range realCatalog(t) {
+		cache.AddApp(app)
+	}
+
+	appStore := NewFakeAppStore()
+	install(t, appStore, "navidrome-mcp", nil)
+
+	extStore := store.NewExternalAppStore(testdb.SetupTestDB(t))
+	require.NoError(t, extStore.Upsert(&store.ExternalApp{
+		ID:     "ext-navidrome",
+		Kind:   string(store.ExternalAppKindProvider),
+		Source: store.ExternalAppSourceForApp("navidrome"),
+		Name:   "NAS Navidrome",
+		URL:    "https://music.example.net",
+		Values: `{"mediaServer":{"adminUsername":"daniel"}}`,
+	}))
+
+	secrets := newFakeSecrets()
+	secrets.publish(store.ExternalSecretScope("ext-navidrome"), "mediaServer", "operator-account-password")
+	// The credential a locally-installed Navidrome would have minted. It is in the
+	// store to prove the external record never reads it.
+	secrets.publish("navidrome", "adminPassword", "LOCAL-NAVIDROME-PASSWORD")
+
+	registry := new(MockConfiguratorRegistry)
+	registry.On("Get", mock.Anything).Return(nil).Maybe()
+
+	orch := NewOrchestrator(
+		graph.New(graph.NewMapRepository()), registry, cache, "/tmp/bloud-test", newTestLogger(),
+		OrchestratorConfig{Stores: StoresConfig{AppStore: appStore, Secrets: secrets, ExternalApps: extStore}},
+	)
+	orch.settings = newFakeSettings()
+
+	state := orch.buildAppState("navidrome-mcp")
+	require.Len(t, state.Integrations.MediaServers, 1,
+		"one Navidrome is declared, and the operator registered exactly one")
+	binding := state.Integrations.MediaServers[0]
+
+	assert.Equal(t, bindings.ProviderKindExternalApp, binding.Kind)
+	assert.Equal(t, "navidrome", binding.App)
+	assert.True(t, binding.Installed)
+	assert.Equal(t, "https://music.example.net", binding.BaseURL)
+	assert.Equal(t, "operator-account-password", binding.AdminPassword.String())
+	assert.NotEqual(t, "LOCAL-NAVIDROME-PASSWORD", binding.AdminPassword,
+		"a remote record reads its own scope, never the password a local install published")
+	assert.Equal(t, "daniel", binding.AdminUsername,
+		"the account on someone else's Navidrome is whoever that operator named")
+	assert.NotEqual(t, "bloud-admin", binding.AdminUsername,
+		"the account this instance would have minted authenticates against nothing out there")
+}
+
+// TestLocalNavidromeFillsNavidromeMCPBindingFromTheRealCatalog is the other half:
+// with no external record, the same consumer declaration binds the container
+// Bloud runs, by container address, with the bootstrap account Navidrome made.
+// The consumer's configurator reads one shape either way, and that is the whole
+// point of the contract.
+func TestLocalNavidromeFillsNavidromeMCPBindingFromTheRealCatalog(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	for _, app := range realCatalog(t) {
+		cache.AddApp(app)
+	}
+
+	appStore := NewFakeAppStore()
+	install(t, appStore, "navidrome-mcp", nil)
+	install(t, appStore, "navidrome", nil)
+
+	secrets := newFakeSecrets()
+	secrets.publish("navidrome", "adminPassword", "local-bootstrap-pw")
+
+	registry := new(MockConfiguratorRegistry)
+	registry.On("Get", mock.Anything).Return(nil).Maybe()
+
+	orch := NewOrchestrator(
+		graph.New(graph.NewMapRepository()), registry, cache, "/tmp/bloud-test", newTestLogger(),
+		OrchestratorConfig{Stores: StoresConfig{AppStore: appStore, Secrets: secrets}},
+	)
+	orch.settings = newFakeSettings()
+
+	state := orch.buildAppState("navidrome-mcp")
+	require.Len(t, state.Integrations.MediaServers, 1)
+	binding := state.Integrations.MediaServers[0]
+
+	assert.Equal(t, bindings.ProviderKindApp, binding.Kind)
+	assert.True(t, binding.Installed)
+	assert.Equal(t, "http://apps-navidrome:4533", binding.BaseURL)
+	assert.Equal(t, "bloud-admin", binding.AdminUsername)
+	assert.Equal(t, "local-bootstrap-pw", binding.AdminPassword.String())
+}
