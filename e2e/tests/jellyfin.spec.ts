@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
-import { expectInstalledInCatalog, expectRunningTile, openAppFromHome } from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
+import { openAppFromHome } from '../lib/apps';
 import { appUrlPattern } from '../lib/origin';
 import { TEST_CREDS } from './constants';
 
@@ -10,25 +9,6 @@ import { TEST_CREDS } from './constants';
 // means the first failure skips the rungs behind it. Rungs go pre-auth →
 // authed so no case depends on app state that a later case consumes.
 describeApp('jellyfin', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: fresh-VM image pull + first-run convergence.
-    // When this fails, the UI rungs below are skipped, which distinguishes
-    // a broken install from a misbehaving app.
-    test.setTimeout(12 * 60_000);
-    await ensureInstalled('jellyfin');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'Jellyfin');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'Jellyfin');
-  });
-
   test('opens from the home tile and serves its login page', async () => {
     test.setTimeout(180_000);
     const jellyfin = await openAppFromHome(app.page, 'Jellyfin');
@@ -68,4 +48,4 @@ describeApp('jellyfin', (app) => {
       timeout: 60_000,
     });
   });
-});
+}, { label: 'Jellyfin' });

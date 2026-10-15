@@ -2,12 +2,7 @@
 import { test, expect } from '../lib/fixtures';
 import type { Page } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
-import {
-  expectInstalledInCatalog,
-  expectRunningTile,
-  openAppFromHome,
-} from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
+import { openAppFromHome } from '../lib/apps';
 import { LoginPage } from '../lib/loginPage';
 import { appOrigin } from '../lib/origin';
 import { TEST_CREDS } from './constants';
@@ -33,25 +28,6 @@ const MASTER_PASSWORD = 'Bloud-e2e-master-password-1';
 // this context has no session), and a first sign-in asks for a master password
 // because SSO never replaces it (the vault is encrypted under it).
 describeApp('vaultwarden', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: a single container on its own SQLite database. When
-    // this fails, the UI rungs below are skipped, which distinguishes a broken
-    // install from a misbehaving app.
-    test.setTimeout(10 * 60_000);
-    await ensureInstalled('vaultwarden');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'Vaultwarden');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'Vaultwarden');
-  });
-
   test('the sign-in page offers single sign-on only', async () => {
     test.setTimeout(120_000);
     const vault = await openAppFromHome(app.page, 'Vaultwarden');
@@ -126,6 +102,11 @@ describeApp('vaultwarden', (app) => {
       await vault.close();
     }
   });
+}, {
+  label: 'Vaultwarden',
+  // A single container on its own SQLite database: the smallest convergence
+  // in the catalog, so it gets the smallest budget.
+  convergeTimeoutMs: 10 * 60_000,
 });
 
 /**

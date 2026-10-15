@@ -2,8 +2,6 @@
 import { test, expect } from '../lib/fixtures';
 import type { Page } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
-import { expectInstalledInCatalog, expectRunningTile } from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
 import { appOrigin, escapeRegExp } from '../lib/origin';
 
@@ -19,26 +17,6 @@ const AFFINE_URL = appOrigin('affine');
 // lives in the browser profile, so a shared context would make them
 // order-dependent.
 describeApp('affine', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: fresh-VM image pull (own postgres + redis +
-    // server) + first-run convergence. When this fails, the UI rungs
-    // below are skipped, which distinguishes a broken install from a
-    // misbehaving app.
-    test.setTimeout(12 * 60_000);
-    await ensureInstalled('affine');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'AFFiNE');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'AFFiNE');
-  });
-
   test('SSO gates the app: the sign-in page launches the OIDC flow to the prompt', async ({
     browser,
   }) => {
@@ -114,7 +92,7 @@ describeApp('affine', (app) => {
       await context.close();
     }
   });
-});
+}, { label: 'AFFiNE' });
 
 /**
  * Drive AFFiNE's unauthenticated UI to the point where it redirects to

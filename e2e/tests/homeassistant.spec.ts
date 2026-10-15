@@ -2,9 +2,8 @@
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
 import { openAppFromHome } from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
 import { appUrlPattern } from '../lib/origin';
-import { BloudPage, HomeAssistantPage } from '../lib/pom';
+import { HomeAssistantPage } from '../lib/pom';
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. Home Assistant uses
@@ -13,25 +12,6 @@ import { BloudPage, HomeAssistantPage } from '../lib/pom';
 // provider's own welcome/consent screens), so the observable gate is "the
 // popup shows an auth screen instead of the dashboard".
 describeApp('homeassistant', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: fresh-VM image pull (plus the hass-oidc-auth
-    // custom integration download from GitHub) + first-run convergence.
-    // When this fails, the UI rungs below are skipped, which distinguishes
-    // a broken install from a misbehaving app.
-    test.setTimeout(12 * 60_000);
-    await ensureInstalled('homeassistant');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await new BloudPage(app.page).expectInstalled('Home Assistant');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await new BloudPage(app.page).expectRunningTile('Home Assistant');
-  });
-
   test('SSO gates the app: the popup lands on an auth screen', async () => {
     test.setTimeout(120_000);
     const ha = new HomeAssistantPage(await openAppFromHome(app.page, 'Home Assistant'));
@@ -85,4 +65,4 @@ describeApp('homeassistant', (app) => {
     // from Authentik rather than Home Assistant's built-in legacy provider.
     await ha.expectDashboard();
   });
-});
+}, { label: 'Home Assistant' });

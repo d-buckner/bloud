@@ -2,12 +2,7 @@
 import { test, expect } from '../lib/fixtures';
 import type { Page } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
-import {
-  expectInstalledInCatalog,
-  expectRunningTile,
-  openAppFromHome,
-} from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
+import { openAppFromHome } from '../lib/apps';
 import { LoginPage } from '../lib/loginPage';
 import { appOrigin, appUrlPattern } from '../lib/origin';
 
@@ -20,26 +15,6 @@ const PAPERLESS_NGX_URL = appOrigin('paperless-ngx');
 // authorization request, and the Authentik login happens on the issuer
 // origin, where this context has no session.
 describeApp('paperless-ngx', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: fresh-VM image pull of five containers (webserver,
-    // postgres, redis, gotenberg, tika) + first-run migrations. When this
-    // fails, the UI rungs below are skipped, which distinguishes a broken
-    // install from a misbehaving app.
-    test.setTimeout(15 * 60_000);
-    await ensureInstalled('paperless-ngx');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'Paperless-ngx');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'Paperless-ngx');
-  });
-
   test('SSO gates the app: unauthenticated visitors land on the provider', async () => {
     test.setTimeout(180_000);
     const paperless = await openAppFromHome(app.page, 'Paperless-ngx');
@@ -128,6 +103,11 @@ describeApp('paperless-ngx', (app) => {
       await paperless.close();
     }
   });
+}, {
+  label: 'Paperless-ngx',
+  // Four containers (the app plus its postgres, redis, and the
+  // gotenberg/tika sidecars), so the default budget is short on a cold VM.
+  convergeTimeoutMs: 15 * 60_000,
 });
 
 /**
