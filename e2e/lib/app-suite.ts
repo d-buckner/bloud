@@ -2,7 +2,8 @@
 import { test } from '@playwright/test';
 import type { BrowserContext, Page } from '@playwright/test';
 import { ensureSignedIn } from './auth';
-import { openAppFromHome } from './apps';
+import { ensureInstalled } from './api';
+import { expectInstalledInCatalog, expectRunningTile, openAppFromHome } from './apps';
 import { expectForwardAuthGate, signInThroughForwardAuth } from './forwardAuth';
 import { appHost } from './origin';
 
@@ -31,6 +32,12 @@ export interface ForwardAuthRungs {
 
 export interface DescribeAppOptions {
   /**
+   * The display name the dashboard shows for this app, for example
+   * "qBittorrent". The generic rungs look the app up by that label, because
+   * that is what a person reads on the tile and on the catalog card.
+   */
+  label: string;
+  /**
    * Register the standard forward-auth rungs for an app gated at the
    * ingress. The rungs belong to the framework, not the spec:
    *
@@ -44,7 +51,7 @@ export interface DescribeAppOptions {
    * registered after `body`, so the serial suite runs the pre-auth rungs
    * first and the app is proven reachable before the gate is exercised.
    */
-  forwardAuth?: ForwardAuthRungs;
+  forwardAuth?: Omit<ForwardAuthRungs, 'label'>;
 }
 
 /**
@@ -57,30 +64,30 @@ export interface DescribeAppOptions {
  *    into the app itself happen in popups, so the Bloud session is never
  *    mutated mid-suite and the Authentik login happens exactly once.
  *
- * Test cases stay explicit. Order them so the rungs a broken install
- * invalids come first: the convention is a "converges to running" test
- * (via `ensureInstalled`) first, then UI behavior:
+ * It also registers the three rungs that say nothing about the app: the
+ * install converges, the app shows in the catalog, and the home tile
+ * reaches RUNNING. Those were copied into all sixteen app specs, and a
+ * copy is a thing that can be missing in one spec and right in fifteen.
+ * They run first, so serial mode skips everything behind them when the
+ * install itself is broken, which names the real failure instead of
+ * reporting fifteen UI timeouts.
+ *
+ * What is left in a spec is only what that app does:
  *
  *   describeApp('jellyfin', (app) => {
- *     test('converges to running', async () => {
- *       test.setTimeout(12 * 60_000);
- *       await ensureInstalled('jellyfin');
- *     });
- *
- *     test('appears on the home screen', async () => {
- *       await app.page.goto('/');
+ *     test('opens from the home tile and serves its login page', async () => {
  *       ...
  *     });
- *   });
+ *   }, { label: 'Jellyfin' });
  *
- * A forward-auth app passes `{ forwardAuth: { label, title, appShell } }`
- * and gets the two ingress rungs registered for it, instead of copying
- * the same two `test(...)` blocks into every spec.
+ * A forward-auth app adds `forwardAuth: { title, appShell }` and gets the
+ * two ingress rungs registered for it, instead of copying the same two
+ * `test(...)` blocks into every spec.
  */
 export function describeApp(
   name: string,
   body: (app: AppSuite) => void,
-  options: DescribeAppOptions = {},
+  options: DescribeAppOptions,
 ): void {
   test.describe(name, () => {
     test.describe.configure({ mode: 'serial' });
@@ -101,13 +108,41 @@ export function describeApp(
       await context?.close();
     });
 
-    // App-specific rungs first: serial mode skips the auth rungs when the
+    registerConvergenceRungs(name, options.label, app);
+
+    // App-specific rungs next: serial mode skips the auth rungs when the
     // install or the tile is broken, which is the failure it names.
     body(app);
 
     if (options.forwardAuth) {
-      registerForwardAuthRungs(name, app, options.forwardAuth);
+      registerForwardAuthRungs(name, options.label, app, options.forwardAuth);
     }
+  });
+}
+
+/**
+ * The three rungs every installed app owes the dashboard, registered by
+ * `describeApp`, never copied into a spec. They are ordered so the rung a
+ * broken install invalids comes first.
+ */
+function registerConvergenceRungs(name: string, label: string, app: AppSuite): void {
+  test('converges to running', async () => {
+    // Infrastructure rung: fresh-VM image pull + first-run convergence.
+    // When this fails, the UI rungs behind it are skipped, which
+    // distinguishes a broken install from a misbehaving app.
+    test.setTimeout(12 * 60_000);
+    await ensureInstalled(name);
+  });
+
+  test('appears in the catalog as installed', async () => {
+    test.setTimeout(60_000);
+    await expectInstalledInCatalog(app.page, label);
+  });
+
+  test('appears on the home screen as a converged tile', async () => {
+    test.setTimeout(60_000);
+    await app.page.goto('/');
+    await expectRunningTile(app.page, label);
   });
 }
 
@@ -117,8 +152,9 @@ export function describeApp(
  */
 function registerForwardAuthRungs(
   name: string,
+  label: string,
   app: AppSuite,
-  rungs: ForwardAuthRungs,
+  rungs: Omit<ForwardAuthRungs, 'label'>,
 ): void {
   test('forward-auth gates the app: the popup lands on the login prompt', async ({
     browser,
@@ -127,9 +163,9 @@ function registerForwardAuthRungs(
     await expectForwardAuthGate(browser, name);
   });
 
-  test(`signs in through forward-auth and reaches the ${rungs.label} UI`, async () => {
+  test(`signs in through forward-auth and reaches the ${label} UI`, async () => {
     test.setTimeout(300_000);
-    const popup = await openAppFromHome(app.page, rungs.label);
+    const popup = await openAppFromHome(app.page, label);
     await signInThroughForwardAuth(popup, {
       origin: appHost(name),
       title: rungs.title,

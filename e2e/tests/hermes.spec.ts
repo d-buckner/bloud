@@ -3,11 +3,6 @@ import { test, expect } from '../lib/fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 import { createSign, generateKeyPairSync } from 'node:crypto';
 import { describeApp } from '../lib/app-suite';
-import {
-  expectInstalledInCatalog,
-  expectRunningTile,
-} from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
 import { appOrigin, appUrlPattern } from '../lib/origin';
 
@@ -31,28 +26,6 @@ const HERMES_ORIGIN = appOrigin('hermes');
 // dashboard's gate hands such a visitor straight through; only a session-less
 // context observes the sign-in prompt and exercises the credential exchange.
 describeApp('hermes', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: fresh-VM image pull + first-run convergence
-    // through the dependency-graph install path, including the public
-    // native-oidc client registration with Authentik and the config.yaml
-    // the configurator writes. A green converge means the SSO-backed
-    // dashboard booted with its provider configured (the gate would fail
-    // closed otherwise) and the orchestrator promoted the node to RUNNING.
-    test.setTimeout(12 * 60_000);
-    await ensureInstalled('hermes');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'Hermes');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'Hermes');
-  });
-
   test('the auth gate is on: a session-less visitor is handed to sign-in', async () => {
     test.setTimeout(120_000);
     const ctx = await newIsolatedContext(app);
@@ -159,7 +132,7 @@ describeApp('hermes', (app) => {
       await ctx.close();
     }
   });
-});
+}, { label: 'Hermes' });
 
 /**
  * A Hermes session token that Hermes' identity provider cannot vouch for.

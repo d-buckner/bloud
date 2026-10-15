@@ -2,8 +2,6 @@
 import { test, expect } from '../lib/fixtures';
 import type { Page } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
-import { expectInstalledInCatalog, expectRunningTile } from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
 import { appOrigin, appUrlPattern } from '../lib/origin';
 
@@ -23,22 +21,6 @@ const PROVIDER_LABEL = /bloud sso/i;
 const CONVERGENCE_TIMEOUT = 14 * 60_000;
 
 describeApp('penpot', (app) => {
-  test('converges to running', async () => {
-    test.setTimeout(CONVERGENCE_TIMEOUT);
-    await ensureInstalled('penpot');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'Penpot');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'Penpot');
-  });
-
   test('SSO gates the app: the login page launches the OIDC flow to the prompt', async ({
     browser,
   }) => {
@@ -173,7 +155,7 @@ describeApp('penpot', (app) => {
       await context.close();
     }
   });
-});
+}, { label: 'Penpot' });
 
 /**
  * Drive Penpot's unauthenticated UI to the OIDC redirect. An unauthenticated

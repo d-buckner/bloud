@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
-import { expectInstalledInCatalog, expectRunningTile } from '../lib/apps';
 import { ensureInstalled, getAppStatus } from '../lib/api';
 import { appOrigin } from '../lib/origin';
 
@@ -20,14 +19,6 @@ import { appOrigin } from '../lib/origin';
 describeApp(
   'calino',
   (app) => {
-    test('converges to running', async () => {
-      // Infrastructure rung: fresh-VM image pull + first-run convergence.
-      // When this fails, the rungs below are skipped, which distinguishes a
-      // broken install from a misbehaving app.
-      test.setTimeout(12 * 60_000);
-      await ensureInstalled('calino');
-    });
-
     test('installing the client brought its CalDAV server with it', async () => {
       test.setTimeout(12 * 60_000);
       // The requirement is declared in apps/calino/metadata.yaml as
@@ -61,26 +52,15 @@ describeApp(
       expect(res.headers()['access-control-allow-origin']).toBe('*');
       expect(res.headers()['access-control-allow-headers']).toContain('authorization');
     });
-
-    test('appears in the catalog as installed', async () => {
-      test.setTimeout(60_000);
-      await expectInstalledInCatalog(app.page, 'Calino');
-    });
-
-    test('appears on the home screen as a converged tile', async () => {
-      test.setTimeout(60_000);
-      await app.page.goto('/');
-      await expectRunningTile(app.page, 'Calino');
-    });
   },
   {
     // `#root:not(:empty)`: the shell ships with an empty mount div, so this
     // is only true once the bundle actually ran. A Caddy error page or a
     // wrong document root passes a title check far more easily than this.
     forwardAuth: {
-      label: 'Calino',
       title: /Calino/i,
       appShell: '#root:not(:empty)',
     },
+    label: 'Calino',
   },
 );

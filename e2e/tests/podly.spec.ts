@@ -1,17 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
-import {
-  expectInstalledInCatalog,
-  expectRunningTile,
-  openAppFromHome,
-} from '../lib/apps';
-import {
-  ensureInstalled,
-  revealClientCredential,
-  rotateClientCredential,
-  waitForApp,
-} from '../lib/api';
+import { openAppFromHome } from '../lib/apps';
+import { revealClientCredential, rotateClientCredential, waitForApp } from '../lib/api';
 import { appUrlPattern } from '../lib/origin';
 
 // One test case per observable behavior; serial mode (from describeApp) means
@@ -25,26 +16,6 @@ import { appUrlPattern } from '../lib/origin';
 // app keeps its own authentication because its feeds cannot follow an SSO
 // redirect, and Bloud's job is to hold the password rather than to replace it.
 describeApp('podly', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: fresh-VM image pull plus first-run convergence. The
-    // lite image is a small pull, but first boot runs a long Alembic migration
-    // chain before the listener opens, and the pass then reconciles two
-    // accounts over the app's own API.
-    test.setTimeout(360_000);
-    await ensureInstalled('podly');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'Podly');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'Podly');
-  });
-
   test('opens Podly own sign-in, not the identity provider', async () => {
     test.setTimeout(180_000);
     const podly = await openAppFromHome(app.page, 'Podly');
@@ -87,7 +58,7 @@ describeApp('podly', (app) => {
       await podly.close();
     }
   });
-});
+}, { label: 'Podly' });
 
 /**
  * The password a person types into Podly, obtained the way an operator gets it.

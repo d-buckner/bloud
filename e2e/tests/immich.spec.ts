@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
-import {
-  expectInstalledInCatalog,
-  expectRunningTile,
-  openAppFromHome,
-} from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
+import { openAppFromHome } from '../lib/apps';
 import { appUrlPattern } from '../lib/origin';
 import { LoginPage } from '../lib/loginPage';
 
@@ -17,26 +12,6 @@ import { LoginPage } from '../lib/loginPage';
 // Authentik on the issuer host (sso.localhost), where this context has no
 // session, so the flow settles on the login prompt.
 describeApp('immich', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: fresh-VM image pull + first-run convergence
-    // (DB migrations + geodata import). When this fails, the UI rungs
-    // below are skipped, which distinguishes a broken install from a
-    // misbehaving app.
-    test.setTimeout(12 * 60_000);
-    await ensureInstalled('immich');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'Immich');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'Immich');
-  });
-
   test('SSO auto-launches the OIDC flow to the Authentik prompt', async () => {
     test.setTimeout(120_000);
     const immich = await openAppFromHome(app.page, 'Immich');
@@ -97,7 +72,7 @@ describeApp('immich', (app) => {
       timeout: 30_000,
     });
   });
-});
+}, { label: 'Immich' });
 
 /**
  * Wait for the Authentik login form to render. The flow passes through

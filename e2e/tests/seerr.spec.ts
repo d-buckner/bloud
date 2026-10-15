@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
-import {
-  expectInstalledInCatalog,
-  expectRunningTile,
-  openAppFromHome,
-} from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
+import { openAppFromHome } from '../lib/apps';
 import { appUrlPattern } from '../lib/origin';
 
 // One test case per observable behavior; serial mode (from describeApp)
@@ -23,32 +18,6 @@ import { appUrlPattern } from '../lib/origin';
 // connection created via `POST /api/v1/auth/jellyfin`, then
 // `POST /api/v1/settings/initialize`) actually completed.
 describeApp('seerr', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: fresh-VM image pull + first-run convergence.
-    // When this fails, the UI rungs below are skipped, which distinguishes
-    // a broken install from a misbehaving app.
-    //
-    // Jellyfin is installed first because Seerr's onboarding needs a media
-    // server: the configurator connects the two and completes Seerr's first-run
-    // wizard, and the last rung below asserts exactly that state. Nothing else
-    // installs it (the full suite only passes because jellyfin.spec.ts runs
-    // first), so a per-app leg has to install its prerequisite itself.
-    test.setTimeout(20 * 60_000);
-    await ensureInstalled('jellyfin');
-    await ensureInstalled('seerr');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'Seerr');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'Seerr');
-  });
-
   test('serves the login UI, not the first-run setup wizard', async () => {
     test.setTimeout(180_000);
     const seerr = await openAppFromHome(app.page, 'Seerr');
@@ -83,4 +52,4 @@ describeApp('seerr', (app) => {
     }
   });
 
-});
+}, { label: 'Seerr' });

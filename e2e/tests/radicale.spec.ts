@@ -2,12 +2,7 @@
 import { request } from '@playwright/test';
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
-import {
-  expectInstalledInCatalog,
-  expectRunningTile,
-  openAppFromHome,
-} from '../lib/apps';
-import { ensureInstalled } from '../lib/api';
+import { openAppFromHome } from '../lib/apps';
 import { appOrigin, appUrlPattern } from '../lib/origin';
 import { TEST_CREDS } from './constants';
 
@@ -25,28 +20,6 @@ const RADICALE_URL = appOrigin('radicale');
  * exists for; a screenshot of its web UI would prove far less.
  */
 describeApp('radicale', (app) => {
-  test('converges to running', async () => {
-    // Infrastructure rung: fresh-VM image pull + first-run convergence.
-    // When this fails, the rungs below are skipped, which distinguishes a
-    // broken install from a misbehaving app.
-    test.setTimeout(12 * 60_000);
-    await ensureInstalled('radicale');
-  });
-
-  test('appears in the catalog as installed', async () => {
-    test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, 'Radicale');
-  });
-
-  test('appears on the home screen as a converged tile', async () => {
-    test.setTimeout(60_000);
-    // Navigate explicitly: the catalog test above leaves the shared page on
-    // /catalog, and `.app-slot` is a home-screen element that does not exist
-    // there.
-    await app.page.goto('/');
-    await expectRunningTile(app.page, 'Radicale');
-  });
-
   test('opens from the home tile and serves its web UI', async () => {
     test.setTimeout(180_000);
     const radicale = await openAppFromHome(app.page, 'Radicale');
@@ -135,4 +108,4 @@ describeApp('radicale', (app) => {
       await ctx.dispose();
     }
   });
-});
+}, { label: 'Radicale' });
