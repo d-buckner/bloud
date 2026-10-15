@@ -167,6 +167,67 @@ native-oidc mapping already asserts `email_verified`, which is what Penpot
 requires to link or create a profile. `PENPOT_OIDC_BASE_URI` takes the issuer,
 not the origin, because Penpot appends the discovery path itself.
 
+### The token exchange fails when the client offers an h2c upgrade
+
+The credential was not the last thing that had to be proven about the login, and
+the failure left no useful error. Penpot bounced the browser to
+`#/auth/login?error=unable-to-auth&hint=unable+to+fetch+access+token`, its
+backend logged `unable to fetch access token` with `:response-status 400`, and
+Authentik answered `invalid_client`, which names three possible causes and not
+the one that had happened.
+
+The wire, captured from a failing run:
+
+```
+POST /application/o/token/ HTTP/1.1
+Connection: Upgrade, HTTP2-Settings
+Content-Length: 218
+HTTP2-Settings: AAEAAEAAAAIAAAAAAAMAAAAAAAQBAAAAAAUAAEAAAAYABgAA
+Upgrade: h2c
+content-type: application/x-www-form-urlencoded
+
+client_id=penpot-client&client_secret=<the correct secret>&code=<a real code>&...
+```
+
+Nothing about that request is wrong. Right endpoint, right content type, and the
+client secret the provider actually holds, which is established separately by
+reading the credential back from Authentik's API and by exchanging it from the
+integration tier, where a made-up code comes back as `invalid_grant` and so the
+client authenticated. The body left Penpot's container complete, in its own TCP
+segment after the headers.
+
+Authentik's own log named the fault: `OAuth2Provider does not exist` with
+`client_id: ""`. It had received no form. Penpot's HTTP client is the JDK's
+`java.net.http.HttpClient`, which offers an h2c upgrade on every request, and
+Authentik's ASGI server reads an upgrade offer as a protocol switch: it does not
+hand the body to Django, so `request.POST` is empty and the credential is simply
+not there.
+
+Reproduced against the pinned versions with those bytes, and the proxy turns out
+not to be the culprit:
+
+| request | provider's answer |
+|---|---|
+| through Traefik, plain headers | `invalid_grant`, so the form was read |
+| through Traefik, `Upgrade: h2c` | `invalid_client`, no form |
+| straight to Authentik's own port, `Upgrade: h2c` | `invalid_client`, no form |
+| straight to Authentik's own port, plain headers | `invalid_grant`, so the form was read |
+
+The fix therefore belongs to the proxy and is small: Traefik cannot honor an h2c
+upgrade, so it must not pass the offer on. `appconfig.traefikRoutes` attaches a
+`headers` middleware that deletes `Connection`, `Upgrade`, and `HTTP2-Settings`
+to the `/application` router, which is where the OIDC protocol endpoints live,
+and the same upgrading request then gets `invalid_grant`. The prefix is the
+scope because Authentik's admin websockets are their own router on `/ws` and
+have to keep their upgrade.
+
+Two things worth keeping if this is revisited. The deletion is not Penpot-specific
+and should not move into an app: every app shares that provider, and any client
+that offers h2c hits this. And
+`TestPenpotOidcTokenEndpointReadsAnUpgradingClient` writes its request by hand
+rather than with Go's `http.Client`, because Go manages `Connection` and
+`Upgrade` itself and would not be trustworthy as a reproduction.
+
 ## MCP: Bloud reads the key, it does not make one
 
 Penpot's MCP is three pieces, and only one of them is a container

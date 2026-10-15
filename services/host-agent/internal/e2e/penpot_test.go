@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -376,6 +378,107 @@ func TestPenpotOidcClientCanExchangeAToken(t *testing.T) {
 	if _, wrong := exchange("not-the-client-secret", redirect); !strings.Contains(wrong, "invalid_client") {
 		t.Errorf("the provider accepted a wrong client secret, so the check above proves nothing: %s", wrong)
 	}
+}
+
+// TestPenpotOidcTokenEndpointReadsAnUpgradingClient repeats the exchange the way
+// Penpot's own HTTP client makes it: an h2c upgrade offer on the headers, and
+// the body written as its own segment after them.
+//
+// This is the shape that broke the login, and it is invisible to every other
+// check in this suite. Penpot's backend runs on a JDK HttpClient, which offers
+// h2c on every request. Authentik's ASGI server reads that offer as a protocol
+// switch and never hands the body to Django, so the exchange arrives with no
+// client_id and answers invalid_client while the credential is correct, and all
+// the browser ever learns is that the access token could not be fetched. The
+// proxy deletes the offer on /application because it cannot honor an h2c upgrade
+// it is handed (see appconfig.traefikRoutes); this is what keeps that deletion
+// from being cleaned up as dead config.
+func TestPenpotOidcTokenEndpointReadsAnUpgradingClient(t *testing.T) {
+	waitAppRunning(t, "penpot", 2*time.Minute)
+
+	values := envFile(t, filepath.Join(appDataDir("penpot"), "config", "penpot.env"))
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {"bloud-integration-probe-not-a-real-code"},
+		"client_id":     {values["PENPOT_OIDC_CLIENT_ID"]},
+		"client_secret": {values["PENPOT_OIDC_CLIENT_SECRET"]},
+		"redirect_uri":  {strings.TrimSuffix(values["PENPOT_PUBLIC_URI"], "/") + "/api/auth/oidc/callback"},
+	}.Encode()
+
+	endpoint := penpotTokenEndpoint(t)
+	body := postOfferingH2C(t, endpoint, form)
+	t.Logf("the provider answered the upgrading request with %s", body)
+
+	switch {
+	case strings.Contains(body, "invalid_grant"):
+		t.Log("the form reached the provider through the upgrade offer")
+	case strings.Contains(body, "invalid_client"):
+		t.Errorf("the provider read no form at all: the upgrade offer ate the request body, which is the one "+
+			"failure a browser can only show as a login page that reloads. The proxy must delete the offer on"+
+			"/application (appconfig.traefikRoutes): %s", body)
+	default:
+		t.Errorf("unexpected answer from the token endpoint: %s", body)
+	}
+}
+
+// postOfferingH2C writes the request by hand because the point of it is the
+// bytes: Go's own client manages Connection and Upgrade for its own websocket
+// support and would not be trusted to reproduce what a JDK client sends. The
+// body goes out in a second write, as it does from the JDK, because a server
+// that switches protocols on the headers is exactly what drops it.
+func postOfferingH2C(t *testing.T, endpoint, form string) string {
+	t.Helper()
+
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatalf("the token endpoint is not a URL: %v", err)
+	}
+	host := target.Host
+	if target.Port() == "" {
+		host += ":80"
+	}
+
+	conn, err := net.DialTimeout("tcp", host, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial %s: %v", host, err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(20 * time.Second)); err != nil {
+		t.Fatalf("set the deadline: %v", err)
+	}
+
+	headers := "POST " + target.RequestURI() + " HTTP/1.1\r\n" +
+		"Host: " + target.Host + "\r\n" +
+		"content-type: application/x-www-form-urlencoded\r\n" +
+		"accept: application/json\r\n" +
+		"Content-Length: " + strconv.Itoa(len(form)) + "\r\n" +
+		"Connection: Upgrade, HTTP2-Settings\r\n" +
+		"Upgrade: h2c\r\n" +
+		"HTTP2-Settings: AAEAAEAAAAIAAAAAAAMAAAAAAAQBAAAAAAUAAEAAAAYABgAA\r\n\r\n"
+	if _, err := io.WriteString(conn, headers); err != nil {
+		t.Fatalf("write the headers: %v", err)
+	}
+	if _, err := io.WriteString(conn, form); err != nil {
+		t.Fatalf("write the body: %v", err)
+	}
+
+	var got strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buf)
+		got.Write(buf[:n])
+		if err != nil || strings.Contains(got.String(), "}") {
+			break
+		}
+	}
+
+	all := got.String()
+	start := strings.Index(all, "{")
+	if start < 0 {
+		t.Fatalf("the token endpoint did not answer with JSON: %s", all)
+	}
+	end := strings.LastIndex(all, "}")
+	return all[start : end+1]
 }
 
 // TestPenpotEnvFileStaysOnTheHost checks the delivery channel: the file is read
