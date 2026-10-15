@@ -1,4 +1,4 @@
-> Status: shipped. PR 1 through PR 4 below are built, and so is PR 5's
+> Status: shipped; archived 2026-10-15. PR 1 through PR 4 below are built, and so is PR 5's
 > rendering: an external provider draws as an `external` node in the developer
 > graph, and a remote catalog app gets a grid tile that opens its own URL. The
 > prose below is the plan as written and is kept for the reasoning; where it

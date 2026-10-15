@@ -5,9 +5,9 @@
 consumed by Hermes. AFFiNE's own MCP server is deliberately not exposed.
 **Last updated:** 2026-10-14
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md),
-[plans/arr-mcp-provider.md](../plans/arr-mcp-provider.md) for a provider that
+[plans/arr-mcp-provider.md](../plans/archive/arr-mcp-provider.md) for a provider that
 fills several contracts at once,
-[plans/home-assistant-mcp.md](../plans/home-assistant-mcp.md) for a provider whose
+[plans/home-assistant-mcp.md](../plans/archive/home-assistant-mcp.md) for a provider whose
 target has no bearer of its own, and
 [plans/native-mcp-endpoint.md](../plans/native-mcp-endpoint.md) for the tools a
 wrapper cannot write

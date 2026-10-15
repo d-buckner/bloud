@@ -1,12 +1,17 @@
-> Status: accepted (in progress). PRs 1-3 landed (#85 migrations, #86 operation
-> state, #88 route purity); PR 7 landed 2026-09-20 (SQLite pragmas in the DSN).
-> **PR 6 landed 2026-09-20** (engine silent failures: catalog nil guard,
-> `MemoryCache` lock, queue live-flag), together with the orchestrator
-> liveness substrate (`Stopped()` / `LastConverged()`) PR 11 depends on.
-> **PR 4 implemented 2026-09-19** (revised first: its
-> original design was insufficient against a forgeable forwarding header) and
-> verified live against a deployed host-agent. PRs 8-11 remain proposals
-> until each one is started.
+> Status: accepted (in progress), re-synced 2026-10-15. Landed: PRs 1-3 (#85
+> migrations, #86 operation state, #88 route purity), PR 4 (2026-09-19, the auth
+> bypass, revised first because its original design was insufficient against a
+> forgeable forwarding header, and verified live), PR 6 (2026-09-20, the engine's
+> silent failures, with the `Stopped()` / `LastConverged()` liveness substrate PR 11
+> depends on), PR 7 (2026-09-20, SQLite pragmas in the DSN), PR 8 (2026-09-25,
+> declared intent made real), and PR 9 (2026-09-27, reality matching intent).
+>
+> PR 5 landed as a deletion rather than as a unification: the second
+> `NewOrchestrator` site had no caller at all, so there was nothing to unify. See
+> its note and the ledger's "Single Orchestrator Builder".
+>
+> PR 10 and PR 11 are partly done, and their open halves are ledger items 10 and
+> the section-8 list. Read the ledger for current status; this file is the plan.
 
 # Plan: Tech-Debt Repayment
 

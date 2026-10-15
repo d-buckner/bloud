@@ -34,7 +34,7 @@ The replacement candidate found in its place was
 media services, 76 stars, mandatory bearer, released daily. It was spiked live
 against Seerr v3.4.1 and it works. It was adopted, not rejected: the plan that
 shipped it, with the scope that made the concerns below moot, is
-[arr-mcp-provider.md](arr-mcp-provider.md). This document is the case for the
+[arr-mcp-provider.md](archive/arr-mcp-provider.md). This document is the case for the
 tools no wrapper can write, which arr-mcp does not and cannot cover.
 
 ## The decision rule
@@ -183,7 +183,7 @@ question, not to a document tool surface.
 ## Relationship to arr-mcp
 
 arr-mcp was adopted and shipped as `apps/arr-mcp`; the decision and the scope
-are in [arr-mcp-provider.md](arr-mcp-provider.md). Its shape, several optional
+are in [arr-mcp-provider.md](archive/arr-mcp-provider.md). Its shape, several optional
 contracts rather than one, is what moves the "across apps" row in the table
 above out of Bloud-only reach: a wrapper can join the apps it declares. What it
 still cannot see is the instance itself, which is the remaining moat and the

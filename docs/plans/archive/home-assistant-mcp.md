@@ -1,7 +1,7 @@
-> Status: Implemented and live-verified. Two details of this design did not
+> Status: Implemented and live-verified; archived 2026-10-15. Two details of this design did not
 > survive contact with Home Assistant, both corrected below and explained in
-> [`apps/ha-mcp/INTEGRATION.md`](../../apps/ha-mcp/INTEGRATION.md) and
-> [`apps/homeassistant/INTEGRATION.md`](../../apps/homeassistant/INTEGRATION.md).
+> [`apps/ha-mcp/INTEGRATION.md`](../../../apps/ha-mcp/INTEGRATION.md) and
+> [`apps/homeassistant/INTEGRATION.md`](../../../apps/homeassistant/INTEGRATION.md).
 
 # Plan: `apps/ha-mcp`, a Home Assistant MCP provider
 
@@ -10,7 +10,7 @@
 > Issue: [d-buckner/bloud#223](https://github.com/d-buckner/bloud/issues/223),
 > "Add home assistant mcp", pointing at
 > [homeassistant-ai/ha-mcp](https://github.com/homeassistant-ai/ha-mcp).
-> The contract model lives in [features/mcp.md](../features/mcp.md); this file
+> The contract model lives in [features/mcp.md](../../features/mcp.md); this file
 > is the design for one new provider.
 
 ## The shape
