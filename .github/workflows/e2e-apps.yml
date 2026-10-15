@@ -157,7 +157,21 @@ jobs:
             | grep -iE '${{ matrix.app }}|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|system info|503|loading|"level":"(error|warn)"' \
             | tail -150 || true
           echo "=== App container logs ==="
-          podman logs --tail 80 "apps-${{ matrix.app }}" 2>&1 || true
+          # Every container the app declares, not one named after it: an app
+          # with its own database and sidecars has no apps-<app> container at
+          # all, and the failure is usually in one of the others.
+          for c in $(podman ps -a --format '{{.Names}}' | grep -E "^apps-${{ matrix.app }}(-|\$)"); do
+            echo "--- $c (tail) ---"
+            podman logs --tail 80 "$c" 2>&1 || true
+            echo "--- $c (errors) ---"
+            podman logs "$c" 2>&1 | grep -iE "error|warn|unable|refused|denied|exception" | tail -30 || true
+          done
+          echo "=== Identity provider's view of the last logins ==="
+          # The app's server-side half of a login is a request to Authentik that
+          # the browser never sees, and Authentik names the reason it refused
+          # (invalid client secret, unknown code, unregistered redirect URI).
+          podman logs --since 30m apps-authentik-server 2>&1 \
+            | grep -iE "invalid|token|authorize|penpot" | tail -60 || true
           echo "=== Podman containers ==="
           podman ps -a 2>&1 || true
           echo "=== Podman socket ==="
