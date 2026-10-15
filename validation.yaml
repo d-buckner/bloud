@@ -115,6 +115,13 @@ tiers:
       - id: catalogdoc-check
         cwd: .
         run: ./bloud catalogdoc --check
+      # The debug-port list is generated the same way, from the same metadata,
+      # into the two VM specs and the AGENTS.md table. Every one of those was a
+      # hand-written copy before this, and two had already lost ports the catalog
+      # declares, so the QEMU guest booted without them and nothing said so.
+      - id: ports-check
+        cwd: .
+        run: ./bloud ports --check
 
   integration:
     # Commands run inside the guest against the validation runtime deployed
@@ -161,4 +168,4 @@ inference:
       # These ride the catch-all: any change can invalidate a doc, a link, an
       # image pin, or a file-length ceiling, and the matcher has no recursive
       # `**/*.md` form (see pathMatches in cli).
-      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, file-length, no-component-timers, no-legacy-store, depgraph-check, catalogdoc-check]
+      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, file-length, no-component-timers, no-legacy-store, depgraph-check, catalogdoc-check, ports-check]

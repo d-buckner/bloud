@@ -1,24 +1,26 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Keeps every generated doc current. On every merge to main it rewrites the
-# README's catalog list, its one-login table, and the dependency graph
-# diagram, then commits the results.
+# README's catalog list, its one-login table, the dependency graph diagram,
+# and the debug-port list, then commits the results.
 #
-# Three artifacts, one source: apps/*/metadata.yaml. `bloud catalogdoc
+# Four artifacts, one source: apps/*/metadata.yaml. `bloud catalogdoc
 # --write` rewrites the two README blocks between their markers; `bloud
 # depgraph --write` rewrites the graph block in the README's "the full
-# graph" section. The diagram is Mermaid, which GitHub renders inline, so
-# the committed bytes are the picture and nothing has to draw it. An earlier
-# shape of this job rendered the graph as a PNG in a headless browser using
-# the dashboard's own components; that made the artifact a binary blob that
-# CI had to build a frontend and install Chromium to produce, and a reader
-# could not see the topology in the diff. The Mermaid block replaced it.
+# graph" section; `bloud ports --write` rewrites the portForwards block in
+# each dev VM spec and the port table in AGENTS.md. The diagram is Mermaid,
+# which GitHub renders inline, so the committed bytes are the picture and
+# nothing has to draw it. An earlier shape of this job rendered the graph as a
+# PNG in a headless browser using the dashboard's own components; that made
+# the artifact a binary blob that CI had to build a frontend and install
+# Chromium to produce, and a reader could not see the topology in the diff.
+# The Mermaid block replaced it.
 #
-# The PR-time gate is `./bloud depgraph --check` and `./bloud catalogdoc
-# --check` in the fast validation tier; this job is the safety net that
-# leaves main correct even when a PR forgot to regenerate. The commit is
-# marked [skip ci] so the generated commit does not kick off another full
-# validation pass.
+# The PR-time gate is `./bloud depgraph --check`, `./bloud catalogdoc --check`,
+# and `./bloud ports --check` in the fast validation tier; this job is the
+# safety net that leaves main correct even when a PR forgot to regenerate. The
+# commit is marked [skip ci] so the generated commit does not kick off another
+# full validation pass.
 #
 # The trigger is scoped to the inputs of the artifacts: the catalog they
 # depict, and the code that draws them. A push to main that touches neither
@@ -38,6 +40,9 @@ on:
       - 'cli/depgraph.go'
       - 'cli/catalogdoc.go'
       - 'cli/genblock.go'
+      # The generator that writes the port blocks, and the derivation it reads.
+      - 'cli/ports.go'
+      - 'cli/portspec/**'
       - '.github/workflows/generated-docs.yml'
 
 permissions:
@@ -82,15 +87,19 @@ jobs:
       - name: Refresh the README blocks
         run: ./bloud catalogdoc --write
 
+      - name: Refresh the debug port lists
+        run: ./bloud ports --write
+
       - name: Commit the refresh
         run: |
           set -euo pipefail
-          if git diff --quiet -- README.md; then
+          docs='README.md AGENTS.md dev/lima.yaml dev/qemu.yaml'
+          if git diff --quiet -- $docs; then
             echo "generated docs already current; nothing to commit"
             exit 0
           fi
           git config user.name "generated docs bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
+          git add $docs
           git commit --no-verify -m "docs: refresh generated docs [skip ci]"
           git push origin HEAD:main

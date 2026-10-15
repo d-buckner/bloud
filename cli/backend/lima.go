@@ -72,17 +72,12 @@ func (b *LimaBackend) SyncProject(ctx context.Context) error { return nil }
 func (b *LimaBackend) Host() executor.Host {
 	return executor.NewSSHHost(
 		executor.NewLimactlExecutor(b.instance),
+		// Only the two ports the CLI itself dials. The app debug ports come from
+		// the list the catalog derives and dev/lima.yaml publishes, not from a
+		// map here.
 		map[string]string{
-			"host-agent":    "3000",
-			"traefik":       "8080",
-			"ldap":          "3389",
-			"jellyfin":      "8096",
-			"authentik":     "9001",
-			"immich":        "2283",
-			"navidrome":     "4533",
-			"affine":        "3010",
-			"paperless-ngx": "8000",
-			"vaultwarden":   "8222",
+			"host-agent": "3000",
+			"traefik":    "8080",
 		},
 		executor.DataDirs{
 			HostAgentDir: devRemoteDir + "/host-agent",

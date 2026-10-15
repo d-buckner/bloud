@@ -97,17 +97,12 @@ func (b *NativeBackend) SyncProject(_ context.Context) error { return nil }
 func (b *NativeBackend) Host() executor.Host {
 	return executor.NewLocalHost(
 		&executor.LocalExecutor{},
+		// Only the two ports the CLI itself dials. The app debug ports are
+		// published by the runtime directly on the native backend, so there is
+		// no forward list to mirror here.
 		map[string]string{
-			"host-agent":    "3000",
-			"traefik":       "8080",
-			"ldap":          "3389",
-			"jellyfin":      "8096",
-			"authentik":     "9001",
-			"immich":        "2283",
-			"navidrome":     "4533",
-			"affine":        "3010",
-			"paperless-ngx": "8000",
-			"vaultwarden":   "8222",
+			"host-agent": "3000",
+			"traefik":    "8080",
 		},
 		executor.DataDirs{
 			HostAgentDir: nativeRemoteDir + "/host-agent",

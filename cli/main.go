@@ -96,6 +96,7 @@ func dispatch(cmd string, args []string) int {
 		"package":    cmdPackage,
 		"depgraph":   cmdDepGraph,
 		"catalogdoc": cmdCatalogDoc,
+		"ports":      cmdPorts,
 		"token":      func([]string) int { return cmdToken() },
 	}
 	if h, ok := handlers[cmd]; ok {
@@ -171,6 +172,10 @@ var usageLines = []string{
 	"    --write          Replace both generated blocks in README.md",
 	"    --check          Exit 1 when either block is stale",
 	"    --target FILE    File to write or check (default: README.md)",
+	"  ports           Derive the debug port forwards from the app catalog",
+	"    --write          Replace the generated block in dev/*.yaml and AGENTS.md",
+	"    --check          Exit 1 when one of those blocks is stale",
+	"    --target FILE    Narrow the run to one of those files",
 	"  token           Print the host-agent API token (for ad-hoc curl / e2e)",
 }
 
