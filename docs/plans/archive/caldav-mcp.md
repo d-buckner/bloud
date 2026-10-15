@@ -7,7 +7,7 @@
 > handshake on a full DAV login (24.4s measured) against a 15s client timeout.
 > The shipped app wraps `PhilflowIO/dav-mcp` instead, which binds its port
 > before it logs in. See
-> [caldav-mcp-dav-mcp.md](../caldav-mcp-dav-mcp.md) for the port and
+> [caldav-mcp-dav-mcp.md](caldav-mcp-dav-mcp.md) for the port and
 > [apps/dav-mcp/INTEGRATION.md](../../../apps/dav-mcp/INTEGRATION.md) for
 > the live-verified shape.
 >

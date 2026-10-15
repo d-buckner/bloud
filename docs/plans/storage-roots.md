@@ -180,7 +180,7 @@ type Root struct {
 The set is a fixed table, not an open-ended list. A new library (a `books` root
 for a future Kavita entry) is one entry in that table plus its metadata line,
 which is the same shape as every other catalog-wide derivation
-([`docs/plans/app-add-tax.md`](app-add-tax.md)).
+([`docs/plans/archive/app-add-tax.md`](archive/app-add-tax.md)).
 
 `downloads` is a root like the others even though it is not a library, because
 qBittorrent, Prowlarr, and both arrs mount it and must agree on it.

@@ -1,7 +1,8 @@
-> Status: draft
-
+> Status: app side landed 2026-09-19; framework gaps F2-F6 open. Archived
+> 2026-10-15. No framework files were changed; the two candidate framework
+> changes are listed in §9.
+>
 > Implemented app-side and verified on a live runtime; see "Implementation status" at the end.
-> No framework files were changed; the two candidate framework changes are listed in §9.
 
 # Plan: Wire the media stack end to end (Sonarr / Radarr / qBittorrent / Prowlarr / Seerr)
 

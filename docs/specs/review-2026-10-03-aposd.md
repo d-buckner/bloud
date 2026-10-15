@@ -22,6 +22,26 @@ tools (deep modules / information hiding, and "define errors out of existence").
 
 ---
 
+## 0. Status since publication (updated 2026-10-15)
+
+Eight of the ten findings are closed. The table says which, so a reader does not
+repay a debt that is already paid. Ledger item numbers are the ledger's.
+
+| Finding | Sev | Now | Ledger | What closed it |
+|---|---|---|---|---|
+| 3.1 `OrchestratorConfig` / `wire.Input` wide interface | C1 | Partly closed | 27 | `OrchestratorConfig` is six subsystem structs, so `nil` disables through a subsystem's own zero value. `wire.Input` is still 24 flat fields copied one by one. |
+| 3.2 Intent type switch in two places | C2 | Closed | 28 | `intentTypeName` derives from the concrete type, and a test pins every name. |
+| 3.3 Dual catalog model (`App` vs `AppDefinition`) | C1 | Closed | 26 | `AppGraph` operates on `*App`; `AppDefinition` is deleted, and a test pins the one-model invariant. |
+| 3.4 `AppStore` column list and scan logic in four places | C2 | Closed | 29 | `scanAppColumns` holds the Scan order once; a test pins the two read paths agreeing. |
+| 3.5 `AppStoreInterface` shared by two unequal consumers | C2 | Deferred, with a reason | 31 | Seven consumers with overlapping subsets, so no clean two-role split emerges. Revisit if it grows. |
+| 3.6 `appclient.Call` serves three modes | C3 | Closed | 33 | Wait mode became a `Wait` builder over a plain `Call`, so the mode-crossing invariants are compile errors. |
+| 3.7 Store callers enforce a store-level invariant | C2 | Closed | 30 | `Install` preserves the running status in its `ON CONFLICT`; the store owns the rule. |
+| 3.8 Stringly typed statuses and phases | C2 | Closed | 32 | `apps.status` is `store.AppStatus` with a closed set of five values, pinned by a test. |
+| 3.9 Recorder keys on the app, scheduler keys on the node | C2 | Closed | 34 | `operations` is keyed `(app_name, node)`, and `OperationStore.Get` is a documented projection. |
+| 3.10 The `dev/` hot-reload loop and the CLI are a separate complexity budget | C3 | Open | not in the ledger | Unchanged. |
+
+---
+
 ## 1. Verdict up front
 
 This is an unusually disciplined codebase. The team has already internalized most of

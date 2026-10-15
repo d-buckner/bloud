@@ -699,7 +699,7 @@ That gap can be narrowed but not closed at this layer:
   makes, not a fact Bloud verified, because the bearer has no user attached to
   it. Writing it down is still worth doing, but it must not be described as an
   audit trail. The real thing needs per-user agent identity, which is what
-  [`client-credentials.md`](client-credentials.md) is working toward, and the
+  [`docs/plans/archive/client-credentials.md`](archive/client-credentials.md) is working toward, and the
   auth bypass in `docs/operations/tech-debt.md` is what has to be repaid
   before any of it can be trusted.
 - **Consent is enforced structurally, which is the one thing that is not
@@ -937,7 +937,7 @@ because the advertised property reads like a guarantee it does not make.
 ## What this does not solve
 
 - **Per-user agent identity.** The agent still has one credential for the whole
-  instance. See `client-credentials.md`.
+  instance. See `docs/plans/archive/client-credentials.md`.
 - **Cross-person authorization.** "Alice may ask for things to be added to
   Bob's calendar" is not expressible until the requester has an identity.
 - **Notifications.** A todo appearing in Bob's task list is the only signal.

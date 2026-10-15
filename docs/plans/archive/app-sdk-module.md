@@ -1,9 +1,13 @@
 # Plan: Extract the app-SDK module, invert `Deps.HTTP`/`Deps.Assets`, then split `bindings`
 
-> Status: draft (2026-10-15). Not started. Measured against `main` at `5d3ed7d`.
+> Status: landed 2026-10-14. Archived 2026-10-15. The `pkg/` module exists at
+> `codeberg.org/d-buckner/bloud/pkg`, all nine packages moved, `services/host-agent/pkg/`
+> is gone, and `apps/go.mod` requires the SDK instead of the runtime. Shipped by
+> #341, which is step 4 of the parent plan.
+> Written 2026-10-15 against `main` at `5d3ed7d`.
 > Parent: [configurator-sdk-surface.md](configurator-sdk-surface.md) Step 4.
 > Resolves parent open question 2 (module location). Implements issue #332.
-> Debt ledger: [tech-debt.md](../operations/tech-debt.md).
+> Debt ledger: [tech-debt.md](../../operations/tech-debt.md).
 
 ## Why
 

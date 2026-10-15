@@ -1,7 +1,7 @@
 # Plan: Replace the caldav-mcp wrapper with dav-mcp
 
-> Status: implemented 2026-10-05. Supersedes the implementation half of
-> [caldav-mcp.md](archive/caldav-mcp.md); that plan's design of the service
+> Status: implemented 2026-10-05; archived 2026-10-15. Supersedes the implementation half of
+> [caldav-mcp.md](caldav-mcp.md); that plan's design of the service
 > account and the `caldav`/`appApi` contract split stands unchanged. The catalog
 > id did not survive, see "Renamed during implementation" below.
 

@@ -127,7 +127,7 @@ declaring `always` today is shipping a remote plaintext endpoint. Prefer `once`.
 
 ## The pilot
 
-[client-credentials-hermes-webui-pilot.md](../plans/client-credentials-hermes-webui-pilot.md)
+[client-credentials-hermes-webui-pilot.md](../plans/archive/client-credentials-hermes-webui-pilot.md)
 is the first app built on this pattern: hermes-webui, where a browser signs in
 with OIDC and a phone signs in with a Bloud-minted password.
 

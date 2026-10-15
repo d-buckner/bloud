@@ -1,10 +1,17 @@
 # Plan: Remove the app-addition tax
 
-> Status: draft (2026-10-12). Not started. Measured against `main` at `e66f2f6`.
-> Companion to [review-2026-10-03-aposd.md](../specs/review-2026-10-03-aposd.md),
+> Status: landed 2026-10-14. Archived 2026-10-15. All six changes shipped: A
+> derives the validation app registry from the catalog (#324), B derives the
+> debug-port list from the catalog (#338), C makes a forgotten contract binding a
+> build failure (#325), D takes app dev switches out of CI and the CLI and puts
+> them in metadata (#326), E shrinks the per-app specs to the generic rungs the
+> framework registers (#339), and F drops the conformance table's `DefaultPort`
+> column in favour of a configurator that reports its own port (#334).
+> Written 2026-10-12 against `main` at `e66f2f6`.
+> Companion to [review-2026-10-03-aposd.md](../../specs/review-2026-10-03-aposd.md),
 > which reviews the runtime's module shapes. This plan covers a different axis: the
 > *workflow cost of adding a catalog app*, which that review read only for context.
-> Debt ledger: [tech-debt.md](../operations/tech-debt.md).
+> Debt ledger: [tech-debt.md](../../operations/tech-debt.md).
 
 ## Why
 
@@ -63,7 +70,7 @@ Diffing all 20 entries against `apps/*/metadata.yaml` and the filesystem:
 | `validation-level` | nothing reads it | dead: parsed into `cli/inference.go` and never used |
 
 `AGENTS.md` lists keeping this block in sync as open debt, and
-[contributing-apps.md](../guides/contributing-apps.md) makes it a required step. That is
+[contributing-apps.md](../../guides/contributing-apps.md) makes it a required step. That is
 a manual sync standing where a derivation belongs.
 
 The one honest cost: the block carries 34 lines of *reasoning* (why Radicale is
@@ -335,7 +342,7 @@ tests, and the conformance harness's behavioral flags.
 
 One known item this plan neither causes nor fixes: `pkg/servarr` and `pkg/authentik` hold
 per-app client code in host-agent's shared `pkg/`, against the rule written in
-[contributing-apps.md](../guides/contributing-apps.md). That doc already records them as
+[contributing-apps.md](../../guides/contributing-apps.md). That doc already records them as
 predating the rule and under opportunistic migration.
 
 ## Sequencing

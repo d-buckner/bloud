@@ -1,5 +1,11 @@
 # Refactor Plan: Make Reality Match Intent
 
+> Status: landed 2026-09-27. Archived 2026-10-15. Ledger items 8 and 9 are
+> closed; see "Reality matches intent for container drift and image pulls" in
+> [the ledger](../../operations/tech-debt.md). This file moved from the
+> repository root (`specs/REFACTOR_LATEST.md`) into `docs/plans/archive/`,
+> because `docs/` is the documentation tree and every finished plan lives there.
+
 Target: tech-debt ledger items 8 and 9 (both P1): container drift is never
 repaired while the process is alive, and `Ensure` destroys the running
 container before it pulls. Driver: the reconciler's core promise was not
@@ -184,7 +190,7 @@ The ladder as executed. Each commit leaves the tree green.
 
 4. **Close ledger items 8 and 9 and record this plan.** Move both items to
    "Already Paid" in the tech-debt ledger with the reasoning, and replace
-   the previous plan in `specs/REFACTOR_LATEST.md`.
+   the previous plan in this file (then `specs/REFACTOR_LATEST.md`).
    → verify: `npm run check:docs-links`
 
 Full-suite gate after the ladder:
