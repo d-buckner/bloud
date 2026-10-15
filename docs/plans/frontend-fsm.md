@@ -278,9 +278,8 @@ table-driven test asserts they do, so a change on one side fails loudly instead
 of producing a tile that disagrees with the status it reports.
 
 **M6. No phase for a node with no event.** `emptyProgress` starts at
-`phase: null`, and the graph legend already renders "not reconciled" as a hollow
-dot (`routes/developer/+page.svelte`, `src/lib/graph/phase.ts`). The mirror does
-not guess `queued` for a node the engine has never reported.
+`phase: null`. The mirror does not guess `queued` for a node the engine has
+never reported.
 
 Plus a ceiling the current code lacks: an episode with no event for N minutes
 closes as `stale` rather than living until the app is uninstalled.
