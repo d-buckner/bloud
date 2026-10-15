@@ -38,3 +38,15 @@ export function clampPercent(value: number): number {
 export function formatPercent(value: number): string {
 	return `${Math.round(clampPercent(value))}%`;
 }
+
+/**
+ * The catalog's download estimate: `~1.1 GB`, `~350 MB`, or empty when the app
+ * declares nothing. The tilde is the point: the figure is an estimate of image
+ * bytes, not a reservation. Both the card and the detail modal say it this way,
+ * so the number a person compares between the two is one number.
+ */
+export function formatSizeMB(mb?: number): string {
+	if (!mb || mb <= 0) return '';
+	if (mb >= 1024) return `~${(mb / 1024).toFixed(1)} GB`;
+	return `~${mb} MB`;
+}

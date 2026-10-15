@@ -6,6 +6,7 @@
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
+	import { installBrief, type BriefContext } from '$lib/utils/installBrief';
 	import { allApps, installApp, select } from '$lib/store';
 
 	const installedApps = select(allApps);
@@ -20,6 +21,18 @@
 	function getAppStatus(name: string): AppStatus | undefined {
 		return installedApps.current.find((a) => a.catalog_id === name)?.status;
 	}
+
+	// The catalog read is the answer to "is this a real app a person can install",
+	// and the installed read is the answer to "is it here already". The detail
+	// modal's brief is built from those two facts and nothing else, so it can
+	// never claim a wiring the catalog did not declare.
+	const briefContext: BriefContext = {
+		isInstalled: (name) => getAppStatus(name) !== undefined,
+		isUserApp: (name) => catalogApps.some((a) => a.catalogId === name),
+		displayName: (name) => catalogApps.find((a) => a.catalogId === name)?.displayName || name
+	};
+
+	let detailSections = $derived(selectedApp ? installBrief(selectedApp, briefContext) : []);
 
 	// Search and filtering
 	let searchQuery = $state('');
@@ -189,6 +202,7 @@
 <AppDetailModal
 	app={selectedApp}
 	status={selectedApp ? getAppStatus(selectedApp.catalogId) : null}
+	sections={detailSections}
 	onclose={() => selectedApp = null}
 	oninstall={handleInstall}
 />

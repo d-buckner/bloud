@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, it, expect } from 'vitest';
-import { clampPercent, formatBytes, formatPercent } from '../format';
+import { clampPercent, formatBytes, formatPercent, formatSizeMB } from '../format';
 
 describe('formatBytes', () => {
 	it('keeps whole bytes unitless of a decimal', () => {
@@ -50,5 +50,18 @@ describe('formatPercent', () => {
 	it('renders a whole-number percentage', () => {
 		expect(formatPercent(42.6)).toBe('43%');
 		expect(formatPercent(140)).toBe('100%');
+	});
+});
+
+describe('formatSizeMB', () => {
+	it('rolls over to GB at the same threshold the card uses', () => {
+		expect(formatSizeMB(1024)).toBe('~1.0 GB');
+		expect(formatSizeMB(1500)).toBe('~1.5 GB');
+		expect(formatSizeMB(400)).toBe('~400 MB');
+	});
+
+	it('says nothing when the app declares no estimate', () => {
+		expect(formatSizeMB(undefined)).toBe('');
+		expect(formatSizeMB(0)).toBe('');
 	});
 });

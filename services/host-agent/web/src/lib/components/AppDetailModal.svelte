@@ -5,6 +5,7 @@
 	import CloseButton from './CloseButton.svelte';
 	import Icon from './Icon.svelte';
 	import type { CatalogApp } from '$lib/types';
+	import type { BriefSection } from '$lib/utils/installBrief';
 	import { isAdmin, select } from '$lib/store';
 
 	const admin = select(isAdmin);
@@ -12,11 +13,19 @@
 	interface Props {
 		app: CatalogApp | null;
 		status?: string | null;
+		/**
+		 * What the install will do, built by the catalog page from this app's
+		 * metadata. The decision to install a multi-gigabyte app deserves more than
+		 * one line of description: this is where the download size, the sign-in
+		 * wiring, and any app pulled in alongside get stated, before the install
+		 * rather than in the changelog after it.
+		 */
+		sections?: BriefSection[];
 		onclose: () => void;
 		oninstall: (appName: string) => void;
 	}
 
-	let { app, status = null, onclose, oninstall }: Props = $props();
+	let { app, status = null, sections = [], onclose, oninstall }: Props = $props();
 
 	let installed = $derived(status === 'running' || status === 'error' || status === 'failed');
 	let installing = $derived(status === 'installing' || status === 'starting');
@@ -96,6 +105,23 @@
 				</div>
 			{/if}
 
+			{#if sections.length}
+				<!-- Stated as a list of plain facts rather than as prose: the reader is
+				     deciding, so each line has to be scannable in one pass. -->
+				<div class="brief">
+					{#each sections as section (section.title)}
+						<div class="brief-section">
+							<h3 class="brief-title">{section.title}</h3>
+							<ul class="brief-list">
+								{#each section.lines as line (line)}
+									<li>{line}</li>
+								{/each}
+							</ul>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
 			{#if installed}
 				{#if uninstallError}
 					<div class="alert alert-error">
@@ -125,7 +151,7 @@
 				<button class="btn btn-secondary" onclick={handleClose}>Cancel</button>
 				{#if admin.current}
 					<button class="btn btn-primary" onclick={doInstall} disabled={installing}>
-						{#if installing}Getting...{:else}Get{/if}
+						{#if installing}Installing...{:else}Install{/if}
 					</button>
 				{/if}
 			{/if}
@@ -179,6 +205,44 @@
 		font-size: 0.9375rem;
 		color: var(--color-text-secondary);
 		line-height: 1.5;
+	}
+
+	/* The brief sits in its own panel so it reads as what Bloud will do, not as
+	   more marketing copy from the app's own description. */
+	.brief {
+		display: grid;
+		gap: var(--space-md);
+		margin: 0 0 var(--space-lg) 0;
+		padding: var(--space-md);
+		background: var(--color-bg-subtle);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+	}
+
+	.brief-section {
+		display: grid;
+		gap: var(--space-xs);
+	}
+
+	.brief-title {
+		margin: 0;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--color-text-muted);
+	}
+
+	.brief-list {
+		margin: 0;
+		padding-left: var(--space-md);
+		font-size: 0.875rem;
+		line-height: 1.5;
+		color: var(--color-text-secondary);
+	}
+
+	.brief-list li + li {
+		margin-top: 2px;
 	}
 
 	.screenshots {
