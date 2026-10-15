@@ -55,9 +55,10 @@ func newFrontendConfigurator(deps configurator.Deps) *frontendConfigurator {
 func (c *frontendConfigurator) Name() string { return frontendNode }
 
 // PreStart guarantees the shared env file exists before this node's container is
-// created. See writeEnvFile for why both writers are correct rather than one.
+// created, and reports a recreate when this node's container was created from
+// other bytes. See writeEnvFile for why both writers are correct rather than one.
 func (c *frontendConfigurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
-	return writeEnvFile(state, c.appExternalURL(), c.logger)
+	return writeEnvFile(frontendNode, state, c.appExternalURL(), c.logger)
 }
 
 // PostStart waits for the frontend to serve, checks that the generated

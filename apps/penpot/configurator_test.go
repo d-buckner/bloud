@@ -110,6 +110,7 @@ func TestRenderEnvWithSSO(t *testing.T) {
 	for _, flag := range []string{
 		"disable-registration", "enable-oidc-registration", "enable-login-with-oidc",
 		"disable-email-verification", "enable-mcp", "enable-admin-console",
+		"disable-onboarding",
 	} {
 		assert.Contains(t, env["PENPOT_FLAGS"], flag, "PENPOT_FLAGS must carry "+flag)
 	}
@@ -222,7 +223,12 @@ func TestBothNodesAgreeOnTheFile(t *testing.T) {
 
 	res, err := frontend.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.False(t, res.RestartNeeded, "the frontend must not rewrite what the backend wrote")
+	// The frontend still recreates its own container: it has never been created
+	// from these bytes, whatever the file's own history is. What must not happen
+	// is a second render. The oscillation this test guards is two nodes
+	// disagreeing about the bytes, not each node restarting once for its own
+	// container.
+	assert.True(t, res.RestartNeeded, "each node recreates from its own stamp, not from the file's")
 
 	after, err := os.ReadFile(filepath.Join(dir, "config", envFileName))
 	require.NoError(t, err)
@@ -237,6 +243,49 @@ func TestBothNodesAgreeOnTheFile(t *testing.T) {
 // PENPOT_ADMIN_CONSOLE_URI puts it at /". A dead admin console is not a missing
 // admin page: the profile RPC calls it, so every request, the login page's
 // first one included, answers 503 {:type :nitrate-unavailable}.
+// TestEveryNodeRestartsWhenTheBytesChange pins the bug a live install produced.
+// Two nodes write one env file, and managedfile.Write tells whoever writes second
+// that nothing changed. Reading that as "nothing to do" is what left the frontend
+// serving the previous flags forever after a configuration change: every later
+// pass also found the file up to date, so nothing ever corrected it, and the only
+// thing that noticed was the frontend's own readiness probe disagreeing with the
+// app. The recreate decision therefore belongs to the node, not to the file.
+func TestEveryNodeRestartsWhenTheBytesChange(t *testing.T) {
+	dir := t.TempDir()
+	state := &configurator.AppState{DataPath: dir}
+	const url = "http://penpot.localhost:8080"
+
+	for _, node := range []string{backendNode, frontendNode} {
+		res, err := writeEnvFile(node, state, url, discardLogger())
+		require.NoError(t, err)
+		assert.True(t, res.RestartNeeded, "%s must recreate on its first pass", node)
+	}
+
+	// Steady state, twice over: a resync that changes nothing must restart nothing
+	// for either node, however often it runs (invariant 2).
+	for pass := 1; pass <= 2; pass++ {
+		for _, node := range []string{backendNode, frontendNode} {
+			res, err := writeEnvFile(node, state, url, discardLogger())
+			require.NoError(t, err)
+			assert.False(t, res.RestartNeeded, "%s on steady-state pass %d", node, pass)
+		}
+	}
+
+	// The address moves, so the file moves. The backend writes it and reports the
+	// change; the frontend then finds the file already correct, which is the exact
+	// answer that used to be read as "nothing to do".
+	for _, node := range []string{backendNode, frontendNode} {
+		res, err := writeEnvFile(node, state, "https://penpot.example.com", discardLogger())
+		require.NoError(t, err)
+		assert.True(t, res.RestartNeeded,
+			"%s must recreate after a config change even when the other node wrote the file first", node)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "config", envFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "PENPOT_PUBLIC_URI=https://penpot.example.com")
+}
+
 func TestAdminEnvFileIsTheNarrowOne(t *testing.T) {
 	settings := publicSettings{
 		publicURL: "http://penpot.localhost:8080",

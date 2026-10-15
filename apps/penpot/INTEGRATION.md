@@ -57,6 +57,39 @@ The database credentials are the exception: `{{postgresPassword}}` is rendered b
 the catalog, so those three keys live in `metadata.yaml` `environment:` and the
 env file deliberately does not mention them.
 
+## Two nodes write one file, so the recreate decision belongs to the node
+
+Both the backend and the frontend configurator guarantee the same env file exists
+before their container is created, because a declared `envFile` that cannot be read
+is a container-create error and each node has to be able to guarantee its own. That
+sharing has a consequence the first version of this app got wrong.
+
+`managedfile.Write` reports `changed=false` to whoever writes second. Reading that
+as "nothing to do" is right about the file and wrong about the container: on a flag
+change the first writer restarted, and the second was told nothing had happened
+while its own container was still running the previous bytes. Every later pass also
+found the file up to date, so nothing ever corrected it. Observed on a live install:
+the backend came up with the new flags, the frontend kept serving the old
+`config.js`, and the install sat there looking converged.
+
+So each node stamps the digest of the bytes it last created its container from
+(`<node>.env-stamp`, beside the files) and reports a recreate when that differs.
+A steady-state pass still writes nothing and restarts nothing, which is what
+invariant 2 asks. `TestEveryNodeRestartsWhenTheBytesChange` pins all three states:
+first pass, steady state, and a change arriving while the other node already holds
+an up to date file.
+
+The frontend has a second reason to need its own restart signal, and it is still
+open. Its nginx resolves `apps-penpot-backend` when the container starts and never
+re-resolves it, so a backend recreated underneath it leaves nginx dialing an address
+that no longer exists: every `/api` call answers 502, and the frontend's log says
+`connect() failed (113: No route to host)` against an address that `getent` no
+longer returns. The `get-profile` probe in `PostStart` is what surfaced it, and it
+surfaced correctly: the node failed loudly instead of promoting an install where
+every click 502s. But it fails rather than heals, because nothing recreates the
+frontend. The fix is for the frontend to notice its upstream moved, not only that
+it cannot be reached.
+
 ## The flags are load-bearing in a way that is easy to miss
 
 `PENPOT_FLAGS` is not a feature toggle list. The frontend image's
@@ -96,6 +129,16 @@ The flags Bloud sets, and why:
 | `enable-login-with-oidc` | shows the provider button |
 | `enable-mcp` | installs the nginx rules for `/mcp/stream`, `/mcp/ws`, `/mcp/sse`, and shows the MCP section on the Integrations page |
 | `enable-admin-console` | installs the `/admin-console` rules |
+| `disable-onboarding` | Penpot's default set carries `:enable-onboarding`, which shows a first-run survey and a create-a-team prompt the moment a profile exists (`onboarding-questions` and `onboarding-team-id` are the profile props behind them). On Bloud the identity came from a provider the operator wired up in Settings, so there is no first run left to narrate |
+
+Telemetry is switched off by a config key rather than a flag, and that is the
+stronger of the two places. Penpot adds its `:telemetry` flag only when
+`telemetry-enabled` is true (`config.clj`, `parse-flags`), and Bloud sets
+`PENPOT_TELEMETRY_ENABLED=false`, which is the value that derivation reads. There
+is therefore no `disable-telemetry` flag worth adding: the env var already decides
+it, and a flag would be a second place asserting one fact. The frontend agrees
+with the reading: its only telemetry code path logs `event collection disabled
+(no audit-log or telemetry flag)`.
 
 `disable-secure-session-cookies` is deliberately not in the list. Penpot's own
 config adds it whenever the public URI is plain http on a non-localhost host
@@ -445,6 +488,10 @@ defaults is not visible in a TCP connect.
 - Penpot's own `docker-compose.yaml` ships an optional `mailcatch`. Bloud runs no
   SMTP at all, which is what `disable-email-verification` covers. If a future
   Penpot feature needs outbound mail, that is a new decision, not a flag.
+- The frontend's nginx caches the backend's address at container start, so a
+  backend recreated on its own leaves the install answering 502 until a person
+  recreates the frontend. The readiness probe catches it; nothing repairs it. See
+  "Two nodes write one file" for the evidence and what a repair has to detect.
 
 ## Validation strategy
 
