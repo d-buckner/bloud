@@ -53,11 +53,19 @@ the session behind every SSO round trip lives. Upstream authentik ships that
 stage with `seconds=0`, which ends the session when the browser closes.
 
 The blueprint is the mechanism rather than a `PostStart` PATCH because
-authentik's own worker reconciles it: the file watcher applies the blueprint
-when the file hash changes and the hourly discovery schedule catches anything
-missed. Verified against a live instance: a `session_duration` patched away from
-the blueprint's value through the API is put back by the next apply, so the
+authentik's own worker reconciles it: every apply puts the declared values back.
+Verified against a live instance: a `session_duration` patched away from the
+blueprint's value through the API is put back by the next apply, so the
 declaration in the repo is what wins.
+
+The worker does not notice a rewrite of the file on its own, though.
+`managedfile.Write` replaces the file atomically, which gives it a new inode,
+and a single-file bind mount stays on the inode the container started with. The
+worker's file watcher never fires, and its hourly discovery re-reads the stale
+copy, so before the fix an edit to `auth.yaml` reached an existing install only
+when the worker happened to restart. `PostStart` now compares the sha512
+Authentik records as last applied against the file. When the worker's mount is
+stale it restarts the worker, then waits for the apply (`blueprint_sync.go`).
 
 What this does not change:
 
