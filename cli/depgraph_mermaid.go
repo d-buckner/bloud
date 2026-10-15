@@ -39,16 +39,9 @@ func renderDependencyGraph(apps map[string]*AppMetadata) string {
 	}
 
 	sb.WriteString("```\n")
-	sb.WriteString("\n" + graphLegend + "\n")
 	sb.WriteString(graphEndMarker + "\n")
 	return sb.String()
 }
-
-// graphLegend explains the notation, because the diagram is generated and no
-// prose around it is written by whoever changed the metadata.
-const graphLegend = "_Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. " +
-	"Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`). " +
-	"The AI Model node is outside every box because no app provides it: it is the instance's own Settings -> AI endpoint, and any app that declares the `inference` contract is wired to it._"
 
 // appDisplayName is the app's display name, falling back to its catalog id.
 func appDisplayName(app *AppMetadata) string {
