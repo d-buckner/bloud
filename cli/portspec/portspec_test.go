@@ -232,6 +232,7 @@ func TestDeriveRealCatalog(t *testing.T) {
 		"8000 Paperless-ngx",
 		"8081 qBittorrent",
 		"8086 Home Assistant MCP",
+		"8090 openGym",
 		"8096 Jellyfin",
 		"8123 Home Assistant",
 		"8180 Calino",

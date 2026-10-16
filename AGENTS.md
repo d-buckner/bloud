@@ -206,6 +206,7 @@ Every other row is a debug port, and the table is generated from `apps/*/metadat
 | 8000 | Paperless-ngx | debugging |
 | 8081 | qBittorrent | debugging |
 | 8086 | Home Assistant MCP | debugging |
+| 8090 | openGym | debugging |
 | 8096 | Jellyfin | debugging |
 | 8123 | Home Assistant | debugging |
 | 8180 | Calino | debugging |

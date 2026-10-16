@@ -1,0 +1,173 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: opengym
+displayName: openGym
+description: Gym and body-weight tracker with weekly plans, guided workouts, and passkey sign-in
+category: productivity
+port: 8090
+# 483 MB unpacked, measured by pulling both images at 1.4.1 (api 186 MB, web 297 MB).
+# The web image carries the exercise stills and animations (about 80 MB, licensed from
+# Gym visual) that v1.4.0 moved inside the image, so a first start downloads nothing.
+estimatedSizeMB: 483
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+
+# openGym signs its own users in and cannot hand that job to the identity provider. It
+# has no OIDC client, no LDAP, and no trusted-header mode: a profile is a passkey (or,
+# where Bloud turns password sign-in on, a name and a password), and the session is a
+# cookie the app signs with a key in its own data directory.
+#
+# `forward-auth` would be worse than useless here, and upstream says so in its own
+# self-hosting guide. The phone app talks only to `/api/`, authenticates with a bearer
+# token, and sends no cookie, so a proxy that gates `/api/` answers the pairing request
+# with a login redirect and pairing fails while the containers log nothing. The web
+# image also serves `/api` from its own origin, because WebAuthn requires the app and
+# its API to share one origin; a gate in front of it breaks the one thing the layout
+# exists to protect.
+#
+# So the app keeps its own authentication and Bloud configures it rather than replacing
+# it. The credential a person types is openGym's to hold: Bloud mints none, because a
+# profile is created inside the app (by a passkey ceremony, or by the password form
+# this install turns on) and there is nothing for the dashboard to reveal. See
+# INTEGRATION.md.
+sso:
+  strategy: none
+
+containers:
+  # The API: plain node:http over a JSON file store. It is a graph node in its own
+  # right, so the front end is ordered after it and a crash of one does not hide the
+  # other. It publishes no port: the web container is the only way in, which is also
+  # what makes the X-Forwarded-For the API reads trustworthy (see TRUST_PROXY below).
+  - name: apps-opengym-api
+    image: ghcr.io/duartesantos8/opengym-api:1.4.1
+    network: apps-net
+    restartPolicy: always
+    environment:
+      TZ: Etc/UTC
+      # The port the API listens on inside apps-net. It is never published to the host:
+      # the web container is the only way in, and that is what makes TRUST_PROXY below
+      # safe to turn on.
+      PORT: "3000"
+      # The one directory the app stores anything in, mounted below.
+      DATA_DIR: /data
+      # The relying-party name a passkey prompt shows a person. The two values that
+      # depend on where the instance is reachable (RP_ID, ORIGIN) cannot be static, so
+      # they come from the env file next to this block.
+      RP_NAME: openGym
+      # Read the visitor's address from X-Forwarded-For and X-Real-IP when throttling
+      # failed password sign-ins. Off by default, because a forwarded address only means
+      # something if whatever sits in front overwrites it rather than passing a
+      # client-supplied one through. Here the API publishes no port, so the web
+      # container is the only client it has, and that container replaces both headers
+      # with the real peer. Without this every visitor shares one bucket: the web
+      # container's address, so one person's wrong passwords pause everybody's.
+      TRUST_PROXY: "1"
+      # The first profile created on a fresh install becomes the instance's admin. On a
+      # home server the person who installed it is the person who should be able to
+      # invite someone, disable an account, or hand out a password reset code, and
+      # without this flag that role belongs to nobody until someone reads the docs and
+      # edits db.json by hand.
+      FIRST_USER_ADMIN: "1"
+      # Offer a name-and-password sign-in next to passkeys. Passkeys need HTTPS or a
+      # `localhost` name, so on a plain-http deployment reached by hostname from a phone
+      # the passkey prompt never appears and the app has no way in at all. This is
+      # upstream's documented answer for exactly that case, and it is also the recovery
+      # path for a lost passkey. It costs a guessable credential next to an unguessable
+      # one, which is why upstream leaves it off by default; the trade is written up in
+      # INTEGRATION.md.
+      PASSWORD_LOGIN: "1"
+    # Everything the app needs to know about where it lives (RP_ID, ORIGIN) depends on
+    # the instance's public address, which changes at runtime and cannot live in a
+    # static manifest. The configurator writes this file and the runtime reads it on the
+    # host at create time, so the values never appear in `podman inspect` of a container
+    # that has not been recreated.
+    envFile: "{{appDataDir}}/config/env"
+    volumes:
+      # The whole state tree: db.json (profiles, passkey credentials, invites), one
+      # state-<user>.json per profile, the session-signing `secret`, vapid.json,
+      # audit.log, and uploads/. Back this up and the install is backed up; lose
+      # `secret` and every session and every paired phone dies with it.
+      - source: "{{appDataDir}}/data"
+        destination: /data
+    healthCheck:
+      # The image's own probe, and the app's own health route: it reports
+      # `writable: true`, which is the one failure mode a TCP probe cannot see (a
+      # read-only or full data directory is a server that answers and saves nothing).
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:3000/api/health
+      interval: 10
+      timeout: 5
+      retries: 6
+
+  # The front door: nginx serving the built React app and proxying /api to the API
+  # container, so the whole app sits on one origin. This is the container Traefik
+  # routes to, and the only one that publishes a port.
+  - name: apps-opengym-web
+    image: ghcr.io/duartesantos8/opengym-web:1.4.1
+    network: apps-net
+    restartPolicy: always
+    dependsOn: [apps-opengym-api]
+    environment:
+      TZ: Etc/UTC
+      # The image runs nginx as uid 101 and its own docs say a rootless runtime needs
+      # a port at or above 1024, because it cannot bind 80 without
+      # net.ipv4.ip_unprivileged_port_start=0. 8090 is also the app's declared port, so
+      # the published mapping is 1:1. Upstream's own Kubernetes and Helm installs use
+      # the same shape.
+      NGINX_PORT: "8090"
+      # The API container's name on apps-net, and its port. Together these are what
+      # nginx proxies /api to; they are rendered into the config at container start.
+      BACKEND: apps-opengym-api
+      PORT: "3000"
+    ports:
+      - host: 8090
+        container: 8090
+    # The image's nginx config resolves the API name on every request rather than once
+    # at start, so a recreated API container with a new address is picked up without a
+    # restart of this one. That resolution uses the `resolver` directive, and the
+    # image's default is Docker's embedded DNS at 127.0.0.11. Nothing answers there
+    # under podman, and an unreachable resolver does not fail fast: every /api request
+    # hangs until it times out, which reads as a healthy app that never answers.
+    #
+    # podman puts its per-network DNS at that network's gateway, and the gateway
+    # address depends on how many networks already exist, so the address is only
+    # knowable from inside the container. The wrapper reads it from the container's
+    # own resolv.conf and exports it before the image's entrypoint renders the
+    # template, which substitutes every defined environment variable. This is the same
+    # shape apps/ha-mcp uses for the same reason.
+    #
+    # The fallback keeps the image's own default when resolv.conf names no server.
+    # Without it an empty RESOLVER renders `resolver  valid=10s`, nginx refuses the
+    # config, and the container restart-loops instead of serving the static app.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        RESOLVER="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)"
+        [ -n "$RESOLVER" ] || RESOLVER=127.0.0.11
+        export RESOLVER
+        exec /docker-entrypoint.sh nginx -g 'daemon off;'
+    healthCheck:
+      # nginx serving its own static root. Deliberately not /api/health: the API has
+      # its own node, its own health check, and a front end that is up while the API is
+      # down is not a dead front end. Whether the composed path answers is what the
+      # web node's PostStart proves, where a failure names the node that can reach it.
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8090/
+      interval: 10
+      timeout: 10
+      retries: 6

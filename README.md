@@ -132,6 +132,12 @@ flowchart TD
         c_navidrome["navidrome"]
     end
 
+    subgraph app_opengym["openGym"]
+        c_opengym_api["api"]
+        c_opengym_web["web"]
+        c_opengym_web --> c_opengym_api
+    end
+
     subgraph app_paperless_ngx["Paperless-ngx"]
         c_paperless_ngx_postgres["postgres"]
         c_paperless_ngx_redis["redis"]
@@ -256,6 +262,7 @@ flowchart TD
     app_traefik -->|proxy| app_immich
     app_traefik -->|proxy| app_jellyfin
     app_traefik -->|proxy| app_navidrome
+    app_traefik -->|proxy| app_opengym
     app_traefik -->|proxy| app_paperless_ngx
     app_traefik -->|proxy| app_penpot
     app_traefik -->|proxy| app_podly
@@ -291,6 +298,7 @@ removal.
 - **Immich**: Self-hosted photo and video management
 - **Jellyfin**: Free software media system for streaming movies, TV, and music
 - **Navidrome**: Modern music server and streamer compatible with Subsonic/Airsonic clients
+- **openGym**: Gym and body-weight tracker with weekly plans, guided workouts, and passkey sign-in
 - **Paperless-ngx**: Document management system that turns scans and PDFs into a searchable archive
 - **Penpot**: Open-source design platform for interfaces, design systems, and prototypes
 - **Podly**: Removes ads from podcasts and serves the ad-free versions as RSS feeds
@@ -324,7 +332,7 @@ It's built for things you have the right to use.
 | **LDAP** | Jellyfin, Radicale, Seerr |
 | **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
 | **Native OIDC** | AFFiNE, Hermes, Hermes Web UI, Home Assistant, Immich, Paperless-ngx, Penpot, Vaultwarden |
-| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Home Assistant MCP, Podly |
+| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Home Assistant MCP, openGym, Podly |
 <!-- END GENERATED LOGIN TABLE -->
 
 Clients that speak a native protocol, a Subsonic player or a TV app talking to Jellyfin, keep

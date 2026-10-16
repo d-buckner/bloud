@@ -45,6 +45,7 @@ portForwards:
   - guestPort: 8000 # Paperless-ngx
   - guestPort: 8081 # qBittorrent
   - guestPort: 8086 # Home Assistant MCP
+  - guestPort: 8090 # openGym
   - guestPort: 8096 # Jellyfin
   - guestPort: 8123 # Home Assistant
   - guestPort: 8180 # Calino

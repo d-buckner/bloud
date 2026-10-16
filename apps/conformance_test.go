@@ -64,6 +64,10 @@ var conformanceTable = []appSpec{
 	{Dir: "immich", Node: "apps-immich-server", WithSSO: true},
 	{Dir: "jellyfin", Node: "apps-jellyfin"},
 	{Dir: "navidrome", Node: "apps-navidrome"},
+	// The API node writes the address file its own container is created from; the front
+	// end publishes the app port, so only its configurator reports one.
+	{Dir: "opengym", Node: "apps-opengym-api"},
+	{Dir: "opengym", Node: "apps-opengym-web"},
 	{Dir: "paperless-ngx", Node: "apps-paperless-ngx", WithSSO: true},
 	// The env file is written by the backend node and read by the frontend node,
 	// so both are held to the same idempotency rule. The frontend publishes the
