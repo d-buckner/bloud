@@ -181,6 +181,30 @@ func TestSurfaceDashboardLogKeepsFailures(t *testing.T) {
 	}
 }
 
+func TestSurfaceDashboardLogNamesTheCauseOfAReload(t *testing.T) {
+	cases := []struct{ line, want string }{
+		{"4:55:04 PM [vite] (client) page reload src/app.html", "src/app.html"},
+		{"4:55:19 PM [vite] changed tsconfig file detected: /web/tsconfig.json - Clearing cache", "tsconfig"},
+		{"4:55:19 PM [vite] optimized dependencies changed. reloading", "optimizer"},
+	}
+	for _, c := range cases {
+		level, msg, ok := surfaceDashboardLog(c.line)
+		if !ok || level != "WARN" {
+			t.Errorf("reload line %q should surface as a warning, got level %q ok=%v", c.line, level, ok)
+			continue
+		}
+		if !strings.Contains(msg, c.want) {
+			t.Errorf("reload line %q should name %q, got %q", c.line, c.want, msg)
+		}
+	}
+
+	// The ssr environment reloads its own module graph on almost every edit.
+	// No browser listens to it, so surfacing it would be noise on every save.
+	if _, _, ok := surfaceDashboardLog("[vite] (ssr) page reload src/lib/store/selectors.ts"); ok {
+		t.Error("an ssr-graph reload is not a browser reload and must not surface")
+	}
+}
+
 func TestStreamTeeMirrorsEverythingToTheLog(t *testing.T) {
 	c, out, log := newBufConsole(t)
 	w := c.QuietStream()

@@ -99,6 +99,21 @@ never touched by a reload, so the next reconciliation simply runs against the
 new binary. The frontend hot-reloads through vite; the browser stays on the
 Traefik origin, which is what keeps the OIDC round trip real.
 
+The HMR WebSocket is the one part of the dashboard that does not go through the
+host-agent proxy. Vite's client reloads the page whenever its HMR socket drops,
+so a socket that rides that proxy reloads the page on every backend reload and
+discards the store the frontend kernel works to keep alive across a hot swap.
+Instead vite puts the socket on its own path (`server.hmr.path`, `bloud-hmr`),
+and the loop writes `dev-vite.yml` into Traefik's dynamic directory
+(`cli/dev_vite_route.go`): a `PathPrefix` router with `passHostHeader: false`
+that sends that path to `127.0.0.1:5173`. Traefik runs on the host network and
+outlives the host-agent restarts, so the socket survives one and the open page
+keeps its state. The browser needs no port beyond the public one. Module requests
+still ride the host-agent proxy, so the origin and the OIDC round trip do not
+change, and a restart costs at most one failed fetch that the next save repeats.
+The file is dev-only, it is its own file in that directory, and the loop deletes
+it on exit; `apps-routes.yml` stays the only product routing artifact.
+
 Killing the dev loop takes the dev servers with it. Each child (vite and
 host-agent) starts in its own process group and the loop signals the group, not
 just the direct child: `npm run dev` runs a shell that runs vite, and npm
@@ -122,9 +137,16 @@ documented at their definition:
   the background. This is a deliberate, opt-in relaxation of invariant 5 for
   the reload case only. See `cmd/host-agent/dev_gate.go`.
 
+`BLOUD_DEV_VITE_POLLING=1` is a third, and it reaches vite rather than
+host-agent. It turns on chokidar polling for a filesystem where inotify does not
+report writes, for example a mounted directory in a VM. It is off by default
+because polling costs about half a second per frontend edit, and the hot-reload
+loop only runs on the native backend, where the checkout is a local directory.
+
 Measured on a warm native stack: a backend reload is about 3s to a live API
 (1-2s incremental build plus a process restart), against ~160s for a cold
-start. The frontend reload is vite's own sub-second HMR.
+start. The frontend reload is vite's own HMR: about 40ms from a save to the
+update on a local filesystem, and about 500ms with polling on.
 
 `--no-watch` runs the old one-shot loop: build, deploy, run in the foreground.
 Hot reload is wired for the native backend only; on Lima and QEMU `./bloud dev`
@@ -154,8 +176,11 @@ carries decisions and the log file carries evidence (`cli/dev_output.go`):
 - Every raw byte from every subprocess is mirrored to
   `.bloud/logs/dev.log` (rotated to a single `.1` past 5 MB), whose path is
   printed once at bring-up.
-- The quiet console still surfaces the host-agent's `WARN`/`ERROR` records
-  and vite's error lines, reformatted as `HH:MM:SS  LEVEL  msg  k=v`.
+- The quiet console still surfaces the host-agent's `WARN`/`ERROR` records,
+  vite's error lines, and the cause of any full page reload vite reports, all
+  reformatted as `HH:MM:SS  LEVEL  msg  k=v`. A reload is on that list because
+  it is the failure a developer feels as lost dashboard state, and vite prints
+  the trigger on a line of its own.
 - `--verbose` / `-v` / `BLOUD_DEV_VERBOSE=1` streams the raw output too.
 - Colors are off when stdout is not a TTY (`NO_COLOR` and `TERM=dumb`
   respected), so a redirected console stays plain text.

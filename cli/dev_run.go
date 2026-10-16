@@ -170,11 +170,12 @@ func runDevWatch(root string, bk backend.Backend, flags devFlags, c *devConsole)
 	go announceHostAgentReady(ctx, ex, c, host.Ports(), readyPollInterval, devQuietProgressFirst)
 
 	return runHotReload(ctx, hotReloadOptions{
-		root:       root,
-		binaryPath: dirs.HostAgentDir + "/host-agent",
-		runDir:     dirs.HostAgentDir,
-		env:        env,
-		console:    c,
+		root:              root,
+		binaryPath:        dirs.HostAgentDir + "/host-agent",
+		runDir:            dirs.HostAgentDir,
+		env:               env,
+		console:           c,
+		traefikDynamicDir: env["BLOUD_TRAEFIK_DYNAMIC_DIR"],
 	})
 }
 
