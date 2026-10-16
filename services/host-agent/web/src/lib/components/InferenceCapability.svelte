@@ -135,9 +135,7 @@
 <div class="capability">
 	<h3 class="capability-title">Chat</h3>
 	<p class="capability-description">
-		An OpenAI-compatible endpoint for text generation. An app that summarizes,
-		extracts, or answers follows what is set here, and runs without it if
-		nothing is.
+		Text generation
 	</p>
 
 	{#if loading}
@@ -177,7 +175,7 @@
 				<span class="hint">
 					{hasApiKey
 						? 'Leave blank to keep the stored key.'
-						: 'Stored in the secrets manager, never read back by the browser.'}
+						: 'Stored in the secrets manager.'}
 				</span>
 			</div>
 
@@ -263,15 +261,12 @@
 </div>
 
 <style>
-	/* A card, not a section break. Each capability used to carry the same full-width
-	   rule and 5rem of air that a real section break gets, which made three
-	   sub-blocks outshine the two real sections either side of them. The AI section
-	   spaces these with a gap, so none carries a top margin. */
+	/* No card and no rule between the capabilities: they are one group under the
+	   AI heading, and the section spaces them with a gap. `min-width: 0` because a
+	   flex item will not shrink below its content, and a long URL in a field would
+	   otherwise set the page's minimum width. */
 	.capability {
-		padding: var(--space-lg);
-		background: var(--color-bg-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
+		min-width: 0;
 	}
 
 	.capability-title {
@@ -318,9 +313,6 @@
 		color: var(--color-text-secondary);
 	}
 
-	/* `--color-bg`, not `--color-bg-elevated`: the card is elevated, so an elevated
-	   field inside it would have nothing to read against. On the page colour the
-	   field sits back from the card in both palettes. */
 	.form-field input,
 	.form-field select {
 		padding: var(--space-sm) var(--space-md);
@@ -328,7 +320,7 @@
 		font-size: 0.9375rem;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		background: var(--color-bg);
+		background: var(--color-bg-elevated);
 		color: var(--color-text);
 		transition: border-color 0.15s ease;
 		width: 100%;

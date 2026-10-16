@@ -5,16 +5,12 @@
 
 	let chatBaseUrl = $state('');
 
-	// Held as constants rather than inline attributes: each sentence is what the
-	// form is for, and wrapping it inside a tag would bury it.
-	const TRANSCRIPTION_DESCRIPTION =
-		'An endpoint that turns audio into timed text. Apps that transcribe follow ' +
-		'what is set here, and run without it if nothing is.';
+	// Held as constants rather than inline attributes: each one names what the form
+	// is for, and wrapping it inside a tag would bury it.
+	const TRANSCRIPTION_DESCRIPTION = 'Speech to text';
 
 	const EMBEDDINGS_DESCRIPTION =
-		'An endpoint that turns text into vectors. An app that stores a memory index ' +
-		'needs one. The model it first used fixes the index dimensions, so a later ' +
-		'change does not match the vectors already stored.';
+		'Text to vectors. Changing the model later will not match stored vectors.';
 
 	// The chat form owns its own state. It reports the one fact the other two
 	// forms use: the address worth offering as a one-click fill, because one
@@ -28,12 +24,7 @@
 <section class="section ai-section">
 	<h2>AI</h2>
 	<p class="section-description">
-		Three capabilities, set here in one place: chat, transcription, and
-		embeddings. Each is a separate endpoint because a server that answers one
-		route is not known to answer the others, and the same box can do one and
-		not the rest. Fill in what you run; an app that needs a capability you left
-		empty says so rather than guessing. The API key for each goes to the secrets
-		manager and is never read back by the browser.
+		Chat, transcription, and embedding settings
 	</p>
 
 	<InferenceCapability {onbaseUrl} />
@@ -60,12 +51,12 @@
 <style>
 	/* The same separator the Users section carries. This section follows another,
 	   so it needs a break above it; it had none, which is what let the AI heading
-	   read as the tail of the section above. The gap spaces the capability cards
-	   so none of them has to carry a top margin of its own. */
+	   read as the tail of the section above. The gap spaces the three capability
+	   blocks, which carry no separator of their own, so none needs a top margin. */
 	.ai-section {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-md);
+		gap: var(--space-lg);
 		margin-top: var(--space-2xl);
 		padding-top: var(--space-2xl);
 		border-top: 1px solid var(--color-border);
