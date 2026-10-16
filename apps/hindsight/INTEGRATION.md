@@ -178,6 +178,116 @@ credential is given the literal `placeholder`, which is obviously not a secret a
 is ignored by the endpoint that receives it. `apps/podly` reached the same answer
 from the same wall.
 
+## Local-model tuning
+
+Hindsight's own default is 32 concurrent LLM calls. That value suits a hosted
+provider, which absorbs a burst. Bloud points the app at the endpoint in
+Settings -> AI, and that endpoint is usually the operator's own model server. A
+local runtime has a few slots, not dozens. At the default, a retain burst fills
+every slot and starves the agent that shares the endpoint.
+
+`llm_wrapper._semaphores_for_scope` in the pinned image composes the per-operation
+cap with the global cap. A call must take both, so the global value is the hard
+ceiling and a per-operation cap reserves room inside it. Bloud writes both, and
+`metadata.yaml` carries the full comment for each value.
+
+| Variable | Bloud | Image default | Why |
+| --- | --- | --- | --- |
+| `HINDSIGHT_API_LLM_MAX_CONCURRENT` | 2 | 32 | The global ceiling. |
+| `HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT` | 1 | unset, so 32 | Fact extraction takes one slot. |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT` | 1 | unset, so 32 | Consolidation takes one slot. |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT` | 1 | unset, so 32 | The background refresh takes one slot. |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM` | 1 | 4 | One tag group at a time. |
+| `HINDSIGHT_API_WORKER_MAX_SLOTS` | 4 | 10 | Worker tasks dequeued at once. |
+| `HINDSIGHT_API_EMBEDDINGS_MAX_CONCURRENT_REQUESTS` | 2 | 8 | The embedding route commonly shares one box with chat. |
+| `HINDSIGHT_API_LLM_TIMEOUT` | 300 | 120 | A local model loads and generates slowly. |
+| `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` | 120 | 30, or the global value when set | Reflect answers a waiting caller. |
+| `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | 8192 | 64000 | The image's budget is cloud-sized. |
+| `HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT` | low | unset | Extraction is structured work. |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT` | low | unset | Consolidation is structured work. |
+
+Reflect is deliberately not capped. The global ceiling is 2, and every
+background bucket caps at 1, so no single background bucket can take the whole
+ceiling. Two different buckets can still overlap, and reflect takes the second
+slot while one background call runs.
+
+The value comes from upstream's own guidance, not from a guess. The pinned image
+carries this comment next to the semaphore it builds:
+
+> Set HINDSIGHT_API_LLM_MAX_CONCURRENT=1 for local LLMs (LM Studio, Ollama).
+
+A shared endpoint is the reason to stay near that number. The agent that calls
+reflect waits behind at most `HINDSIGHT_API_LLM_MAX_CONCURRENT` Hindsight calls,
+so a smaller cap is better for the agent and a larger one is only better for
+Hindsight's own background throughput. Hindsight's work is background, so the
+bias goes to the agent.
+
+Bloud leaves `HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE` and
+`HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE` at the image defaults. Both bound the
+size of a batch rather than the number of concurrent calls, so an operator tunes
+them against the model's own context limit.
+
+### Fewer calls
+
+The values above bound how many calls run at once. They do not bound how many
+calls the app makes. These five remove calls.
+
+| Variable | Bloud | Image default | Why |
+| --- | --- | --- | --- |
+| `HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD` | 1.0 | 0.97 | Turns off the 1-by-1 merge pass for each near-duplicate observation. |
+| `HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS` | 3600 | 300 | Slows the timer that enqueues consolidation with no user activity. |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS` | 3600 | 300 | Slows the same timer for mental-model refreshes. |
+| `HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS` | 3600 | 0 | A floor on automatic refreshes. An explicit refresh ignores it. |
+| `HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS` | true | false | Fewer JSON-repair re-prompts on a small model. |
+
+The dedup pass is one LLM call for every new observation whose cosine similarity
+to an existing one reaches the threshold (`consolidator.py`). A threshold of 1.0
+turns the pass off, and only automatic near-duplicate merging is lost.
+
+The two maintenance intervals enqueue work for every eligible bank even when
+nobody uses the app (`maintenance.py`). An hour keeps the timer real without a
+steady background draw.
+
+The refresh floor changes the image default of 0 into an hour. The default
+refreshes a mental model on every automatic trigger. An explicit refresh from the
+API or the MCP server still runs at once.
+
+`HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS` lets the four fact fields be
+null. The image's own comment recommends it for a small local model under strict
+structured output, because a forced string is what makes a weak model invent
+data. A valid answer avoids the JSON-repair re-prompt, which is an extra call the
+caller never sees.
+
+Observations and auto-consolidation stay on. They are the product, not overhead.
+The caps bound them instead of removing them. Bloud writes both values as `true`
+rather than inheriting the default, so a later upstream change cannot turn them
+off silently.
+
+Two startup checks constrain the values, and the image refuses to start when they
+fail:
+
+- `validate_retain_completion_token_budget` requires the retain completion cap to
+exceed `HINDSIGHT_API_RETAIN_CHUNK_SIZE` (3000 by default). 8192 clears it.
+- The slot reservations must fit inside `HINDSIGHT_API_WORKER_MAX_SLOTS`.
+Consolidation reserves two slots by default, so the ceiling of 4 covers it.
+
+`tuning_test.go` reads `metadata.yaml` and pins each relationship, so a value
+that would fail either startup check is a test failure rather than a container
+that never becomes healthy.
+
+### A wrong knob, recorded so nobody adds it
+
+Two variable names look like a hard worker ceiling. They are not one.
+`HINDSIGHT_API_WORKER_<TYPE>_MAX_SLOTS` is a deprecated alias for
+`HINDSIGHT_API_WORKER_<TYPE>_RESERVED_SLOTS`. Despite the name it sets a **floor**,
+the number of slots reserved for that operation type. A value of 1 does not cap
+the type. The image logs a deprecation warning and keeps the old name working.
+The only ceiling is `HINDSIGHT_API_WORKER_MAX_SLOTS`.
+
+Two smaller corrections belong next to that one. `HINDSIGHT_API_LLM_MAX_RETRIES`
+defaults to 3, not 2. The warning that "the LLM wrapper retains on every call"
+describes the client SDK, which Bloud does not use.
+
 ## A hazard that is documented rather than fixed
 
 Hindsight takes a PostgreSQL advisory lock while it migrates. If the API container

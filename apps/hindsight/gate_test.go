@@ -28,11 +28,12 @@ type catalogMetadata struct {
 // catalogContainer is the half of a container declaration this package is bound
 // to: how it starts, what it publishes, and what it mounts.
 type catalogContainer struct {
-	Name       string        `yaml:"name"`
-	Entrypoint []string      `yaml:"entrypoint"`
-	Command    []string      `yaml:"command"`
-	Ports      []catalogPort `yaml:"ports"`
-	Volumes    []catalogVol  `yaml:"volumes"`
+	Name        string            `yaml:"name"`
+	Entrypoint  []string          `yaml:"entrypoint"`
+	Command     []string          `yaml:"command"`
+	Ports       []catalogPort     `yaml:"ports"`
+	Volumes     []catalogVol      `yaml:"volumes"`
+	Environment map[string]string `yaml:"environment"`
 }
 
 type catalogPort struct {

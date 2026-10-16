@@ -207,6 +207,90 @@ containers:
       # price of the slim image. The remote rerank providers (TEI, Cohere, Jina)
       # are not OpenAI-compatible, so Bloud has nothing to point them at.
       HINDSIGHT_API_RERANKER_PROVIDER: rrf
+      # --- Local-model concurrency -------------------------------------------
+      #
+      # This app dials the endpoint in Settings -> AI, which is usually the
+      # operator's own model server. The image's default is 32 concurrent LLM
+      # calls, a number tuned for a hosted provider that absorbs them. On a local
+      # runtime with a few slots, that default fills every slot and starves the
+      # agent that shares the same endpoint. Measured against the pinned image:
+      # `DEFAULT_LLM_MAX_CONCURRENT` is 32 in config.py, and
+      # `llm_wrapper._semaphores_for_scope` composes each per-operation cap with
+      # the global one, so the global value is the hard ceiling.
+      #
+      # The caps below keep the footprint small on a shared endpoint. The global
+      # ceiling is 2, far below the image's 32, so a 1-slot local runtime queues
+      # at most two requests. Retain, consolidation, and the mental-model refresh
+      # each cap at 1, so no single background bucket can take both slots, and
+      # two different buckets can still overlap. Reflect is deliberately not
+      # capped, because a person waits for it.
+      HINDSIGHT_API_LLM_MAX_CONCURRENT: "2"
+      HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT: "1"
+      HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT: "1"
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT: "1"
+      # One tag group at a time. The image's default is 4, and each group
+      # multiplies the peak LLM request rate during consolidation.
+      HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM: "1"
+      # The worker pool takes at most this many tasks at once. The image's
+      # default is 10. This value is a ceiling, and it is not the same knob as
+      # HINDSIGHT_API_WORKER_<TYPE>_RESERVED_SLOTS, which reserves a floor. The
+      # old `_MAX_SLOTS` name for that variable read as a ceiling but never was
+      # one. Consolidation reserves two slots by default, so the image rejects a
+      # value below 2 at startup.
+      HINDSIGHT_API_WORKER_MAX_SLOTS: "4"
+      # The embedding endpoint commonly shares the box with the chat endpoint.
+      # The image's default is 8 concurrent embedding requests.
+      HINDSIGHT_API_EMBEDDINGS_MAX_CONCURRENT_REQUESTS: "2"
+      # A local model loads and generates slower than a hosted one, so the
+      # request deadline grows from the image's 120s default.
+      HINDSIGHT_API_LLM_TIMEOUT: "300"
+      # Reflect answers a waiting caller, so it keeps a shorter deadline of its
+      # own rather than inheriting the 300s above.
+      HINDSIGHT_API_REFLECT_LLM_TIMEOUT: "120"
+      # The image's default fact-extraction output cap is 64000 tokens, a
+      # cloud-sized budget. 8192 covers a full chunk of facts and bounds the
+      # worst-case generation time. The image requires a value larger than
+      # HINDSIGHT_API_RETAIN_CHUNK_SIZE (3000 by default), or it refuses to
+      # start.
+      HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS: "8192"
+      # Extraction and consolidation are structured work, not open-ended
+      # reasoning. Extra reasoning tokens cost latency on a local model and buy
+      # nothing here. The image drops this value for OpenAI's own non-reasoning
+      # products (gpt-4o, gpt-4.1, gpt-3.5), so a cloud endpoint is unaffected.
+      HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT: "low"
+      HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT: "low"
+      # --- Fewer calls, not just fewer at once -------------------------------
+      #
+      # The caps above bound parallelism. They do not bound the number of calls.
+      # The values below remove calls. Every one is a background path, and each
+      # replaces an image default that is tuned for a hosted provider.
+      #
+      # The image runs a focused 1-by-1 LLM "merge or keep" pass for every new
+      # observation whose cosine similarity to an existing one reaches this
+      # threshold (consolidator.py: consolidation_dedup_threshold). 1.0 turns
+      # that pass off. Only automatic near-duplicate merging is lost.
+      HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD: "1.0"
+      # The maintenance loop enqueues a consolidation and a mental-model refresh
+      # for every eligible bank on these timers, with no user activity
+      # (maintenance.py). Both defaults are 300s. An hour keeps the timer real
+      # and stops it from being a steady background draw.
+      HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS: "3600"
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS: "3600"
+      # The default of 0 refreshes a mental model on every automatic trigger.
+      # This floor covers automatic refreshes only: an explicit refresh from the
+      # API or MCP ignores it (memory_engine.py: min_refresh_interval_seconds).
+      HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS: "3600"
+      # A small local model invents data when every fact field must be a string.
+      # The image's own comment recommends this setting for exactly that case.
+      # A valid answer means fewer JSON-repair re-prompts, which are extra calls
+      # the caller never sees.
+      HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS: "true"
+      # Observations and auto-consolidation stay on: they are the product, not
+      # overhead. The caps above bound them instead of removing them. The image
+      # defaults both to true, and Bloud writes the values down so a future
+      # upstream default change cannot turn them off silently.
+      HINDSIGHT_API_ENABLE_OBSERVATIONS: "true"
+      HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION: "true"
       # The image's own supervisor kills the container when the API has not
       # answered `/health` within this window, and it follows
       # HINDSIGHT_API_MODEL_INIT_TIMEOUT when that is longer. First boot runs
