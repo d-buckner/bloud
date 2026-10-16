@@ -63,8 +63,18 @@ account Bloud onboards, so Seerr → the PVRs is covered by the configurator's
 unit tests and by the spec above, and no tier asserts it end to end.
 
 The forward-auth ladders (Sonarr, Radarr, Prowlarr, qBittorrent) share
-`lib/forwardAuth.ts`; app-specific selectors and title patterns stay in each
-spec so a failure names the app and the rung.
+`@bloud/browser-harness`; app-specific selectors and title patterns stay in
+each spec so a failure names the app and the rung.
+
+## Shared browser code
+
+The login, the app origins, the dashboard locators, the page objects, the
+host-agent API client, the forward-auth journey, and the page diagnostics live
+in the harness package at [`../harness`](../harness) (`@bloud/browser-harness`).
+The spec files import that package. `lib/` keeps the runner wiring only:
+`fixtures.ts` and the behavior ladders in `app-suite.ts`. The same package
+backs an ad-hoc entry, `node ../harness/bin/browser.mjs shot|review|verify`.
+See [the browser harness guide](../docs/guides/browser-harness.md).
 
 ## Running
 

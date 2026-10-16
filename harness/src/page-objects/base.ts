@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Page } from '@playwright/test';
-import { Diagnostics, visibleText } from './diagnostics';
+import { Diagnostics, visibleText } from '../diagnostics';
 
 /**
  * Base for every page object.
@@ -11,11 +11,12 @@ import { Diagnostics, visibleText } from './diagnostics';
  * by a sign-in test, and a page object that asserts hides which of the two
  * failed.
  *
- * The same instances are used by the Playwright specs and by a hand-run probe
- * (`tests/diagnose.spec.ts`). That is the whole reason this layer exists: a
- * manual look and an automated gate must not disagree about what a selector
- * means, which is how a hand probe once declared a working Authentik page
- * blank because it read `innerText` across a shadow boundary.
+ * The same instances are used by the Playwright specs, by the harness CLI,
+ * and by a hand-run probe (`e2e/tests/diagnose.spec.ts`). That is the whole
+ * reason this layer exists: a manual look and an automated gate must not
+ * disagree about what a selector means, which is how a hand probe once
+ * declared a working Authentik page blank because it read `innerText` across a
+ * shadow boundary.
  */
 export class PageObject {
   readonly diag: Diagnostics;

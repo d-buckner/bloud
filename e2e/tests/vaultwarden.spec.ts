@@ -2,10 +2,7 @@
 import { test, expect } from '../lib/fixtures';
 import type { Page } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
-import { openAppFromHome } from '../lib/apps';
-import { LoginPage } from '../lib/loginPage';
-import { appOrigin } from '../lib/origin';
-import { TEST_CREDS } from './constants';
+import { LoginPage, CREDENTIALS, appOrigin, openAppFromHome } from '@bloud/browser-harness';
 
 const VAULTWARDEN_URL = appOrigin('vaultwarden');
 
@@ -120,6 +117,6 @@ describeApp('vaultwarden', (app) => {
 async function startSsoLogin(vault: Page): Promise<void> {
   const email = vault.locator('input[type="email"]:visible');
   await email.waitFor({ state: 'visible', timeout: 60_000 });
-  await email.fill(`${TEST_CREDS.USERNAME}@bloud.test`);
+  await email.fill(`${CREDENTIALS.username}@bloud.test`);
   await vault.getByRole('button', { name: /single sign-on/i }).click();
 }

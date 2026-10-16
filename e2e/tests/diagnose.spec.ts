@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '@playwright/test';
-import { BloudPage, HomeAssistantPage, probeWebSocketUpgrade } from '../lib/pom';
+import { BloudPage, HomeAssistantPage, probeWebSocketUpgrade } from '@bloud/browser-harness';
 
 /**
  * A hand-run probe that uses the same page objects the suite uses.
@@ -63,7 +63,7 @@ test.describe('diagnose (manual)', () => {
       console.log('problems  :\n' + ha.diag.report());
       console.log('screenshot:', await ha.shot('signin'));
       expect(stopped, `sign-in stopped on "${stopped}"`).toBe('dashboard');
-      await ha.expectDashboard();
+      await ha.assertDashboard();
       return;
     }
 

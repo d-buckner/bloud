@@ -9,6 +9,9 @@
     "test:update": "playwright test --update-snapshots",
     "install-browsers": "npx playwright install chromium"
   },
+  "dependencies": {
+    "@bloud/browser-harness": "file:../harness"
+  },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "1.56.1",

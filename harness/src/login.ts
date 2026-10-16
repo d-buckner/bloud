@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Page } from '@playwright/test';
-import { TEST_CREDS } from '../tests/constants';
+import { CREDENTIALS } from './config';
 
 /**
  * Page Object Model for the Authentik login flow.
@@ -32,8 +32,8 @@ export class LoginPage {
   }
 
   async login(
-    username = TEST_CREDS.USERNAME,
-    password = TEST_CREDS.PASSWORD,
+    username = CREDENTIALS.username,
+    password = CREDENTIALS.password,
   ): Promise<void> {
     await this.usernameField.click();
     await this.usernameField.fill(username);
@@ -47,8 +47,8 @@ export class LoginPage {
 
   /** If the login page is showing, complete it. Otherwise no-op. */
   async loginIfNeeded(
-    username = TEST_CREDS.USERNAME,
-    password = TEST_CREDS.PASSWORD,
+    username = CREDENTIALS.username,
+    password = CREDENTIALS.password,
   ): Promise<void> {
     if (await this.isVisible()) {
       await this.login(username, password);

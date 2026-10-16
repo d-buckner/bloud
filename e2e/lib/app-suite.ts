@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test } from '@playwright/test';
 import type { BrowserContext, Page } from '@playwright/test';
-import { ensureSignedIn } from './auth';
-import { ensureInstalled } from './api';
-import { expectInstalledInCatalog, expectRunningTile, openAppFromHome } from './apps';
-import { expectForwardAuthGate, signInThroughForwardAuth } from './forwardAuth';
-import { appHost } from './origin';
+import {
+  appHost,
+  assertForwardAuthGate,
+  assertInstalledInCatalog,
+  assertRunningTile,
+  ensureInstalled,
+  ensureSignedIn,
+  openAppFromHome,
+  signInThroughForwardAuth,
+} from '@bloud/browser-harness';
 
 /**
  * Convergence budget for an app that does not name its own: enough for a
@@ -169,13 +174,13 @@ function registerConvergenceRungs(
 
   test('appears in the catalog as installed', async () => {
     test.setTimeout(60_000);
-    await expectInstalledInCatalog(app.page, options.label);
+    await assertInstalledInCatalog(app.page, options.label);
   });
 
   test('appears on the home screen as a converged tile', async () => {
     test.setTimeout(60_000);
     await app.page.goto('/');
-    await expectRunningTile(app.page, options.label);
+    await assertRunningTile(app.page, options.label);
   });
 }
 
@@ -193,7 +198,7 @@ function registerForwardAuthRungs(
     browser,
   }) => {
     test.setTimeout(120_000);
-    await expectForwardAuthGate(browser, name);
+    await assertForwardAuthGate(browser, name);
   });
 
   test(`signs in through forward-auth and reaches the ${label} UI`, async () => {

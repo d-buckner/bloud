@@ -71,16 +71,20 @@ func cmdE2E(args []string) int {
 	return 0
 }
 
-// requireE2EDeps checks that the Playwright suite's own package is installed.
-// e2e/ is a standalone npm package, not one of the root workspaces, so the
-// root install does not cover it. The check exists because the failure it
-// prevents is opaque: Playwright resolves the config, the config's import of
-// @playwright/test misses, and the run dies with ERR_MODULE_NOT_FOUND after
-// the caller has already built and deployed a runtime.
+// requireE2EDeps checks that the Playwright suite's own package and its linked
+// browser harness are installed. e2e/ is a standalone npm package, not one of
+// the root workspaces, so the root install does not cover it. The harness is a
+// file: dependency, so an install from before the harness existed leaves an
+// e2e/node_modules without the link; without this check the first import of
+// @bloud/browser-harness fails with ERR_MODULE_NOT_FOUND minutes into a run.
 func requireE2EDeps(root string) error {
-	spec := filepath.Join(root, "e2e", "node_modules", "@playwright", "test")
-	if _, err := os.Stat(spec); err != nil {
-		return fmt.Errorf("the Playwright suite is not installed: run `npm --prefix e2e ci`")
+	for _, spec := range []string{
+		filepath.Join(root, "e2e", "node_modules", "@playwright", "test"),
+		filepath.Join(root, "e2e", "node_modules", "@bloud", "browser-harness"),
+	} {
+		if _, err := os.Stat(spec); err != nil {
+			return fmt.Errorf("the Playwright suite or its browser harness is not installed: run `npm --prefix e2e ci`")
+		}
 	}
 	return nil
 }

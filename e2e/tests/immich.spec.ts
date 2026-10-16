@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
-import { openAppFromHome } from '../lib/apps';
-import { appUrlPattern } from '../lib/origin';
-import { LoginPage } from '../lib/loginPage';
+import { LoginPage, appUrlPattern, openAppFromHome } from '@bloud/browser-harness';
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. Immich uses

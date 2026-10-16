@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test as base, expect, type Page } from '@playwright/test';
-import { ensureSignedIn } from './auth';
-import * as api from './api';
+import { api, ensureSignedIn } from '@bloud/browser-harness';
 
 interface BloudFixtures {
   /** A page that has already completed Authentik SSO login. */

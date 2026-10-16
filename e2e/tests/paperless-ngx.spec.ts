@@ -2,9 +2,7 @@
 import { test, expect } from '../lib/fixtures';
 import type { Page } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
-import { openAppFromHome } from '../lib/apps';
-import { LoginPage } from '../lib/loginPage';
-import { appOrigin, appUrlPattern } from '../lib/origin';
+import { LoginPage, appOrigin, appUrlPattern, openAppFromHome } from '@bloud/browser-harness';
 
 const PAPERLESS_NGX_URL = appOrigin('paperless-ngx');
 

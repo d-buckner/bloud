@@ -1,0 +1,26 @@
+{
+  "name": "@bloud/browser-harness",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "description": "Shared browser harness: the Playwright code the e2e suite and ad-hoc agent recipes both drive the Bloud UI with.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "bloud-browser": "./bin/browser.mjs"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "install-browsers": "playwright install chromium"
+  },
+  "peerDependencies": {
+    "@playwright/test": "1.56.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}
