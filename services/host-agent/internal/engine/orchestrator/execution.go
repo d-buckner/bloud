@@ -17,6 +17,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/timezone"
 )
 
 // runConfigurator drives a single node through its lifecycle, or re-runs its
@@ -276,9 +277,35 @@ func (o *Orchestrator) computeContainerSpec(def *catalog.ContainerDef, appCatalo
 	if err != nil {
 		return containerruntime.Spec{}, fmt.Errorf("build container spec: %w", err)
 	}
+	o.applyTimezone(&spec)
 	o.applyIssuerExtraHost(&spec, appCatalogID)
 	o.applyRoutedProviderExtraHosts(&spec, appCatalogID)
 	return spec, nil
+}
+
+// applyTimezone states the instance clock on one container spec.
+//
+// The platform owns the clock, so the setting wins over anything the app's
+// metadata declared. No app in the catalog pins a zone of its own any more, and
+// an app that ever needs one needs a metadata field for it rather than an env
+// entry that the reconciler overwrites in silence.
+//
+// Nothing is written when no zone is set. An image then keeps the default it
+// ships with, which is UTC in practice, and the absence is visible in the spec
+// rather than faked by a value nobody chose.
+//
+// The write lands in the spec, so it is part of the spec revision the runtime
+// compares. That is what makes a zone change recreate the container: the desired
+// state moved, and Ensure converges it.
+func (o *Orchestrator) applyTimezone(spec *containerruntime.Spec) {
+	zone := o.timezone.Get()
+	if zone == "" {
+		return
+	}
+	if spec.Environment == nil {
+		spec.Environment = map[string]string{}
+	}
+	spec.Environment[timezone.EnvVar] = zone
 }
 
 // applyRoutedProviderExtraHosts pins the hostname of every provider this app

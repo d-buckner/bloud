@@ -25,6 +25,39 @@ export function setPublicURL(url: string): Promise<SetPublicURLResponse> {
 	return put<SetPublicURLResponse>('/api/settings/public-url', { url });
 }
 
+export interface TimezoneSettings {
+	/**
+	 * The IANA zone name in force, for example Europe/Berlin.
+	 * Empty means Bloud states no zone and every container keeps the default its
+	 * image ships with, which is UTC in practice.
+	 */
+	zone: string;
+}
+
+export function fetchTimezone(): Promise<TimezoneSettings> {
+	return get<TimezoneSettings>('/api/settings/timezone');
+}
+
+export interface SetTimezoneResponse {
+	intentId: string;
+	/**
+	 * The zone the save accepted, trimmed. Empty means the setting was cleared.
+	 * The UI polls the live value against this string, so it does not have to
+	 * reimplement the server's validation.
+	 */
+	zone: string;
+}
+
+/**
+ * Set the instance clock. An empty zone clears the setting.
+ *
+ * The save is an intent: the API answers 202 and the orchestrator recreates the
+ * managed containers so they pick the new clock up.
+ */
+export function setTimezone(zone: string): Promise<SetTimezoneResponse> {
+	return put<SetTimezoneResponse>('/api/settings/timezone', { zone });
+}
+
 export interface AIUpstream {
 	id: string;
 	name: string;

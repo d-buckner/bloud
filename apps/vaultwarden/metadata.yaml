@@ -86,7 +86,6 @@ containers:
         fi
         exec /start.sh
     environment:
-      TZ: Etc/UTC
       # Per-install settings (public URL, SSO client, signup policy) cannot be
       # expressed in a static manifest: the configurator generates them into
       # this dotenv file, which the image loads at startup (and which its own

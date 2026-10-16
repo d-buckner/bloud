@@ -52,7 +52,7 @@ test.describe('address round trip (Settings -> Address)', () => {
     // write: if the request dropped the scheme or the port, the value read back
     // disagrees with what was submitted.
     await input.fill(before.url);
-    const saveBtn = page.getByRole('button', { name: /^Save$/ });
+    const saveBtn = page.locator('.address-section').getByRole('button', { name: /^Save$/ });
     await expect(saveBtn).toBeEnabled({ timeout: 5_000 });
     await saveBtn.click();
 
@@ -89,7 +89,7 @@ test.describe('address round trip (Settings -> Address)', () => {
     await expect(input).toBeVisible({ timeout: 15_000 });
     const original = await input.inputValue();
 
-    const saveBtn = page.getByRole('button', { name: /^Save$/ });
+    const saveBtn = page.locator('.address-section').getByRole('button', { name: /^Save$/ });
     await expect(saveBtn).toBeDisabled();
 
     await input.fill('https://changed.example.test');
@@ -109,6 +109,6 @@ test.describe('address round trip (Settings -> Address)', () => {
     await expect(input).toBeVisible({ timeout: 15_000 });
 
     await input.fill('   ');
-    await expect(page.getByRole('button', { name: /^Save$/ })).toBeDisabled();
+    await expect(page.locator('.address-section').getByRole('button', { name: /^Save$/ })).toBeDisabled();
   });
 });

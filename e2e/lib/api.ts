@@ -113,6 +113,41 @@ export async function savePublicURLAndWait(url: string): Promise<PublicURLSettin
   }
 }
 
+/** The time zone setting as the API reports it. An empty zone is a value: it
+ * means Bloud states no zone and every container keeps its image default. */
+export interface TimezoneSettings {
+  zone: string;
+}
+
+/**
+ * The configured time zone, read straight from the API rather than from the
+ * settings widget, so an assertion checks what is stored.
+ */
+export async function getTimezone(): Promise<TimezoneSettings> {
+  return fetchJSON<TimezoneSettings>('/api/settings/timezone');
+}
+
+/**
+ * Save the time zone and return the value the API reports after the orchestrator
+ * applied it. The save is an intent, and a zone that changed recreates every
+ * managed container, so the window is wider than the address setting's.
+ */
+export async function saveTimezoneAndWait(zone: string): Promise<TimezoneSettings> {
+  const res = await fetchJSON<{ intentId: string; zone: string }>('/api/settings/timezone', {
+    method: 'PUT',
+    body: JSON.stringify({ zone }),
+  });
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    const live = await getTimezone();
+    if (live.zone === res.zone) return live;
+    if (Date.now() >= deadline) {
+      throw new Error(`time zone never converged: wanted ${res.zone}, still ${live.zone}`);
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
 export async function getAppStatus(name: string): Promise<string | null> {
   const app = await getApp(name);
   return app?.status ?? null;

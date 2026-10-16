@@ -126,8 +126,9 @@ containers:
     network: apps-net
     restartPolicy: always
     # shmSize: 256m   # only if the app needs more than podman's 64MB /dev/shm
-    environment:
-      TZ: Etc/UTC
+    # environment:                # static env the image reads
+    #   SOMEAPP_FEATURE_ENABLED: "on"
+    # Bloud adds TZ from the time zone in Settings. Do not declare it here.
     ports:
       - host: 8080
         container: 8080
@@ -168,6 +169,11 @@ A few friendly defaults worth knowing:
   not exist. Nothing else about the app changes. It stays in the catalog and in
   `GET /api/apps/installed`, it shows in the developer graph, and it installs,
   reconciles, and routes like every other app. `affine-mcp` sets it.
+- Bloud sets `TZ` on every container it creates, from the time zone the
+  operator picks in Settings. Do not declare it in `environment:`. The
+  reconciler writes it into the container spec after it reads your metadata, so
+  a value there is overwritten. When no zone is set, Bloud adds nothing and the
+  image keeps its own default.
 - The `healthCheck` numbers are seconds. Pick a check the image can actually
   run. Many slim images lack curl, but their own runtime works (immich uses
   `node -e ...fetch`, home assistant uses `python3`); see the reference apps.

@@ -27,6 +27,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/timezone"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/wire"
 )
 
@@ -102,6 +103,7 @@ type agentStack struct {
 	runtime      containerruntime.Runtime
 	hosts        *hostset.State
 	settings     *store.SettingsStore
+	timezone     *timezone.State
 	vars         *configurator.TemplateVars
 	registry     *configurator.Registry
 	eventsBus    *eventbus.Bus
@@ -136,6 +138,7 @@ func buildAgentStack(logger *slog.Logger) *agentStack {
 	address, settingsStore := resolveAddress(st.database, st.cfg, logger)
 	st.settings = settingsStore
 	st.hosts = hostset.NewState(address)
+	st.timezone = newTimezoneState(settingsStore, logger)
 
 	// One template-var store, handed to both the orchestrator and the authentik
 	// configurator, so the LDAP token PostStart records is visible to the
@@ -314,6 +317,7 @@ func agentServerConfig(st *agentStack) api.ServerConfig {
 		TrustedLocalNets:      cfg.TrustedLocalNets,
 		APIToken:              cfg.APIToken,
 		Hosts:                 st.hosts,
+		Timezone:              st.timezone,
 		DNSDiagnostics:        system.NewDNSDiagnostics(st.client, func() string { return st.hosts.Get().PrimaryBaseURL() }),
 		EventsBus:             st.eventsBus,
 		Settings:              st.settings,
@@ -341,6 +345,7 @@ func (st *agentStack) wireInput() wire.Input {
 		Authentik:         st.authClient,
 		Settings:          st.settings,
 		Hosts:             st.hosts,
+		Timezone:          st.timezone,
 		AppsDir:           cfg.AppsDir,
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
@@ -481,6 +486,29 @@ func resolveAddress(database *sql.DB, cfg *config.Config, logger *slog.Logger) (
 			"detail", issue.Message)
 	}
 	return hostSet, settingsStore
+}
+
+// newTimezoneState loads the stored instance clock into the live state the
+// reconciler reads. A stored value that no longer parses is dropped rather than
+// kept: the instance must come up, and a zone nothing can resolve would put a
+// broken TZ into every container the next pass builds.
+func newTimezoneState(settingsStore *store.SettingsStore, logger *slog.Logger) *timezone.State {
+	stored, err := settingsStore.Get(store.SettingTimezone)
+	if err != nil {
+		logger.Warn("failed to load the stored timezone, stating no zone", "error", err)
+		return timezone.NewState("")
+	}
+	if stored == "" {
+		return timezone.NewState("")
+	}
+	zone, err := timezone.Parse(stored)
+	if err != nil {
+		logger.Warn("stored timezone is not a valid zone, stating no zone",
+			"timezone", stored, "error", err)
+		return timezone.NewState("")
+	}
+	logger.Info("timezone resolved", "timezone", zone)
+	return timezone.NewState(zone)
 }
 
 // buildTemplateVars builds the template-variable store shared by the

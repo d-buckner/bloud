@@ -10,6 +10,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/timezone"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 )
 
@@ -61,6 +62,12 @@ type RuntimeConfig struct {
 	// TraefikPort is the port the public entrypoint listens on. LAN IP base
 	// URLs are built on it. See HostSet.AllBaseURLs.
 	TraefikPort int
+	// Timezone is the live instance clock, read when a container spec is built
+	// so every managed container gets TZ. Nil means no zone is stated.
+	// It lives here rather than beside the live host set because the runtime
+	// config is what the spec builder already reads, and the clock is only ever
+	// read there.
+	Timezone *timezone.State
 }
 
 // StoresConfig groups the persisted-state collaborators the orchestrator reads

@@ -64,8 +64,6 @@ containers:
     # always: homeassistant.restart (used by the configurator after config
     # changes) exits the process; the restart policy brings the container back.
     restartPolicy: always
-    environment:
-      TZ: Etc/UTC
     ports:
       - host: 8123
         container: 8123

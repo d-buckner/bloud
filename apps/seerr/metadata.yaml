@@ -73,7 +73,6 @@ containers:
     network: apps-net
     restartPolicy: always
     environment:
-      TZ: Etc/UTC
       PORT: "5055"
       LOG_LEVEL: info
     ports:

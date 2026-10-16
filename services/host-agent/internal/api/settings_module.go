@@ -10,6 +10,7 @@ import (
 	"codeberg.org/d-buckner/bloud/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/timezone"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -37,6 +38,9 @@ type settingsModule struct {
 	authConfig      *AuthRef
 	hostState       *hostset.State
 	settingsStore   store.SettingsStoreInterface
+	// timezone is the live instance clock, the same state the reconciler builds
+	// container specs from. Nil reports no zone.
+	timezone *timezone.State
 	// selfPort is host-agent's own bind port. First-run adoption needs it to
 	// tell a browser origin apart from an automation origin; see
 	// adoptFirstRunHost.
@@ -52,6 +56,7 @@ func NewSettingsModule(
 	authConfig *AuthRef,
 	hostState *hostset.State,
 	settingsStore store.SettingsStoreInterface,
+	timezoneState *timezone.State,
 	selfPort int,
 	logger *slog.Logger,
 ) *settingsModule {
@@ -63,6 +68,7 @@ func NewSettingsModule(
 		authConfig:      authConfig,
 		hostState:       hostState,
 		settingsStore:   settingsStore,
+		timezone:        timezoneState,
 		selfPort:        selfPort,
 		logger:          logger,
 	}
@@ -127,6 +133,9 @@ func NewSetupRouter(mod *settingsModule, r chi.Router) {
 func NewSettingsRouter(mod *settingsModule, r chi.Router) {
 	r.Get("/settings/public-url", mod.GetPublicURLHandler())
 	r.Put("/settings/public-url", mod.SetPublicURLHandler())
+
+	r.Get("/settings/timezone", mod.GetTimezoneHandler())
+	r.Put("/settings/timezone", mod.SetTimezoneHandler())
 
 	r.Get("/admin/users", mod.ListUsersHandler())
 	r.Post("/admin/users", mod.CreateManagedUserHandler())

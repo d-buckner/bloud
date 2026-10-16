@@ -114,6 +114,26 @@ func NewSetPublicURLIntent(rawURL string) SetPublicURLIntent {
 	return SetPublicURLIntent{intentBase: newIntentBase(), URL: rawURL}
 }
 
+// SetTimezoneIntent requests changing the instance clock, given as an IANA
+// zone name (Europe/Berlin). An empty Zone clears the setting, which returns
+// every container to the default its image ships with.
+//
+// The orchestrator validates the name, persists it, swaps the live value the
+// reconciler reads, and resets the running nodes so their containers are
+// recreated with the new TZ. The reset is not optional: a container's
+// environment is fixed when the runtime creates it, so nothing short of a
+// recreate moves an app's clock.
+type SetTimezoneIntent struct {
+	intentBase
+	Zone string
+}
+
+func (SetTimezoneIntent) intentMarker() {}
+
+func NewSetTimezoneIntent(zone string) SetTimezoneIntent {
+	return SetTimezoneIntent{intentBase: newIntentBase(), Zone: zone}
+}
+
 // SetInferenceIntent requests changing the instance's AI configuration: the
 // upstream list, the default model every consumer adopts unless it has chosen
 // its own, and optionally the upstream credential.
@@ -300,6 +320,7 @@ var (
 	_ Intent = RenameAppIntent{}
 	_ Intent = ClearAppDataIntent{}
 	_ Intent = SetPublicURLIntent{}
+	_ Intent = SetTimezoneIntent{}
 	_ Intent = SetInferenceIntent{}
 	_ Intent = SetTranscriptionIntent{}
 	_ Intent = SetEmbeddingsIntent{}

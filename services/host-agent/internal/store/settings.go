@@ -12,6 +12,11 @@ import (
 // reachable at, as a bare origin (https://bloud.example.com:8443).
 const SettingPublicURL = "public_url"
 
+// SettingTimezone is the settings key holding the IANA zone name the operator
+// picked, for example Europe/Berlin. An absent key means Bloud states no zone
+// and every container keeps the default its image ships with.
+const SettingTimezone = "timezone"
+
 // SettingsStore holds instance-level scalar settings as key/value rows.
 //
 // This is where an admin-editable single value goes, so one setting does not

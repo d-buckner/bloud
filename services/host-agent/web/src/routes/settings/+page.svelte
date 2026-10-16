@@ -5,6 +5,7 @@
 	import { isAdmin, select } from '$lib/store';
 	import AddressSettingsSection from '$lib/components/AddressSettingsSection.svelte';
 	import AISettingsSection from '$lib/components/AISettingsSection.svelte';
+	import TimezoneSettingsSection from '$lib/components/TimezoneSettingsSection.svelte';
 	import UsersSettingsSection from '$lib/components/UsersSettingsSection.svelte';
 
 	const admin = select(isAdmin);
@@ -37,6 +38,7 @@
 
 	{#if ready}
 		<AddressSettingsSection />
+		<TimezoneSettingsSection />
 		<AISettingsSection />
 		<UsersSettingsSection />
 	{/if}
