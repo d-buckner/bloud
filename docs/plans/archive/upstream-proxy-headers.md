@@ -18,7 +18,7 @@ Three facts combine:
    `http://localhost:8080` for `localhost` and `http://<host>` for everything
    else, and `HostSet.IssuerBaseURL` returns the primary host's base URL for a
    non-localhost primary. There is no scheme knob, by design:
-   [the 2026-09-19 review](../../specs/review-2026-09-19.md) records "hardcode `http`, which matches
+   [the 2026-09-19 review](../../reviews/2026-09-19.md) records "hardcode `http`, which matches
    reality: invariant 10 says no TLS ships today".
 
 2. **Traefik discards the proxy's `X-Forwarded-*` headers.** The generated

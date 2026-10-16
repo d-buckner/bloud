@@ -24,12 +24,12 @@ revision chatter is not kept at all, because `git log` holds it.
 |---|---|
 | 2026-10-15 | Item 34 closed: `operations` is keyed `(app_name, node)`. Item 27 half-closed by the app-SDK extraction. Items 14, 16, 22, 23 re-scoped after a source re-read. |
 | 2026-10-04 | Design-debt repayment began: items 26, 28, 29, 30, and 32 closed (issues #203-#206); item 31 deferred with a recorded reason. |
-| 2026-10-03 | Design and complexity findings from the APoSD review folded in as items 26-34: [`review-2026-10-03-aposd.md`](../specs/review-2026-10-03-aposd.md). |
+| 2026-10-03 | Design and complexity findings from the APoSD review folded in as items 26-34: [`2026-10-03-aposd.md`](../reviews/2026-10-03-aposd.md). |
 | 2026-09-30 | Item 25 closed: the reconciler runs on a self-healing timer, so convergence no longer waits on somebody submitting an intent, and `retryable` on the operation row finally has a driver. |
 | 2026-09-27 | Items 8 and 9 closed: drift is written into the graph node, not only into the store, and `Ensure` pulls before it destroys. Plan archived at [`docs/plans/archive/reality-match-intent.md`](../plans/archive/reality-match-intent.md). |
 | 2026-09-25 | Item 6 closed: the readiness and wait contract is honored, and the wait budget is single-sourced and harness-enforced. The configurator-conformance list closed in the same branch. |
 | 2026-09-20 | PRs 6 and 7 landed: the engine's three silent-failure paths are closed, and the SQLite pragmas travel in the DSN. The configurator-layer conformance inventory was added. |
-| 2026-09-19 | The P0 re-scoped: the loopback admin exemption is remotely forgeable, not merely a local-process concern. Item 5 re-observed on a post-PR-4 redeploy. Source: [`review-2026-09-19.md`](../specs/review-2026-09-19.md), 9 parallel subsystem audits with high-severity findings re-verified at source, plus one live runtime observation. |
+| 2026-09-19 | The P0 re-scoped: the loopback admin exemption is remotely forgeable, not merely a local-process concern. Item 5 re-observed on a post-PR-4 redeploy. Source: [`2026-09-19.md`](../reviews/2026-09-19.md), 9 parallel subsystem audits with high-severity findings re-verified at source, plus one live runtime observation. |
 
 Three groups of findings from the 2026-09-19 review are recorded there and are
 **not** duplicated here: the frontend (SSE fallback poller, toast on first
@@ -68,7 +68,7 @@ below (C1-C15) rather than ranked here.
 | 16 | `ClearAppDataIntent` is a dead intent: nothing submits it, and the drain switch still has no arm for it, so a submitter would get a `WARN` and no effect. The destructive half of this entry is **closed**: `appsModule.ClearData` now removes `dirs.AppDataDir(dataDir, name)` (the writable tree under `BLOUD_DATA_DIR`), never `<appsDir>/<name>`, so it cannot delete a catalog directory. What is left is a dead type plus an intent the queue can carry and the engine cannot honour: delete the intent, or give it an arm | P3 (was P2) | `intent.go` `ClearAppDataIntent`; `pipeline.go` `applyIntents` default arm; `apps_module.go` `ClearData`; `internal/dirs` |
 | 17 | `sso.DeriveSecret` still contains a literal fallback secret (`return context + "-fallback-secret"` when the master secret is empty); unreachable behind current guards, so invariant 8 now survives only by caller discipline | P2 | `internal/sso/blueprint.go` `DeriveSecret` |
 | 18 | Generated Traefik YAML is hand-assembled with app names unquoted and never parsed before the write; no strict YAML decode or metadata validation at load (port, image pin, container name, SSO strategy) | P2 | `traefikgen/generator.go:44-60,216-224`; `catalog/loader.go:110-130` |
-| 19 | `PlanInstall` never sets `CanInstall=false`/`Blockers`, so the consumer's blocker guard is unreachable; `review-2026-09-17.md` §H3 remains open | P2 | `pipeline.go:76-80` |
+| 19 | `PlanInstall` never sets `CanInstall=false`/`Blockers`, so the consumer's blocker guard is unreachable; `docs/reviews/2026-09-17.md` §H3 remains open | P2 | `pipeline.go:76-80` |
 | 20 | `primaryContainerNode` = the **last** container def: an order-dependent convention that decides inter-app edges and which node owns SSO provisioning. It is now written down in one app's metadata (`apps/radicale/metadata.yaml`: "the last container in this list is the app's primary node") and nowhere in the code, so it is documented by example rather than by contract. The consequence is live: Authentik's last def is the LDAP outpost, so every inter-app edge on `authentik` resolves to that node | P2 | `orchestrator/graph_build.go` `primaryContainerNode`; `apps/radicale/metadata.yaml` |
 | 21 | `IconHandler` rejects `/` and `\` but not `..`, and never re-checks the joined path | P2 | `api/apps_module.go` `IconHandler` |
 | 22 | App networks are never removed, and a container orphaned by a crash mid-uninstall is never swept. **Partly closed 2026-10-15**: `container.Runtime.ListContainers` now has production callers (`orchestrator/catalog_update.go` `reconcileCatalogUpdates`, which prunes a labeled container the catalog no longer declares and that once had a graph node, and `pruneContainer`), and the dev fast gate reads the podman client's list. What remains: there is still no `RemoveNetwork` anywhere in the `Runtime` interface, so a network Bloud created for a removed app outlives it, and nothing sweeps a labeled container whose app row is gone rather than whose definition changed | P2 | no `RemoveNetwork` in `internal/container` `Runtime`; `orchestrator/catalog_update.go` `reconcileCatalogUpdates`/`pruneContainer` |
@@ -77,7 +77,7 @@ below (C1-C15) rather than ranked here.
 | 25 | ~~Nothing re-runs convergence unless an intent is submitted, so an app that lands in `error` stays there indefinitely and the item 8 repair only fires when some other trigger happens to run a pass. `retryable: true` on the operation row was descriptive metadata with no driver: the row promised a retry was expected to help and no retry ever came~~ **CLOSED 2026-09-30**: a `ReconcileIntent` on an idle-based timer (~60s, `BLOUD_RECONCILE_INTERVAL`) submits through the same single-writer queue, and the pass it runs resets `ERROR` nodes whose operation row is retryable. The pass is proven free over a healthy stack: zero container creates, zero config writes, zero node transitions, and no Traefik file rewrite | P1→closed | `orchestrator/selfheal.go`; `orchestrator/selfheal_test.go`; `traefikgen/generator.go` `GenerateAll` |
 
 **Design/complexity debt from the 2026-10-03 APoSD review**
-([`docs/specs/review-2026-10-03-aposd.md`](../specs/review-2026-10-03-aposd.md)).
+([`docs/reviews/2026-10-03-aposd.md`](../reviews/2026-10-03-aposd.md)).
 These are complexity findings (change amplification, obscurity, wide/shallow
 interfaces), not runtime bugs; severity is the review's. They are design debt,
 so "risk×cheapness" here means "how much do they slow the next change".
@@ -282,7 +282,7 @@ The newest repayment, and the one the 2026-10-12 review is graded against.
 Every earlier closing, with its reasoning and its measurements, is in
 [`archive/tech-debt-history.md`](archive/tech-debt-history.md).
 
-### The app-SDK became a module (2026-10-14, review-2026-10-12 findings 3.1-3.6)
+### The app-SDK became a module (2026-10-14, the 2026-10-12 review's findings 3.1-3.6)
 
 The goal the 2026-10-12 review measured everything against: *adding an app, and
 updating an app later, should be a change scoped to `apps/<name>/`*. Four changes

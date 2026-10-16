@@ -67,7 +67,7 @@ integrations:
 # workspace the AI profile uses, so a companion can pin its default scope.
 # Read-only tools are not enforced by this contract; the companion's own tool
 # profile is the boundary. The owner account is the documented limitation:
-# see the open question in docs/plans/mcp-integrations.md.
+# see the open question in docs/plans/archive/mcp-integrations.md.
 provides:
   appApi:
     secrets: [password]

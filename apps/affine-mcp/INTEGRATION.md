@@ -36,7 +36,7 @@ its Manticore search sidecar and its `aff_mcp_v1` minting path. A harness
 registers `affine-mcp` and gets 106 read-write tools over the shared workspace.
 
 The history is in
-[`docs/plans/mcp-integrations.md`](../../docs/plans/mcp-integrations.md); the
+[`docs/plans/archive/mcp-integrations.md`](../../docs/plans/archive/mcp-integrations.md); the
 design is in [`docs/features/mcp.md`](../../docs/features/mcp.md).
 
 ## Credential flow

@@ -88,7 +88,7 @@ store, which all stayed as packages under `internal/`. So this is a router under
 ### It provides the `mcp` contract through a zero-container app
 
 Hermes consumes `mcp` providers and picks its own set
-([plans/mcp-integrations.md](mcp-integrations.md) decision 8). The native
+([plans/archive/mcp-integrations.md](archive/mcp-integrations.md) decision 8). The native
 endpoint should not be special-cased into Hermes; it should look like every other
 provider. A catalog app that declares no container does that:
 
@@ -215,9 +215,9 @@ complementary rather than competing, and this plan stays deferred.
 
 - [features/mcp.md](../features/mcp.md): the contract, the credential boundary,
   the shipped providers.
-- [plans/mcp-integrations.md](mcp-integrations.md): the decision history for the
+- [plans/archive/mcp-integrations.md](archive/mcp-integrations.md): the decision history for the
   wrapper shape, including why the built-in AFFiNE provider was removed.
-- [plans/media-stack-integration.md](media-stack-integration.md): the app-side
+- [plans/archive/media-stack-integration.md](archive/media-stack-integration.md): the app-side
   wiring this endpoint would expose rather than duplicate.
 - [architecture/overview.md](../architecture/overview.md),
   [guides/contributing-apps.md](../guides/contributing-apps.md).

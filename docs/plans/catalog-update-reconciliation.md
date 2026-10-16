@@ -301,7 +301,7 @@ Three scenarios, asserted behaviorally:
 
 - `docs/plans/apt-repository.md` (the delivery half: ships the new catalog via
   `apt upgrade`)
-- `docs/plans/media-stack-integration.md` §9 F2 (this plan realizes it more
+- `docs/plans/archive/media-stack-integration.md` §9 F2 (this plan realizes it more
   cheaply: the container already carries the desired-state record)
 - `docs/specs/reconciler-spec.md` (invariants 1, 2, 5, 7, 9, 12, 15)
 - `services/host-agent/internal/engine/orchestrator/pipeline.go`,

@@ -251,6 +251,64 @@ host-agent; Lima forwards to loopback and needs none.
 ./bloud destroy           # delete the VM
 ```
 
+## Write prose in Simplified Technical English
+
+Write prose in ASD-STE100 Simplified Technical English (STE). That covers every
+tracked document (`docs/`, `README.md`, this file), the `description` text in
+`apps/*/metadata.yaml`, the comments in source files, the commit message, and the
+pull request title and description. STE comes from the aerospace industry, which
+built it for aircraft maintenance documentation. Issue 9 (January 2025) is an
+international standard: 53 writing rules and a dictionary of about 900 approved
+words. The AeroSpace and Defence Industries Association of Europe (ASD) owns and
+maintains the specification. See [Simplified Technical
+English](https://en.wikipedia.org/wiki/Simplified_Technical_English) on Wikipedia
+for the standard and its history. The reason is not style. The reader is often
+not a native English speaker, and there is no author to ask.
+
+The rules that change the most writing:
+
+| Rule | Write this | Not this |
+|---|---|---|
+| Active voice, and name the actor | `The orchestrator writes the route file.` | `The route file is written.` |
+| Simple tenses only: present, past, future | `The check found two errors.` | `The check has found two errors.` |
+| One main point per sentence: 20 words in an instruction, 25 in a description | two short sentences | one 40-word sentence with three clauses |
+| One word per idea, with no rotation for variety | `token` in every sentence | `token`, then `credential`, then `bearer` |
+| The plainest common verb | `use`, `start`, `check`, `stop` | `utilize`, `commence`, `terminate` |
+| A verb, not a noun made from a verb | `Install the app.` | `Perform an installation of the app.` |
+| Fixed modality: `must` is required, `should` is recommended, `may` is allowed | `You must restart the service.` | `should` on something required |
+| No idiom, and no vague phrasal verb | `start the service` | `spin up the service` |
+| No marketing adjective | `It writes three files.` | `It is a robust, seamless writer.` |
+| Three words maximum in a noun cluster | `app config file` | `public URL redirect URI allowlist` |
+| Spell out an abbreviation once, then use only the short form | `Simplified Technical English (STE)`, then `STE` | an acronym nobody defined |
+| Name the members instead of `etc.` | `for example A, B, and C` | `A, B, etc.` |
+
+Four limits on that table:
+
+- STE governs prose, not code. An identifier, a command, a config key, a file
+  path, log output, or a quoted error stays verbatim. A rewrite of an exact
+  string is a lie.
+- Precision wins. If a short sentence would drop a condition, a scope qualifier,
+  or a number, keep the longer sentence and say why in the pull request.
+- The standard does not do the thinking. ASD states that STE works with other
+  specifications and style guides, not on its own.
+- Do not copy the ASD dictionary into this repository. ASD owns the copyright.
+  Link to it at [asd-ste100.org](https://asd-ste100.org/).
+
+A pull request carries the same standard. Name the area, then the change, in the
+imperative: `docs: write prose in Simplified Technical English`. In the
+description, state what changes and why, one behavior per sentence. Quote the
+exact error, command, or string a reader must see. Do not recount the process
+that got you there.
+
+The house style keeps three relaxations, and this section records them so the
+standard and the linter do not contradict each other. `.vale.ini` keeps the
+semicolon, the parenthetical aside, and the contraction, because the whole tree
+uses them. `Bloud.EmDash` is stricter than the standard: it rejects the em dash
+everywhere. The checks cover a small part of STE. Vale enforces the house rules
+(`npm run lint:prose`), and `npm run check:no-emdash` enforces the em dash ban.
+Nothing checks sentence length, tense, or word choice, so the writer carries
+those.
+
 ## Validation & testing
 `validation.yaml` is the single source of truth for what to run. `./bloud validate`
 writes a JSON ledger per run to `.bloud/validation/` (timestamped + `latest.json`,
@@ -448,6 +506,8 @@ It is pinned in
   contain a word that `accept.txt` already accepts.
 - `.vale/styles/Bloud/` holds the house rules. `Bloud.EmDash` rejects em dashes;
   write a colon, semicolon, comma, or parentheses instead.
+- The prose standard these house rules serve is ASD-STE100: see [Write prose in
+  Simplified Technical English](#write-prose-in-simplified-technical-english).
 - Vale exits nonzero only on `error`-severity alerts, which is why a rule can
   gate CI only when its level is `error` (see the pinning note in `.vale.ini`).
 
@@ -1151,15 +1211,15 @@ Two earlier claims are
 corrected in the ledger: the `user_app_positions` fork fix is a no-op (the grid
 shape already existed), and the derived OAuth client secret *is* currently
 persisted. Reviews, oldest first:
-[`docs/specs/review-2026-09-17.md`](docs/specs/review-2026-09-17.md),
-[`docs/specs/review-2026-09-19.md`](docs/specs/review-2026-09-19.md) (e.g. §C2
+[`docs/reviews/2026-09-17.md`](docs/reviews/2026-09-17.md),
+[`docs/reviews/2026-09-19.md`](docs/reviews/2026-09-19.md) (e.g. §C2
 in-memory `MapRepository`, which the 2026-09-16 re-audit reframes:
 HKDF-derived credentials make restart reconstruction work, so only
 ERROR-terminal semantics is lost. §C1's inert install path is fixed: the router
 wires the catalog graph),
-[`docs/specs/review-2026-10-03-aposd.md`](docs/specs/review-2026-10-03-aposd.md),
+[`docs/reviews/2026-10-03-aposd.md`](docs/reviews/2026-10-03-aposd.md),
 and
-[`docs/specs/review-2026-10-12-aposd-appsurface.md`](docs/specs/review-2026-10-12-aposd-appsurface.md).
+[`docs/reviews/2026-10-12-aposd-appsurface.md`](docs/reviews/2026-10-12-aposd-appsurface.md).
 Highlights:
 
 - ~~Config ships hardcoded fallback secrets~~ **Fixed 2026-09-14**: `config.Load`
@@ -1203,6 +1263,6 @@ to the right doc. When a doc moves, update it in both places.
 | Agent API + multi-port apps (`extraPorts`, `agentApi` contract) | [features/agent-api.md](docs/features/agent-api.md) |
 | Speech-to-text endpoint the instance declares (`transcription` contract) | [features/transcription.md](docs/features/transcription.md) |
 | How client credentials work (declare, reveal, rotate, revoke) | [features/client-credentials.md](docs/features/client-credentials.md) |
-| Dated reviews, oldest first | [review-2026-09-17](docs/specs/review-2026-09-17.md), [review-2026-09-19](docs/specs/review-2026-09-19.md) |
-| Design and complexity reviews, APoSD lens | [review-2026-10-03](docs/specs/review-2026-10-03-aposd.md) (the runtime's module shapes), [review-2026-10-12](docs/specs/review-2026-10-12-aposd-appsurface.md) (the app-extension surface) |
+| Dated reviews, oldest first | [reviews/](docs/reviews/) (its README is the index) |
+| Design and complexity reviews, APoSD lens | [2026-10-03-aposd](docs/reviews/2026-10-03-aposd.md) (the runtime's module shapes), [2026-10-12-aposd-appsurface](docs/reviews/2026-10-12-aposd-appsurface.md) (the app-extension surface) |
 | In-flight designs | [plans/](docs/plans/) |

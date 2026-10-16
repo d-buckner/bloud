@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 	import { page } from '$app/state';
 	import Icon from './Icon.svelte';
+	import ThemeToggle from './ThemeToggle.svelte';
 	import { gridApps, isAdmin, select } from '$lib/store';
 	import { AppStatus } from '$lib/types';
 	import { resolve } from '$app/paths';
@@ -89,23 +90,24 @@
 
 	<div class="sidebar-footer">
 		{#if user.current}
-			<div class="user-section">
-				<span class="username" title={user.current.username}>
-					<Icon name="user" size={16} />
-					<span class="username-text">{user.current.username}</span>
-				</span>
-				<form action="/auth/logout" method="POST" class="logout-form" data-sveltekit-reload>
-					<button
-						type="submit"
-						class="logout-btn"
-						title="Sign out"
-						aria-label="Sign out"
-					>
-						<Icon name="logout" size={16} />
-					</button>
-				</form>
-			</div>
+			<span class="username" title={user.current.username}>
+				<Icon name="user" size={16} />
+				<span class="username-text">{user.current.username}</span>
+			</span>
 		{/if}
+		<div class="footer-actions">
+			<ThemeToggle {collapsed} />
+			<form action="/auth/logout" method="POST" class="logout-form" data-sveltekit-reload>
+				<button
+					type="submit"
+					class="logout-btn"
+					title="Sign out"
+					aria-label="Sign out"
+				>
+					<Icon name="logout" size={16} />
+				</button>
+			</form>
+		</div>
 		<span class="version">v0.1.0</span>
 	</div>
 </nav>
@@ -231,10 +233,25 @@
 		border-top: 1px solid var(--color-border-subtle);
 	}
 
-	.user-section {
+	.username {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		gap: var(--space-xs);
+		margin-bottom: var(--space-sm);
+		color: var(--color-text-secondary);
+		font-size: 0.8125rem;
+		overflow: hidden;
+	}
+
+	/* The two controls that are not navigation. The theme sits here rather than
+	   under Settings because it is a preference of the browser, not of the
+	   instance: it belongs to whoever is looking, and a non-admin can change it
+	   too. */
+	.footer-actions {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: var(--space-xs);
 		margin-bottom: var(--space-sm);
 	}
 
@@ -328,9 +345,8 @@
 		text-align: center;
 	}
 
-	.sidebar.collapsed .user-section {
+	.sidebar.collapsed .footer-actions {
 		flex-direction: column;
-		gap: var(--space-xs);
 	}
 
 	.sidebar.collapsed .username {

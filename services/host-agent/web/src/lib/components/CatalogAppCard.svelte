@@ -317,7 +317,7 @@
 
 	.open-link:hover {
 		background: var(--color-success);
-		color: #fff;
+		color: var(--color-on-success);
 	}
 
 	.icon-wrapper {

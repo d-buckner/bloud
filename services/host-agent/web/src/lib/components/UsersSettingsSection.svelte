@@ -282,7 +282,7 @@
 
 	.role-badge.admin {
 		background: var(--color-accent);
-		color: white;
+		color: var(--color-on-accent);
 	}
 
 	.user-controls {
@@ -338,12 +338,12 @@
 
 	.btn-sm-danger {
 		color: var(--color-error);
-		border-color: rgba(220, 38, 38, 0.3);
+		border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
 	}
 
 	.btn-sm-danger:hover:not(:disabled) {
-		background: var(--color-error);
-		color: white;
+		background: var(--color-danger);
+		color: var(--color-on-danger);
 	}
 
 	.empty-users {
@@ -396,7 +396,7 @@
 	.form-field input:focus,
 	.form-field select:focus {
 				border-color: var(--color-accent);
-		box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text) 12%, transparent);
 	}
 
 	.form-field input::placeholder {
@@ -438,7 +438,7 @@
 
 	.btn-primary {
 		background: var(--color-accent);
-		color: white;
+		color: var(--color-on-accent);
 	}
 
 	.btn-primary:hover:not(:disabled) {
@@ -450,8 +450,8 @@
 		padding: var(--space-sm) var(--space-md);
 		font-size: 0.875rem;
 		color: var(--color-error);
-		background: rgba(220, 38, 38, 0.05);
-		border: 1px solid rgba(220, 38, 38, 0.15);
+		background: var(--color-error-bg);
+		border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
 		border-radius: var(--radius-md);
 	}
 </style>

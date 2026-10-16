@@ -58,8 +58,13 @@ export function buildEdges(graph: DeveloperGraph): Edge[] {
 			// it can carry a real background. It sits on top of lines constantly, and
 			// the canvas color behind the words is what punches the stroke out instead
 			// of leaving a word sitting on a line it then cannot be read through.
+			//
+			// Both colors are tokens, because the canvas they sit on is a token. A literal
+			// canvas color is a label that turns white with black words the moment the
+			// page goes dark, which is what `route`, `agentApi`, and `native-oidc` did.
 			labelStyle:
-				'font-size: 10px; color: #44403C; padding: 2px 6px; background: #FAF9F6; border-radius: 3px;',
+				'font-size: 10px; color: var(--color-text); background: var(--color-bg);' +
+				' padding: 2px 6px; border-radius: 3px;',
 		};
 	});
 }

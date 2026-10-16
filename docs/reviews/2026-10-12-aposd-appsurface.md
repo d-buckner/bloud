@@ -19,7 +19,7 @@ or away from that.
 **Relationship to prior artifacts.** This is the third review in the series, and
 it is the one aimed at the goal above:
 
-- [`review-2026-10-03-aposd.md`](review-2026-10-03-aposd.md) reviewed the
+- [`2026-10-03-aposd.md`](2026-10-03-aposd.md) reviewed the
   *runtime's* module shapes (orchestrator config, store interfaces, appclient).
 - [`../plans/archive/app-add-tax.md`](../plans/archive/app-add-tax.md) measured the *workflow*
   tax: which files outside `apps/<name>/` an app add touches, and six shippable

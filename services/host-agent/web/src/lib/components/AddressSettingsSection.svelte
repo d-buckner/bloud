@@ -283,7 +283,7 @@
 
 	.btn-primary {
 		background: var(--color-accent);
-		color: white;
+		color: var(--color-on-accent);
 	}
 
 	.btn-primary:hover:not(:disabled) {
@@ -295,8 +295,8 @@
 		padding: var(--space-sm) var(--space-md);
 		font-size: 0.875rem;
 		color: var(--color-error);
-		background: rgba(220, 38, 38, 0.05);
-		border: 1px solid rgba(220, 38, 38, 0.15);
+		background: var(--color-error-bg);
+		border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
 		border-radius: var(--radius-md);
 	}
 

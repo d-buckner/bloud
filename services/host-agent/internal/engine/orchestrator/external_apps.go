@@ -13,7 +13,7 @@ import (
 // That is the whole effect. There is no container to build, no route to emit,
 // and no SSO client to mint, because the operator is telling Bloud about
 // something Bloud does not run. Keeping the applier this small is the
-// load-bearing filter from docs/plans/external-apps.md: the convergence layer
+// load-bearing filter from docs/plans/archive/external-apps.md: the convergence layer
 // is never handed an external record, so it can never expand the catalog app's
 // `containers:` by accident.
 func (o *Orchestrator) applyAddExternalAppIntent(intent AddExternalAppIntent) {
@@ -236,7 +236,7 @@ func encodeExternalValues(values map[string]map[string]string) (string, error) {
 // remoteProviderFor reports whether the operator registered catalogID as a
 // remote install rather than running it here.
 //
-// It is the install side of the XOR rule in docs/plans/external-apps.md: a
+// It is the install side of the XOR rule in docs/plans/archive/external-apps.md: a
 // catalog ID has one instantiation. A consumer whose required contract is
 // already answered by an external record must not drag the local workload in
 // behind it, because a `multi: false` consumer facing two bindings of the same

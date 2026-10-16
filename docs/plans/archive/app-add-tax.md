@@ -8,7 +8,7 @@
 > framework registers (#339), and F drops the conformance table's `DefaultPort`
 > column in favour of a configurator that reports its own port (#334).
 > Written 2026-10-12 against `main` at `e66f2f6`.
-> Companion to [review-2026-10-03-aposd.md](../../specs/review-2026-10-03-aposd.md),
+> Companion to [2026-10-03-aposd.md](../../reviews/2026-10-03-aposd.md),
 > which reviews the runtime's module shapes. This plan covers a different axis: the
 > *workflow cost of adding a catalog app*, which that review read only for context.
 > Debt ledger: [tech-debt.md](../../operations/tech-debt.md).

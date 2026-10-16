@@ -261,7 +261,7 @@ a password.
 ### When the install is not Bloud's
 
 An operator who already runs Home Assistant elsewhere registers it as an external
-app ([`docs/plans/external-apps.md`](../../docs/plans/external-apps.md)) and
+app ([`docs/plans/archive/external-apps.md`](../../docs/plans/archive/external-apps.md)) and
 fills the same `appApi` contract by hand. None of this configurator is involved:
 Bloud does not run the provider, so there is no `PostStart` to mint anything.
 
