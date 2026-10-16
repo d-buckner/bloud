@@ -76,9 +76,6 @@ func testDeps(secrets configurator.AppSecretsProvider, exec configurator.ExecFun
 	return configurator.Deps{
 		Logger:  quietLogger(),
 		Secrets: secrets,
-		Address: configurator.AddressDeps{
-			PrimaryBaseURL: func() string { return "https://bloud.example.com" },
-		},
 		Runtime: configurator.RuntimeDeps{
 			Exec: exec,
 		},
@@ -91,9 +88,10 @@ func testState(t *testing.T) *configurator.AppState {
 	t.Helper()
 	dir := t.TempDir()
 	return &configurator.AppState{
-		DataPath:      dir,
-		BloudDataPath: dir,
-		SSOEnabled:    true,
+		DataPath:       dir,
+		BloudDataPath:  dir,
+		PrimaryBaseURL: func() string { return "https://bloud.example.com" },
+		SSOEnabled:     true,
 		OIDC: &configurator.OIDCOutput{
 			ClientID:     "webui-client",
 			ClientSecret: "webui-secret",

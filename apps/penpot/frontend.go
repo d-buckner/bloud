@@ -16,10 +16,9 @@ import (
 // consumer reach, and therefore the one that can check what the install actually
 // became.
 type frontendConfigurator struct {
-	ssoBaseURL func() string
-	logger     *slog.Logger
-	api        *penpotAPI
-	mcp        *mcpPublisher
+	logger *slog.Logger
+	api    *penpotAPI
+	mcp    *mcpPublisher
 
 	// baseURL is a test seam: when set, the API client resolves to it instead
 	// of localhost:defaultPort.
@@ -33,8 +32,7 @@ func newFrontendConfigurator(deps configurator.Deps) *frontendConfigurator {
 	}
 	logger = logger.With("app", appName)
 	c := &frontendConfigurator{
-		ssoBaseURL: deps.Address.PrimaryBaseURL,
-		logger:     logger,
+		logger: logger,
 	}
 	if deps.HTTP != nil {
 		c.api = newAPI(deps.HTTP, func() string {
@@ -65,7 +63,7 @@ func (c *frontendConfigurator) Port() int { return defaultPort }
 // created, and reports a recreate when this node's container was created from
 // other bytes. See writeEnvFile for why both writers are correct rather than one.
 func (c *frontendConfigurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
-	return writeEnvFile(frontendNode, state, c.appExternalURL(), c.logger)
+	return writeEnvFile(frontendNode, state, state.AppExternalURL(appName), c.logger)
 }
 
 // PostStart waits for the frontend to serve, checks that the generated
@@ -101,10 +99,6 @@ func (c *frontendConfigurator) PostStart(ctx context.Context, state *configurato
 
 	c.mcp.sync(ctx)
 	return nil
-}
-
-func (c *frontendConfigurator) appExternalURL() string {
-	return configurator.AppExternalURL(c.ssoBaseURL, appName)
 }
 
 // requiredFlags are the flags whose absence means the install is not what

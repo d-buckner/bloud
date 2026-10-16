@@ -42,25 +42,6 @@ func TestDefaultPort(t *testing.T) {
 	}
 }
 
-func TestAppExternalURL(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{
-		Logger: quietLogger(),
-		Address: configurator.AddressDeps{
-			PrimaryBaseURL: func() string { return "http://localhost:8080" },
-		},
-	})
-	if got := c.appExternalURL(); got != "http://hermes.localhost:8080" {
-		t.Fatalf("appExternalURL() = %q, want http://hermes.localhost:8080", got)
-	}
-}
-
-func TestAppExternalURLEmptyFallsBack(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
-	if got := c.appExternalURL(); got != "http://hermes.localhost:8080" {
-		t.Fatalf("appExternalURL() with no base = %q, want fallback", got)
-	}
-}
-
 // TestPreStartWritesOIDCConfig: SSO on merges the self-hosted provider keys
 // + public_url into a fresh config.yaml and reports changed.
 func TestPreStartWritesOIDCConfig(t *testing.T) {

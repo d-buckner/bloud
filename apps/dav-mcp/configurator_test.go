@@ -3,16 +3,13 @@
 package davmcp
 
 import (
-	"context"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -157,7 +154,7 @@ func TestMCPHandshakeOK(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, mcpHandshakeOK(tc.status, []byte(tc.body)))
+			assert.Equal(t, tc.want, mcp.HandshakeOK(tc.status, []byte(tc.body)))
 		})
 	}
 }
@@ -168,29 +165,29 @@ func TestMCPHandshakeOK(t *testing.T) {
 // whether MCP works.
 func TestMCPHandshakeOKRejectsTheLivenessPayload(t *testing.T) {
 	healthBody := `{"status":"healthy","server":"dav-mcp","version":"4.1.2","transport":"http-stateless"}`
-	assert.False(t, mcpHandshakeOK(http.StatusOK, []byte(healthBody)))
-	assert.False(t, mcpHandshakeOK(http.StatusOK, []byte("ok")))
+	assert.False(t, mcp.HandshakeOK(http.StatusOK, []byte(healthBody)))
+	assert.False(t, mcp.HandshakeOK(http.StatusOK, []byte("ok")))
 }
 
 func TestJSONRPCMessageReadsBothFramings(t *testing.T) {
-	sse, ok := jsonRPCMessage([]byte("event: message\ndata: {\"a\":1}\n"))
+	sse, ok := mcp.JSONRPCMessage([]byte("event: message\ndata: {\"a\":1}\n"))
 	require.True(t, ok)
 	assert.EqualValues(t, 1, sse["a"])
 
-	bare, ok := jsonRPCMessage([]byte(`{"b":2}`))
+	bare, ok := mcp.JSONRPCMessage([]byte(`{"b":2}`))
 	require.True(t, ok)
 	assert.EqualValues(t, 2, bare["b"])
 
-	_, ok = jsonRPCMessage([]byte(": keepalive\n\nevent: message\n"))
+	_, ok = mcp.JSONRPCMessage([]byte(": keepalive\n\nevent: message\n"))
 	assert.False(t, ok, "a keepalive carries no envelope")
 
-	_, ok = jsonRPCMessage([]byte("not json at all"))
+	_, ok = mcp.JSONRPCMessage([]byte("not json at all"))
 	assert.False(t, ok)
 }
 
 func TestJSONRPCMessageTakesTheLastDataLine(t *testing.T) {
 	body := "data: {\"seq\":1}\ndata: {\"seq\":2}\n"
-	msg, ok := jsonRPCMessage([]byte(body))
+	msg, ok := mcp.JSONRPCMessage([]byte(body))
 	require.True(t, ok)
 	assert.EqualValues(t, 2, msg["seq"], "the answer is the last frame, the earlier ones are preamble")
 }
@@ -230,85 +227,6 @@ func TestCaldavCredentialRequiresTheWholeCredential(t *testing.T) {
 	assert.False(t, ok, "an empty password is the provider's 'not published yet' state")
 }
 
-// --- bearer presentation ---
-
-// storeSecrets is a minimal in-memory AppSecretsProvider.
-type storeSecrets struct {
-	values map[string]string
-	set    []string
-}
-
-func (s *storeSecrets) GenerateAppAdminPassword(string) (string, error) { return "", nil }
-func (s *storeSecrets) GetAppSecret(_, key string) string {
-	return s.values[key]
-}
-func (s *storeSecrets) SetAppSecret(_, key, value string) error {
-	if s.values == nil {
-		s.values = map[string]string{}
-	}
-	s.values[key] = value
-	s.set = append(s.set, key)
-	return nil
-}
-func (s *storeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
-func (s *storeSecrets) GetAppContractValue(string, string, string) string        { return "" }
-func (s *storeSecrets) DeleteAppSecrets(string) error                            { return nil }
-
-// TestWaitServingPresentsTheBearer is the regression guard for the failure this
-// integration actually hit in a live install: the container came up healthy and
-// serving 27 tools while every probe was refused with 401, because the probe
-// sent no credential and the server enforces one. A green node that every real
-// consumer is about to be refused by is worse than a red one.
-func TestWaitServingPresentsTheBearer(t *testing.T) {
-	var gotAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("event: message\ndata: {\"result\":{\"serverInfo\":{\"name\":\"dav-mcp\"," +
-			"\"version\":\"4.1.2\"}},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"))
-	}))
-	defer srv.Close()
-
-	api := newAPI(appclient.Factory{}, func() string { return srv.URL })
-	require.NoError(t, api.waitServing(context.Background(), "the-bearer"))
-	assert.Equal(t, "Bearer the-bearer", gotAuth)
-}
-
-func TestWaitServingSendsNoAuthHeaderWithoutABearer(t *testing.T) {
-	var gotAuth string
-	var calls int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		gotAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"Unauthorized"}}`))
-	}))
-	defer srv.Close()
-
-	api := newAPI(appclient.Factory{}, func() string { return srv.URL })
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// No bearer means no header, and the wait must fail rather than promote a
-	// server that is refusing everything.
-	assert.Error(t, api.waitServing(ctx, ""))
-	assert.Empty(t, gotAuth)
-	assert.Greater(t, calls, 1, "an unauthorized response is not ready, so it retries")
-}
-
 func TestMCPHandshakeOKRejectsUnauthorized(t *testing.T) {
-	assert.False(t, mcpHandshakeOK(http.StatusUnauthorized, []byte(liveHandshake)))
-}
-
-func TestCurrentBearerReadsWithoutGenerating(t *testing.T) {
-	secrets := &storeSecrets{values: map[string]string{httpTokenKey: "published-token"}}
-	c := NewConfigurator(defaultPort, configurator.Deps{Secrets: secrets})
-
-	assert.Equal(t, "published-token", c.currentBearer())
-	assert.Empty(t, secrets.set, "PostStart must not mint a credential, only present the current one")
-}
-
-func TestCurrentBearerWithoutSecretsIsEmpty(t *testing.T) {
-	c := NewConfigurator(defaultPort, configurator.Deps{})
-	assert.Equal(t, "", c.currentBearer())
+	assert.False(t, mcp.HandshakeOK(http.StatusUnauthorized, []byte(liveHandshake)))
 }

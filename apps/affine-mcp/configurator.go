@@ -20,16 +20,18 @@ package affinemcp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/mcpwrapper"
 )
 
 const (
@@ -56,158 +58,54 @@ const (
 	// httpTokenKey is the secret name the `mcp` contract carries. It must match
 	// the contract registry and metadata.yaml's provides.mcp.secrets.
 	httpTokenKey = "httpToken"
+
+	// readyPath is the image's readiness probe. Unlike /healthz (process
+	// liveness), it checks the configured AFFiNE GraphQL endpoint and returns
+	// 503 with the failing component.
+	readyPath = "/readyz"
 )
 
-// Configurator handles the affine-mcp-server node lifecycle. It has one job in
-// each phase: write the config file the image reads at startup (PreStart), and
-// verify the running server can reach AFFiNE (PostStart).
-type Configurator struct {
-	port    int
-	secrets configurator.AppSecretsProvider
-	logger  *slog.Logger
-	api     *mcpAPI
-
-	// baseURL is a test seam: when set, the API client resolves to it instead of
-	// localhost:port. Never used to build request URLs by hand.
-	baseURL string
-}
-
-// NewConfigurator creates a new affine-mcp configurator from the host Deps.
-func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
+// NewConfigurator builds the wrapper's configurator. The shared half (bearer
+// mint, file write, readiness probe) lives in pkg/mcpwrapper; what is here is
+// the app-specific half: where the file lives, how its bytes are rendered, and
+// which probe proves the server can reach AFFiNE.
+func NewConfigurator(port int, deps configurator.Deps) *mcpwrapper.Wrapper {
 	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	c := &Configurator{
-		port:    port,
-		secrets: deps.Secrets,
-		logger:  logger.With("app", appName),
-	}
-	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
+	logger = logger.With("app", appName)
+
+	return mcpwrapper.New(port, deps, mcpwrapper.Config{
+		App:         appName,
+		Node:        nodeName,
+		DefaultPort: defaultPort,
+		TokenKey:    httpTokenKey,
+		// The image runs as its own non-root user, a subordinate uid under
+		// rootless podman that is not the host uid writing this file, so 0600
+		// would leave the server unable to read its own config.
+		// ModeSharedConfig bounds the credential by the app's data directory
+		// instead of by the file mode.
+		Mode: managedfile.ModeSharedConfig,
+		Path: func(state *configurator.AppState) string {
+			return filepath.Join(state.DataPath, configDirName, configSubdir, configFileName)
+		},
+		Render: func(state *configurator.AppState, token string) (string, error) {
+			binding, hasBinding := affineBinding(state)
+			if !hasBinding {
+				logger.Warn("affine-mcp: no published affine appApi credential yet; writing an unauthenticated config")
 			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
-	}
-	return c
-}
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
-
-// PreStart writes the image's saved config so the container comes up already
-// authenticated to AFFiNE and already accepting Bloud's MCP bearer.
-//
-// It generates the bearer on the first pass and reuses the stored one
-// afterwards, so a restart does not invalidate the namespace a harness
-// registered. The AFFiNE credential and the default workspace come from the
-// resolved `appApi` binding, which the graph orders before this node; if it is
-// not published yet the file is still written without it, and the server starts
-// (unauthenticated and unpinned) while a later pass restarts it once the
-// credential lands. Erroring here instead would make the node terminal on a
-// purely transient ordering condition.
-//
-// Failures to publish the bearer are returned: the wrapper's entire purpose is
-// its MCP endpoint, so a node that cannot hand a harness a credential is
-// genuinely broken and should retry rather than start unreachable.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
-	token, err := c.ensureHTTPToken()
-	if err != nil {
-		return configurator.NoRestart(), err
-	}
-
-	binding, hasBinding := affineBinding(state)
-	if !hasBinding {
-		c.logger.Warn("affine-mcp: no published affine appApi credential yet; writing an unauthenticated config")
-	}
-
-	content, err := renderConfig(binding, hasBinding, token)
-	if err != nil {
-		return configurator.NoRestart(), err
-	}
-
-	// The image runs as its own non-root user, a subordinate uid under rootless
-	// podman that is not the host uid writing this file, so 0600 would leave the
-	// server unable to read its own config. ModeSharedConfig bounds the
-	// credential by the app's data directory instead of by the file mode.
-	path := filepath.Join(state.DataPath, configDirName, configSubdir, configFileName)
-	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeSharedConfig)
-	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("writing %s config: %w", appName, err)
-	}
-	if !changed {
-		return configurator.NoRestart(), nil
-	}
-	c.logger.Info("wrote affine-mcp config", "path", path, "affineCredential", hasBinding)
-	return configurator.MustRestart("affine-mcp config rewritten"), nil
-}
-
-// PostStart verifies the running server reports its AFFiNE GraphQL endpoint
-// reachable.
-//
-// Unlike AFFiNE, a wrapper that cannot reach its target is not doing its job:
-// its whole purpose is the MCP endpoint, so a failing readiness probe is
-// returned rather than swallowed and the node is retried by the self-healing
-// pass. The probe is unauthenticated (`/readyz`), so a rejection here is a
-// transport or config fault, never a missing harness bearer.
-func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
-	if err := c.api.waitReady(ctx); err != nil {
-		return fmt.Errorf("waiting for the affine-mcp tool server: %w", err)
-	}
-	c.logger.Info("affine-mcp is serving MCP")
-	return nil
-}
-
-// --- MCP bearer ---
-
-// ensureHTTPToken returns the bearer this app validates, generating and
-// publishing one on the first pass and reusing it afterwards.
-//
-// The token is Bloud's to invent, unlike AFFiNE's minted MCP credential: the
-// wrapper authenticates its listener with a static shared secret it is told,
-// not one it issues itself, so the rule "the published token is always a
-// credential the provider validates" holds by construction. Persisting it is
-// what keeps a harness's registered namespace valid across restarts.
-func (c *Configurator) ensureHTTPToken() (string, error) {
-	if c.secrets == nil {
-		// CLI/test contexts have no store; the config is written without a
-		// bearer rather than failing, and the next real pass fills it in.
-		return "", nil
-	}
-	if existing := c.secrets.GetAppSecret(appName, httpTokenKey); existing != "" {
-		return existing, nil
-	}
-	token, err := randomToken()
-	if err != nil {
-		return "", fmt.Errorf("generating the %s bearer: %w", appName, err)
-	}
-	if err := c.secrets.SetAppSecret(appName, httpTokenKey, token); err != nil {
-		return "", fmt.Errorf("publishing the %s bearer: %w", appName, err)
-	}
-	c.logger.Info("generated the affine-mcp MCP bearer")
-	return token, nil
-}
-
-// randomToken returns 32 bytes of entropy as URL-safe base64. The config file
-// is line-based, so the alphabet deliberately excludes anything that could
-// terminate a line.
-func randomToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
+			return renderConfig(binding, hasBinding, token)
+		},
+		// The probe is unauthenticated (/readyz), so a rejection here is a
+		// transport or config fault, never a missing harness bearer.
+		Probe: func(ctx context.Context, cl *appclient.Client, _ string) error {
+			return cl.GET(readyPath).
+				Wait(appclient.StatusIs(http.StatusOK)).
+				Within(60 * time.Second).
+				Do(ctx)
+		},
+	})
 }
 
 // affineBinding returns the one usable `appApi` provider. The contract is

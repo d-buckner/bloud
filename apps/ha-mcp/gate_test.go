@@ -16,6 +16,7 @@ import (
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/mcp"
 )
 
 // TestRenderNginxConfigIsDefaultDeny pins the three properties the gate is for:
@@ -134,13 +135,13 @@ func TestGatePostStartFailsOnAGateThatCannotReachTheServer(t *testing.T) {
 func TestMCPHandshakeOK(t *testing.T) {
 	good := `{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"ha-mcp"}}}`
 	sse := "event: message\ndata: " + good + "\n\n"
-	require.True(t, mcpHandshakeOK(http.StatusOK, []byte(good)))
-	require.True(t, mcpHandshakeOK(http.StatusOK, []byte(sse)))
-	require.False(t, mcpHandshakeOK(http.StatusUnauthorized, []byte(good)))
-	require.False(t, mcpHandshakeOK(http.StatusBadGateway, []byte("502 Bad Gateway")))
-	require.False(t, mcpHandshakeOK(http.StatusOK, []byte(`{"error":{"code":-32600,"message":"nope"}}`)))
-	require.False(t, mcpHandshakeOK(http.StatusOK, []byte(`{"result":{}}`)))
-	require.False(t, mcpHandshakeOK(http.StatusOK, []byte("")))
+	require.True(t, mcp.HandshakeOK(http.StatusOK, []byte(good)))
+	require.True(t, mcp.HandshakeOK(http.StatusOK, []byte(sse)))
+	require.False(t, mcp.HandshakeOK(http.StatusUnauthorized, []byte(good)))
+	require.False(t, mcp.HandshakeOK(http.StatusBadGateway, []byte("502 Bad Gateway")))
+	require.False(t, mcp.HandshakeOK(http.StatusOK, []byte(`{"error":{"code":-32600,"message":"nope"}}`)))
+	require.False(t, mcp.HandshakeOK(http.StatusOK, []byte(`{"result":{}}`)))
+	require.False(t, mcp.HandshakeOK(http.StatusOK, []byte("")))
 }
 
 // TestNginxSafeLiteral pins the charset the renderer accepts: URL-safe base64,

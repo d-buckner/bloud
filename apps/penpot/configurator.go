@@ -47,8 +47,7 @@ const defaultPort = 9002
 // the backend node because the backend is the first container that needs the
 // file and the graph orders it before every other reader.
 type envWriter struct {
-	ssoBaseURL func() string
-	logger     *slog.Logger
+	logger *slog.Logger
 }
 
 // newEnvWriter builds the backend node's configurator.
@@ -57,14 +56,14 @@ func newEnvWriter(deps configurator.Deps) *envWriter {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &envWriter{ssoBaseURL: deps.Address.PrimaryBaseURL, logger: logger.With("app", appName)}
+	return &envWriter{logger: logger.With("app", appName)}
 }
 
 func (c *envWriter) Name() string { return backendNode }
 
 // PreStart writes the shared env file.
 func (c *envWriter) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
-	return writeEnvFile(backendNode, state, c.appExternalURL(), c.logger)
+	return writeEnvFile(backendNode, state, state.AppExternalURL(appName), c.logger)
 }
 
 // PostStart has nothing to verify: the node's health check is the JVM opening
@@ -72,14 +71,6 @@ func (c *envWriter) PreStart(_ context.Context, state *configurator.AppState) (c
 // finished, and every value this install configures is read by the frontend
 // node's PostStart, where the app actually serves it.
 func (c *envWriter) PostStart(context.Context, *configurator.AppState) error { return nil }
-
-// appExternalURL returns the public URL the browser uses to reach Penpot, e.g.
-// "http://penpot.localhost:8080". Penpot puts it in every redirect it builds and
-// in the URL the browser is sent to after the OIDC round trip, so it has to be
-// the same origin Bloud registered the redirect URI on.
-func (c *envWriter) appExternalURL() string {
-	return configurator.AppExternalURL(c.ssoBaseURL, appName)
-}
 
 // writeEnvFile renders and writes the install's two dotenv files under
 // <appDataDir>/config, reporting a recreate when this node's container was

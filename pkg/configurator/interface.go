@@ -240,6 +240,11 @@ type AppState struct {
 	// provider is configured. Nil otherwise.
 	OIDC *OIDCOutput
 
+	// PrimaryBaseURL resolves the current public base URL on every call, the
+	// same source Deps.Address.PrimaryBaseURL carries. Nil in CLI/test
+	// contexts, where AppExternalURL falls back to the localhost dev default.
+	PrimaryBaseURL func() string
+
 	// Integrations holds the resolved providers for every contract the app
 	// declares in its catalog metadata, one typed slice per contract. A contract
 	// with no provider is an empty slice, and a `multi` contract can hold one

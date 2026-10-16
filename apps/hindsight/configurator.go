@@ -26,8 +26,6 @@ package hindsight
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
@@ -209,24 +207,18 @@ func ensureCredentials(secrets configurator.AppSecretsProvider, logger *slog.Log
 	if secrets == nil {
 		return "", "", nil
 	}
-	if bearer = secrets.GetAppSecret(appName, httpTokenKey); bearer == "" {
-		bearer, err = randomToken()
-		if err != nil {
-			return "", "", fmt.Errorf("generating the %s MCP bearer: %w", appName, err)
-		}
-		if err := secrets.SetAppSecret(appName, httpTokenKey, bearer); err != nil {
-			return "", "", fmt.Errorf("publishing the %s MCP bearer: %w", appName, err)
-		}
+	bearer, minted, err := configurator.EnsureSecret(secrets, appName, httpTokenKey, 32, "MCP bearer")
+	if err != nil {
+		return "", "", err
+	}
+	if minted {
 		logger.Info("generated the hindsight MCP bearer")
 	}
-	if accessKey = secrets.GetAppSecret(appName, passwordKey); accessKey == "" {
-		accessKey, err = randomToken()
-		if err != nil {
-			return bearer, "", fmt.Errorf("generating the %s access key: %w", appName, err)
-		}
-		if err := secrets.SetAppSecret(appName, passwordKey, accessKey); err != nil {
-			return bearer, "", fmt.Errorf("publishing the %s access key: %w", appName, err)
-		}
+	accessKey, minted, err = configurator.EnsureSecret(secrets, appName, passwordKey, 32, "access key")
+	if err != nil {
+		return bearer, "", err
+	}
+	if minted {
 		logger.Info("generated the hindsight access key")
 	}
 	return bearer, accessKey, nil
@@ -240,17 +232,6 @@ func currentCredentials(secrets configurator.AppSecretsProvider) (bearer, access
 		return "", ""
 	}
 	return secrets.GetAppSecret(appName, httpTokenKey), secrets.GetAppSecret(appName, passwordKey)
-}
-
-// randomToken returns 32 bytes of entropy as URL-safe base64. The character set
-// matters as much as the entropy: both values go into an env file line and one of
-// them into an nginx config, and base64url needs no quoting in either.
-func randomToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 // --- env file rendering ---

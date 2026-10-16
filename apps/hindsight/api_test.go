@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/pkg/mcp"
 )
 
 // fakeHTTP satisfies configurator.HTTPFactory with a real client, so a gate
@@ -28,8 +29,8 @@ const initializeResult = `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2
 // image actually sends: an SSE-framed JSON-RPC result naming a server.
 func TestHandshakeAcceptsTheRealResponse(t *testing.T) {
 	sse := "event: message\ndata: " + initializeResult + "\n\n"
-	require.True(t, mcpHandshakeOK(200, []byte(sse)))
-	require.True(t, mcpHandshakeOK(200, []byte(initializeResult)),
+	require.True(t, mcp.HandshakeOK(200, []byte(sse)))
+	require.True(t, mcp.HandshakeOK(200, []byte(initializeResult)),
 		"a server that answers with bare JSON rather than SSE is still serving MCP")
 }
 
@@ -60,7 +61,7 @@ func TestHandshakeRefusesEverythingThatIsNotAnAnswer(t *testing.T) {
 		"sse keepalive only": {status: 200, body: "event: accepted\ndata: {\"ok\":true}\n"},
 	}
 	for name, tc := range cases {
-		require.Falsef(t, mcpHandshakeOK(tc.status, []byte(tc.body)), name)
+		require.Falsef(t, mcp.HandshakeOK(tc.status, []byte(tc.body)), name)
 	}
 }
 
@@ -69,12 +70,12 @@ func TestHandshakeRefusesEverythingThatIsNotAnAnswer(t *testing.T) {
 // the one that answers.
 func TestJSONRPCMessageTakesTheLastAnswer(t *testing.T) {
 	body := "event: message\ndata: {\"keepalive\":true}\n\nevent: message\ndata: " + initializeResult + "\n\n"
-	msg, ok := jsonRPCMessage([]byte(body))
+	msg, ok := mcp.JSONRPCMessage([]byte(body))
 	require.True(t, ok)
 	require.Contains(t, msg, "result")
 
 	for _, bad := range []string{"", "   ", "not json", "data: not json"} {
-		if _, ok := jsonRPCMessage([]byte(bad)); ok {
+		if _, ok := mcp.JSONRPCMessage([]byte(bad)); ok {
 			t.Fatalf("%q is not a JSON-RPC message", bad)
 		}
 	}

@@ -19,16 +19,18 @@ package davmcp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/mcp"
+	"codeberg.org/d-buckner/bloud/pkg/mcpwrapper"
 )
 
 const (
@@ -38,7 +40,7 @@ const (
 	nodeName = "apps-dav-mcp"
 	// defaultPort is the server's bind port and the host-published port. It
 	// must match metadata.yaml's `port`. 9333 stays clear of the other
-	// catalog apps.
+	// published ports.
 	defaultPort = 9333
 
 	// configDir is the subdirectory of the app data tree that holds the
@@ -58,159 +60,49 @@ const (
 	// httpTokenKey is the secret name the `mcp` contract carries. It must match
 	// the contract registry and metadata.yaml's provides.mcp.secrets.
 	httpTokenKey = "httpToken"
+
+	// mcpEndpoint is the streamable-HTTP path the server exposes.
+	mcpEndpoint = "/mcp"
 )
 
-// Configurator handles the dav-mcp node lifecycle: write the env file the
-// container is created from (PreStart) and verify the server is serving MCP
-// (PostStart).
-type Configurator struct {
-	port    int
-	secrets configurator.AppSecretsProvider
-	logger  *slog.Logger
-	api     *mcpAPI
-
-	// baseURL is a test seam: when set, the API client resolves to it instead
-	// of localhost:port.
-	baseURL string
-}
-
-// NewConfigurator creates a new dav-mcp configurator from the host Deps.
-func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
+// NewConfigurator builds the wrapper's configurator. The shared half (bearer
+// mint, file write, handshake probe) lives in pkg/mcpwrapper; what is here is
+// the app-specific half: the CalDAV bindings and the env-file renderer.
+func NewConfigurator(port int, deps configurator.Deps) *mcpwrapper.Wrapper {
 	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	c := &Configurator{
-		port:    port,
-		secrets: deps.Secrets,
-		logger:  logger.With("app", appName),
-	}
-	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
+	logger = logger.With("app", appName)
+
+	return mcpwrapper.New(port, deps, mcpwrapper.Config{
+		App:         appName,
+		Node:        nodeName,
+		DefaultPort: defaultPort,
+		TokenKey:    httpTokenKey,
+		Mode:        managedfile.ModeSharedConfig,
+		Path: func(state *configurator.AppState) string {
+			return filepath.Join(state.DataPath, configDir, envFileName)
+		},
+		Render: func(state *configurator.AppState, token string) (string, error) {
+			baseURL, hasAddress := caldavBaseURL(state)
+			cred, hasCred := caldavCredential(state)
+			if !hasAddress {
+				logger.Warn("dav-mcp: no CalDAV address bound yet; writing a config without one")
 			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
-	}
-	return c
+			if !hasCred {
+				logger.Warn("dav-mcp: no published caldav-service credential yet; writing an unauthenticated config")
+			}
+			if token == "" {
+				logger.Warn("dav-mcp: no MCP bearer available; the server will refuse every request")
+			}
+			return renderEnvFile(baseURL, hasAddress, cred, hasCred, token), nil
+		},
+		Probe: func(ctx context.Context, cl *appclient.Client, bearer string) error {
+			return mcp.Probe(ctx, cl, mcpEndpoint, bearer, 30*time.Second)
+		},
+	})
 }
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
-
-// PreStart writes the env file the container spec declares as its envFile. It
-// carries the three values `environment:` cannot render: the DAV address from the
-// `caldav` binding, the caldav-service credential from the `appApi` binding,
-// and the MCP bearer this app generates.
-//
-// The bearer is generated on the first pass and reused afterwards, so a restart
-// does not invalidate the namespace a harness registered.
-//
-// A binding that has not resolved yet is written as absent rather than as an
-// empty value, and a later pass restarts the container once it lands. That keeps
-// "not ready" distinguishable from "configured with nothing", which the app
-// would otherwise read as the latter and fail on.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
-	token, err := c.ensureHTTPToken()
-	if err != nil {
-		return configurator.NoRestart(), err
-	}
-
-	baseURL, hasAddress := caldavBaseURL(state)
-	cred, hasCred := caldavCredential(state)
-	if !hasAddress {
-		c.logger.Warn("dav-mcp: no CalDAV address bound yet; writing a config without one")
-	}
-	if !hasCred {
-		c.logger.Warn("dav-mcp: no published caldav-service credential yet; writing an unauthenticated config")
-	}
-	if token == "" {
-		c.logger.Warn("dav-mcp: no MCP bearer available; the server will refuse every request")
-	}
-
-	content := renderEnvFile(baseURL, hasAddress, cred, hasCred, token)
-	path := filepath.Join(state.DataPath, configDir, envFileName)
-
-	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeSharedConfig)
-	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("writing %s config: %w", appName, err)
-	}
-	if !changed {
-		return configurator.NoRestart(), nil
-	}
-	c.logger.Info("wrote dav-mcp config", "path", path,
-		"address", hasAddress, "credential", hasCred, "bearer", token != "")
-	return configurator.MustRestart("dav-mcp config rewritten"), nil
-}
-
-// PostStart verifies the server answers the MCP handshake. The container's own
-// /health is not enough: it returns 200 as long as the process is up, whether
-// or not the DAV side works, so a probe against it promotes a node that cannot
-// serve a single MCP request. This POSTs a real `initialize` to the same path a
-// harness calls and requires the server's own identity back.
-//
-// Because PostStart also runs on every resync pass, a server that stops serving
-// after it converged is surfaced rather than left silently up.
-func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
-	if err := c.api.waitServing(ctx, c.currentBearer()); err != nil {
-		return fmt.Errorf("waiting for the dav-mcp server: %w", err)
-	}
-	c.logger.Info("dav-mcp is serving MCP")
-	return nil
-}
-
-// --- MCP bearer ---
-
-// ensureHTTPToken returns the bearer this app validates, generating and
-// publishing one on the first pass and reusing it afterwards.
-func (c *Configurator) ensureHTTPToken() (string, error) {
-	if c.secrets == nil {
-		return "", nil
-	}
-	if existing := c.secrets.GetAppSecret(appName, httpTokenKey); existing != "" {
-		return existing, nil
-	}
-	token, err := randomToken()
-	if err != nil {
-		return "", fmt.Errorf("generating the %s bearer: %w", appName, err)
-	}
-	if err := c.secrets.SetAppSecret(appName, httpTokenKey, token); err != nil {
-		return "", fmt.Errorf("publishing the %s bearer: %w", appName, err)
-	}
-	c.logger.Info("generated the dav-mcp MCP bearer")
-	return token, nil
-}
-
-// currentBearer reads the MCP bearer this app publishes without generating one.
-// PreStart owns generation; PostStart only has to present whatever is current,
-// so a rotation landing between the two phases is still picked up.
-func (c *Configurator) currentBearer() string {
-	if c.secrets == nil {
-		return ""
-	}
-	return c.secrets.GetAppSecret(appName, httpTokenKey)
-}
-
-// randomToken returns 32 bytes of entropy as URL-safe base64.
-func randomToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
-// --- bindings ---
 
 // caldavBaseURL returns the DAV root a machine client dials: the container
 // address plus the provider's declared path. The server-side fetch is the whole
@@ -223,7 +115,7 @@ func caldavBaseURL(state *configurator.AppState) (string, bool) {
 		if !b.Installed || b.BaseURL == "" {
 			continue
 		}
-		return b.BaseURL + b.Path, true
+		return strings.TrimSuffix(b.BaseURL, "/") + "/", true
 	}
 	return "", false
 }

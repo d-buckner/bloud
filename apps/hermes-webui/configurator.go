@@ -14,8 +14,6 @@ package hermeswebui
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
@@ -78,11 +76,10 @@ const sharedInboxRel = "shared-trees/hermes/inbox"
 const sharedInboxMode = os.FileMode(0o777) | os.ModeSticky
 
 type Configurator struct {
-	port       int
-	ssoBaseURL func() string
-	secrets    configurator.AppSecretsProvider
-	exec       configurator.ExecFunc
-	logger     *slog.Logger
+	port    int
+	secrets configurator.AppSecretsProvider
+	exec    configurator.ExecFunc
+	logger  *slog.Logger
 }
 
 // NewConfigurator builds the configurator from host Deps.
@@ -95,11 +92,10 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger = slog.Default()
 	}
 	return &Configurator{
-		port:       port,
-		ssoBaseURL: deps.Address.PrimaryBaseURL,
-		secrets:    deps.Secrets,
-		exec:       deps.Runtime.Exec,
-		logger:     logger.With("app", appName),
+		port:    port,
+		secrets: deps.Secrets,
+		exec:    deps.Runtime.Exec,
+		logger:  logger.With("app", appName),
 	}
 }
 
@@ -362,24 +358,18 @@ func (c *Configurator) ensureClientPassword() (string, error) {
 	if c.secrets == nil {
 		// CLI and conformance contexts have no store. The config is written
 		// without a client password rather than failing, which leaves the app
-		// on its OIDC path alone, and the next real pass fills it in. Failing
-		// here would make an offline validation pass look like a broken app.
+		// on its OIDC path alone, and the next real pass fills it in.
 		c.logger.Warn("no secrets provider; writing app config without a client password")
 		return "", nil
 	}
-	if existing := c.secrets.GetAppSecret(appName, clientPasswordSecret); existing != "" {
-		return existing, nil
-	}
-
-	minted, err := randomToken(clientPasswordBytes)
+	password, minted, err := configurator.EnsureSecret(c.secrets, appName, clientPasswordSecret, clientPasswordBytes, "client password")
 	if err != nil {
-		return "", fmt.Errorf("%s: generate client password: %w", appName, err)
+		return "", err
 	}
-	if err := c.secrets.SetAppSecret(appName, clientPasswordSecret, minted); err != nil {
-		return "", fmt.Errorf("%s: persist client password: %w", appName, err)
+	if minted {
+		c.logger.Info("minted client password", "secret", clientPasswordSecret)
 	}
-	c.logger.Info("minted client password", "secret", clientPasswordSecret)
-	return minted, nil
+	return password, nil
 }
 
 // renderEnv builds the dotenv file. Values are single-quoted so the shell that
@@ -407,7 +397,7 @@ func (c *Configurator) renderEnv(agent agentConfig, state *configurator.AppState
 	// The session cookie is Secure whenever the instance address is https, which
 	// is the only mode this app's OIDC path supports anyway. Sending it over plain
 	// http would put a live session on the wire in cleartext.
-	writeEnv(&b, "HERMES_WEBUI_SECURE", boolEnv(isHTTPS(c.currentBaseURL())))
+	writeEnv(&b, "HERMES_WEBUI_SECURE", boolEnv(isHTTPS(state.BaseURL())))
 
 	return b.String()
 }
@@ -438,22 +428,4 @@ func boolEnv(b bool) string {
 
 func isHTTPS(raw string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(raw)), "https://")
-}
-
-func (c *Configurator) currentBaseURL() string {
-	if c.ssoBaseURL == nil {
-		return ""
-	}
-	return c.ssoBaseURL()
-}
-
-// randomToken returns n bytes of cryptographic randomness as unpadded
-// base64url. The alphabet is alphanumeric plus '-' and '_', which is safe to
-// single-quote in a shell and safe to paste on a phone.
-func randomToken(n int) (string, error) {
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

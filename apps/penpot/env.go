@@ -3,8 +3,6 @@
 package penpot
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strings"
@@ -198,11 +196,11 @@ func secretKey(existing []byte) (string, error) {
 	if key := envValue(existing, "PENPOT_SECRET_KEY"); key != "" {
 		return key, nil
 	}
-	buf := make([]byte, 48)
-	if _, err := rand.Read(buf); err != nil {
+	key, err := configurator.RandomToken(48)
+	if err != nil {
 		return "", fmt.Errorf("generate penpot secret key: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
+	return key, nil
 }
 
 // envValue reads one key out of an already-rendered env file. Missing file and

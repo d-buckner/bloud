@@ -275,13 +275,13 @@ func TestPreStartWithoutASecretsStoreIsStillIdempotent(t *testing.T) {
 	require.Equal(t, content, readEnvFile(t, state))
 }
 
-// TestCredentialsAreHighEntropyAndURLSafe checks the property randomToken exists
-// for, not just that it returns something: both values go into an env file line,
-// and base64url needs no quoting there.
+// TestCredentialsAreHighEntropyAndURLSafe checks the property of the shared
+// token generator, not just that it returns something: both values go into an
+// env file line, and base64url needs no quoting there.
 func TestCredentialsAreHighEntropyAndURLSafe(t *testing.T) {
 	seen := map[string]bool{}
 	for range 8 {
-		token, err := randomToken()
+		token, err := configurator.RandomToken(32)
 		require.NoError(t, err)
 		require.Len(t, token, 43, "32 bytes as base64url without padding")
 		require.False(t, seen[token], "two calls must never agree")

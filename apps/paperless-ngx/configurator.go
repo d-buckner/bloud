@@ -8,8 +8,6 @@ package paperlessngx
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -94,11 +92,10 @@ const confFileName = "paperless.conf"
 const oidcApps = "allauth.socialaccount.providers.openid_connect"
 
 type Configurator struct {
-	port       int
-	ssoBaseURL func() string // current Bloud base URL (host-set aware; read on every PreStart)
-	secrets    configurator.AppSecretsProvider
-	logger     *slog.Logger
-	api        *paperlessNgxAPI
+	port    int
+	secrets configurator.AppSecretsProvider
+	logger  *slog.Logger
+	api     *paperlessNgxAPI
 
 	// baseURL is a test seam: when set, the API client resolves to it instead
 	// of localhost:port. Never used to build request URLs by hand.
@@ -119,10 +116,9 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger = slog.Default()
 	}
 	c := &Configurator{
-		port:       port,
-		ssoBaseURL: deps.Address.PrimaryBaseURL,
-		secrets:    deps.Secrets,
-		logger:     logger.With("app", appName),
+		port:    port,
+		secrets: deps.Secrets,
+		logger:  logger.With("app", appName),
 	}
 	if deps.HTTP != nil {
 		c.api = newAPI(deps.HTTP, func() string {
@@ -151,14 +147,6 @@ func (c *Configurator) Name() string {
 // against metadata.yaml, because only one of the two routes traffic.
 func (c *Configurator) Port() int { return c.port }
 
-// appExternalURL returns the public URL the browser uses to reach
-// Paperless-ngx, e.g. "http://paperless-ngx.localhost:8080". It must match the
-// OIDC redirect URI base registered by the host-agent (app subdomain +
-// callbackPath) or the browser round-trip fails.
-func (c *Configurator) appExternalURL() string {
-	return configurator.AppExternalURL(c.ssoBaseURL, appName)
-}
-
 // PreStart writes the Paperless-ngx configuration file so the container comes
 // up with the right public URL, secret key, admin account, and OIDC provider
 // on its very first boot. Returns configChanged=true when the file content
@@ -174,7 +162,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	existing, _ := os.ReadFile(path)
 	secretKey := confValue(string(existing), "PAPERLESS_SECRET_KEY")
 	if secretKey == "" {
-		generated, err := newSecretKey()
+		generated, err := configurator.RandomToken(64)
 		if err != nil {
 			return configurator.NoRestart(), fmt.Errorf("generating secret key: %w", err)
 		}
@@ -182,7 +170,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	}
 
 	content, err := renderConf(publicSettings{
-		publicURL: c.appExternalURL(),
+		publicURL: state.AppExternalURL(appName),
 		secretKey: secretKey,
 		oidc:      state.OIDC,
 	})
@@ -486,7 +474,7 @@ func socialAccountProviders(oidc *configurator.OIDCOutput) (string, error) {
 }
 
 // schemeOf returns the scheme of a URL, defaulting to http when it cannot be
-// parsed (the dev default, matching appExternalURL's fallback).
+// parsed (the dev default, matching the fallback public URL).
 func schemeOf(rawURL string) string {
 	if parsed, err := url.Parse(rawURL); err == nil && parsed.Scheme != "" {
 		return parsed.Scheme
@@ -497,16 +485,6 @@ func schemeOf(rawURL string) string {
 // endpointURL joins a path onto the issuer URL, tolerating its trailing slash.
 func endpointURL(issuer, path string) string {
 	return strings.TrimSuffix(issuer, "/") + "/" + path
-}
-
-// newSecretKey generates a Django SECRET_KEY: 64 bytes of entropy in URL-safe
-// base64, the length upstream recommends.
-func newSecretKey() (string, error) {
-	buf := make([]byte, 64)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 // confValue returns the value of key in a generated config file, unquoted.

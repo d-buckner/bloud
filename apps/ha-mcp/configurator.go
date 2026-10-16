@@ -23,8 +23,6 @@ package hamcp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
@@ -171,18 +169,15 @@ func ensureCredentials(secrets configurator.AppSecretsProvider, logger *slog.Log
 	if secrets == nil {
 		return "", "", nil
 	}
-	if bearer = secrets.GetAppSecret(appName, httpTokenKey); bearer == "" {
-		bearer, err = randomToken()
-		if err != nil {
-			return "", "", fmt.Errorf("generating the %s MCP bearer: %w", appName, err)
-		}
-		if err := secrets.SetAppSecret(appName, httpTokenKey, bearer); err != nil {
-			return "", "", fmt.Errorf("publishing the %s MCP bearer: %w", appName, err)
-		}
+	bearer, minted, err := configurator.EnsureSecret(secrets, appName, httpTokenKey, 32, "MCP bearer")
+	if err != nil {
+		return "", "", err
+	}
+	if minted {
 		logger.Info("generated the ha-mcp MCP bearer")
 	}
 	if endpointPath = secrets.GetAppSecret(appName, endpointPathKey); endpointPath == "" {
-		path, err := randomToken()
+		path, err := configurator.RandomToken(32)
 		if err != nil {
 			return bearer, "", fmt.Errorf("generating the %s endpoint path: %w", appName, err)
 		}
@@ -202,18 +197,6 @@ func currentBearer(secrets configurator.AppSecretsProvider) string {
 		return ""
 	}
 	return secrets.GetAppSecret(appName, httpTokenKey)
-}
-
-// randomToken returns 32 bytes of entropy as URL-safe base64. The character set
-// matters as much as the entropy here: both consumers of this value put it into
-// a config file (an nginx string comparison and an env line), and base64url needs
-// no quoting in either.
-func randomToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 // --- bindings ---

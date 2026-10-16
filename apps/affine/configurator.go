@@ -77,7 +77,6 @@ const csrfCookieName = "affine_csrf_token"
 // login links to it (AFFiNE links by email) and the wired workspace is theirs.
 type Configurator struct {
 	port       int
-	ssoBaseURL func() string // current Bloud base URL (host-set aware; read on every PreStart)
 	secrets    configurator.AppSecretsProvider
 	adminEmail string // the operator's SSO identity email; first-user account + every sign-in use it
 	logger     *slog.Logger
@@ -112,7 +111,6 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	}
 	c := &Configurator{
 		port:               port,
-		ssoBaseURL:         deps.Address.PrimaryBaseURL,
 		secrets:            deps.Secrets,
 		adminEmail:         adminEmail,
 		logger:             logger.With("app", "affine"),
@@ -154,13 +152,6 @@ func (c *Configurator) restartContainer(ctx context.Context) error {
 	return c.restartContainerFn(ctx, c.Name())
 }
 
-// appExternalURL returns the public URL the browser uses to reach AFFiNE,
-// e.g. "http://affine.localhost:8080". It must match the OIDC redirect URI
-// base registered by the host-agent (app subdomain + callbackPath).
-func (c *Configurator) appExternalURL() string {
-	return configurator.AppExternalURL(c.ssoBaseURL, appName)
-}
-
 // PreStart writes the AFFiNE config file so the server comes up with the
 // correct public URL and OIDC provider on the very first boot. Returns
 // configChanged=true when the file content changed so the orchestrator
@@ -180,7 +171,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 // rewrites the config and restarts the container.
 func (c *Configurator) syncConfigFile(state *configurator.AppState) (bool, error) {
 	path := filepath.Join(state.DataPath, "config", configFileName)
-	content, err := renderConfigFile(c.appExternalURL(), state.OIDC, caldavBinding(state))
+	content, err := renderConfigFile(state.AppExternalURL(appName), state.OIDC, caldavBinding(state))
 	if err != nil {
 		return false, err
 	}

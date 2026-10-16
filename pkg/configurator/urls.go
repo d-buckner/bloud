@@ -38,3 +38,24 @@ func AppExternalURL(baseURL func() string, appName string) string {
 func fallbackAppURL(appName string) string {
 	return "http://" + appName + ".localhost:8080"
 }
+
+// AppExternalURL returns the app's public URL from the base URL the state
+// carries. It is the AppState-shaped counterpart of the package function, so a
+// configurator reads the URL inside PreStart or PostStart instead of threading
+// a base-URL function through its constructor.
+func (s *AppState) AppExternalURL(appName string) string {
+	if s == nil {
+		return fallbackAppURL(appName)
+	}
+	return AppExternalURL(s.PrimaryBaseURL, appName)
+}
+
+// BaseURL returns the current public base URL, or "" when there is no source.
+// A nil PrimaryBaseURL is the CLI/test shape, and the empty answer lets a
+// caller render the "not ready" form instead of guessing.
+func (s *AppState) BaseURL() string {
+	if s == nil || s.PrimaryBaseURL == nil {
+		return ""
+	}
+	return s.PrimaryBaseURL()
+}
