@@ -131,23 +131,38 @@ func TestMemoryCache_GetUserApps(t *testing.T) {
 	cache := NewMemoryCache()
 	cache.apps["traefik"] = &App{
 		CatalogID: "traefik",
-		Category:  "infrastructure",
+		Category:  "network",
+		IsSystem:  true,
 	}
 	cache.apps["jellyfin"] = &App{
 		CatalogID: "jellyfin",
 		Category:  "media",
 	}
+	// An app may name its own category honestly and still be something a person
+	// installs. Hindsight does, and the category must not hide it.
+	cache.apps["hindsight"] = &App{
+		CatalogID: "hindsight",
+		Category:  "infrastructure",
+	}
 
 	userApps, err := cache.GetUserApps()
 	require.NoError(t, err)
-	assert.Len(t, userApps, 1)
-	assert.Equal(t, "jellyfin", userApps[0].CatalogID)
+	names := make([]string, 0, len(userApps))
+	for _, app := range userApps {
+		names = append(names, app.CatalogID)
+	}
+	assert.Equal(t, []string{"hindsight", "jellyfin"}, names)
 }
 
 func TestMemoryCache_IsSystemAppByName(t *testing.T) {
 	cache := NewMemoryCache()
 	cache.apps["traefik"] = &App{
 		CatalogID: "traefik",
+		Category:  "network",
+		IsSystem:  true,
+	}
+	cache.apps["hindsight"] = &App{
+		CatalogID: "hindsight",
 		Category:  "infrastructure",
 	}
 	cache.apps["jellyfin"] = &App{
@@ -156,6 +171,7 @@ func TestMemoryCache_IsSystemAppByName(t *testing.T) {
 	}
 
 	assert.True(t, cache.IsSystemAppByName("traefik"))
+	assert.False(t, cache.IsSystemAppByName("hindsight"))
 	assert.False(t, cache.IsSystemAppByName("jellyfin"))
 	assert.False(t, cache.IsSystemAppByName("nonexistent"))
 }

@@ -83,17 +83,23 @@ func (c *MemoryCache) GetAllAsJSON() ([]byte, error) {
 	})
 }
 
-// SystemCategories defines categories that are hidden from users
-var SystemCategories = map[string]bool{
-	"infrastructure": true,
-}
-
-// IsSystemApp returns true if the app is a system/infrastructure app
+// IsSystemApp reports whether the app is Bloud's own plumbing rather than
+// something a person installs.
+//
+// The declared flag is the answer, and it is the only place the catalog says
+// it. This function used to read `category` against a set that held
+// `infrastructure`, and the two do not agree. Traefik declares `category:
+// network` and Authentik declares `security`, so the category test let both
+// system apps into the user catalog, which is what the dashboard then had to
+// hide on its own. The same test hid every app that honestly called itself
+// infrastructure: Hindsight declares that category and disappeared from
+// GET /api/apps with no error raised anywhere.
 func IsSystemApp(app *App) bool {
-	return SystemCategories[app.Category]
+	return app.IsSystem
 }
 
-// GetUserApps returns only user-facing apps (excluding infrastructure)
+// GetUserApps returns only user-facing apps (excluding the apps Bloud runs for
+// the whole instance)
 func (c *MemoryCache) GetUserApps() ([]*App, error) {
 	allApps, err := c.GetAll()
 	if err != nil {
