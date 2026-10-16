@@ -89,6 +89,15 @@ jobs:
           # fails, and a login page that offers a dead provider looks healthy.
           - group: penpot
             test-run: 'TestPenpot'
+          # openGym is two containers and about 0.48 GB, and the assertions worth
+          # having are about the wire between them: the front end resolves the API
+          # name per request, so the install must be real for the health path to
+          # mean anything. Its own leg keeps that pull off every other group's
+          # deadline, and the leg is where the one claim no unit test can carry is
+          # checked: the address file names the origin this install is actually
+          # reachable on, which is what a passkey is bound to.
+          - group: opengym
+            test-run: 'TestOpenGym'
           - group: media-stack
             test-run: 'TestMediaStack'
           - group: catalog
