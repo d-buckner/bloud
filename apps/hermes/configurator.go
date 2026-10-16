@@ -383,6 +383,10 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	}
 
 	applyMCPServers(doc, state)
+	// After applyMCPServers: the pin is written only when a namespace survives
+	// this pass, so the two managed sections cannot disagree about what the
+	// agent actually has.
+	applyToolSearch(doc, state)
 
 	want, err := yaml.Marshal(doc)
 	if err != nil {
@@ -398,7 +402,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	}
 	if changed {
 		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive, "inference", hasInference,
-			"mcpServers", mcpServerNames(state))
+			"mcpServers", mcpServerNames(state), "toolSearch", toolSearchPolicy(doc))
 	}
 	return configurator.RestartIf(changed, "Hermes config rewritten"), nil
 }

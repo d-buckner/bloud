@@ -494,6 +494,78 @@ model:
 own, so an operator who picked a different provider keeps it. `discover_models`
 keeps the model list live from the endpoint rather than a snapshot.
 
+## The tool-disclosure pin (`tools.tool_search`)
+
+Every installed MCP provider lands in `mcp_servers`, and the tool schemas are
+large. Each provider's own notes record what its server publishes:
+
+| Provider | `tools/list` |
+|---|---|
+| `affine-mcp` | 106 tools |
+| `ha-mcp` | 77 tools |
+| `dav-mcp` | 27 tools |
+
+Those three are 210 schemas. `arr-mcp`, `navidrome-mcp`, and `penpot` add more,
+and no count for them is recorded anywhere in this repo. The model receives the
+tools array on every turn, so an eager list is a per-turn cost that does not
+depend on what the operator asked for.
+
+**Tool Search is Hermes' progressive-disclosure layer for that cost.** When it is
+active, Hermes leaves the MCP tools out of the model-facing array and offers three
+bridge tools instead: `tool_search`, `tool_describe`, and `tool_call`. The model
+loads one schema when it needs one. Hermes defers every tool whose registry
+toolset begins with `mcp-`, and `tools/mcp_tool_registration.py` registers each
+server in `mcp_servers` as `mcp-<server>`, so the deferral covers exactly what
+Bloud wires.
+
+**Bloud writes the pin anyway.** The upstream default is `enabled: auto`, and the
+documentation says `auto` is an alias of `on` today and is reserved for a future
+budget-gated mode. It tells an integrator to pin `on` or `off` to keep today's
+behavior across an upgrade. Bloud wires the namespaces, so Bloud states the policy
+it depends on instead of inheriting one. The pin also puts both halves of the
+decision in the file an operator reads: `mcp_servers` names the namespaces, and
+`tools.tool_search` says how they reach the model.
+
+**The pin is adopt-once, the same rule `adoptDefaultModel` follows.** An operator
+who set `tools.tool_search.enabled` keeps that value, including `off`. Bloud adds
+the namespaces; the operator decides how many of them the model pays for. The rule
+holds on removal too: when the last provider goes, Bloud deletes only the value it
+wrote, so an uninstall cannot re-enable a policy the operator turned off. A section
+written in the legacy boolean shape (`tools: {tool_search: true}`) is also an
+operator statement, so `writableSection` leaves it alone rather than rewriting it
+into a map.
+
+**Only `enabled` is written.** The other keys trade discovery quality against
+context, and Bloud has no measurement that beats the upstream defaults for a model
+Bloud does not choose:
+
+| Key | Default | Why Bloud leaves it alone |
+|---|---|---|
+| `threshold_pct` | `5` | The listing budget as a share of the model's context. The model is the operator's choice. |
+| `listing_max_tokens` | `4000` | The listing is what keeps a deferred tool discoverable at all. Upstream benchmarking found listing mode matched eager task success at lower cost, so an override needs a number Bloud cannot produce. |
+| `listing` | `auto` | Degradation is per server: one oversized namespace collapses to a summary line while the small ones keep their per-tool listings. |
+| `defer` | curated list | An explicit list replaces the curated set wholesale, so writing it would drop cold built-in tools Bloud knows nothing about. |
+
+**What the pin does not buy.** The bridge is not free. It costs three tool schemas
+plus the catalog listing on every turn, and a cold tool costs one or two extra
+model calls before it runs. A loaded schema enters the conversation history, so it
+never benefits from the system-prompt cache prefix. Retrieval can also miss: the
+numbers the upstream documentation cites are 49 percent task success without tool
+search and 74 percent with it, and it counts the remaining 26 points as retrieval
+failure. The listing keeps that gap small, because a model that sees the exact tool
+name can skip `tool_search` and call `tool_describe` directly.
+
+**The alternative Bloud did not take: Hermes' managed scope.** Hermes reads an
+IT-pushed overlay from `/etc/hermes`, or `$HERMES_MANAGED_DIR`, that wins at the
+leaf and a user cannot shadow (`hermes_cli/managed_scope.py`). It would make the
+pin impossible to remove. Bloud rejected it. This is a home server, the operator
+owns the box, and a policy nobody can turn off is a claim Bloud cannot make on
+someone else's machine.
+
+Sources: [Tool Search](https://hermes-agent.nousresearch.com/docs/user-guide/features/tool-search),
+and `tools/tool_search.py`, `tools/mcp_tool_registration.py`, and
+`hermes_cli/config_defaults.py` in the pinned image.
+
 ## The agent API contract (`provides: agentApi`, served on `extraPorts.gateway`)
 
 Hermes' gateway exposes an **OpenAI-compatible API server** (`gateway/platforms/api_server.py`),
