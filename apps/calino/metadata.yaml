@@ -52,7 +52,7 @@ sso:
 
 containers:
   - name: apps-calino
-    image: ghcr.io/ivan-malinovski/calino:0.36.0
+    image: ghcr.io/ivan-malinovski/calino:0.39.1
     network: apps-net
     restartPolicy: always
     ports:

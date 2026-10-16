@@ -61,7 +61,7 @@ provides:
 
 containers:
   - name: apps-radarr
-    image: lscr.io/linuxserver/radarr:6.4.4.10685-ls317
+    image: lscr.io/linuxserver/radarr:6.4.4.10685-ls321
     network: apps-net
     restartPolicy: always
     environment:

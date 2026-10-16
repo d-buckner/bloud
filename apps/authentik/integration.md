@@ -4,6 +4,24 @@
 
 Marked as `isSystem: true` - core infrastructure, not user-facing.
 
+## Version pin
+
+The pin stays inside `2025.10`. Authentik `2025.12` is a minor release with two
+changes this app must handle before it can take it:
+
+- **The media mount moves.** 2025.12 serves stored files from `/files` and expects
+  local file storage on a `/data` mount, with the old `/media` content at
+  `/data/media`. Both `apps-authentik-server` and `apps-authentik-worker` mount
+  `{{appDataDir}}/media` at `/media` today, so the bump needs the mount changed
+  and existing installs moved.
+- **Group and permission handling is reworked.** 2025.12 enforces unique group
+  names in the database, migrates `Group.parent` to a many-to-many `Group.parents`,
+  and moves every permission onto a role. Anything that writes groups or
+  permissions through the API has to be re-read against that shape.
+
+`2025.10.4` is the newest patch of the pinned minor line, so that is what the
+catalog names.
+
 ## Port & Network
 - **HTTP:** 9001
 - **HTTPS:** 9443

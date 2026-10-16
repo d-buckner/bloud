@@ -9,7 +9,7 @@ container behind Traefik forward-auth, with the instance put into Servarr's
 own "External" authentication mode so it never presents a login form of its
 own.
 
-- Image: `lscr.io/linuxserver/radarr:6.4.4.10685-ls317` (pinned, verified on GHCR)
+- Image: `lscr.io/linuxserver/radarr:6.4.4.10685-ls321` (pinned, verified on GHCR)
 - SSO strategy: `forward-auth` (Authentik)
 - Route: `http://radarr.<host>:<traefik port>` → `http://localhost:7878`
 - Node / container: `apps-radarr`, network `apps-net`

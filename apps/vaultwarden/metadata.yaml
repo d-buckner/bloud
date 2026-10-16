@@ -50,7 +50,7 @@ e2e:
 
 containers:
   - name: apps-vaultwarden
-    image: docker.io/vaultwarden/server:1.37.3
+    image: docker.io/vaultwarden/server:1.37.4
     network: apps-net
     restartPolicy: always
     ports:

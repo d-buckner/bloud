@@ -4,7 +4,7 @@ Home Assistant (https://www-home-assistant.io/) is an open-source home
 automation platform. Bloud installs the official Home Assistant container and
 wires its SSO to Bloud's identity provider (Authentik).
 
-- Image: `docker.io/home-assistant/home-assistant:2026.9.0` (pinned)
+- Image: `docker.io/homeassistant/home-assistant:2026.10.1` (pinned)
 - Port: 8123
 - Public URL: `http://homeassistant.localhost:8080` (direct `:8123` for debugging)
 

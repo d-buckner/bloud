@@ -9,7 +9,7 @@ comment, and organization workflows. Bloud wires it to AFFiNE's owner account
 and publishes its MCP endpoint to the `mcp` contract, so a harness such as
 Hermes can register it as a tool namespace.
 
-- Image: `ghcr.io/dawncr0w/affine-mcp-server:3.8.5` (pinned)
+- Image: `ghcr.io/dawncr0w/affine-mcp-server:3.9.1` (pinned)
 - Port: 9222 (the container's `PORT`; the image defaults to 3000, which would
   collide with the host-agent, so `PORT` is set to 9222 in the metadata)
 - MCP endpoint: `http://<host>:9222/mcp`, bearer-authenticated

@@ -9,7 +9,7 @@ container behind Traefik forward-auth, puts the instance into Servarr's own
 "External" authentication mode so it never presents a login form of its own,
 and wires the PVRs that are installed into Prowlarr's application-sync list.
 
-- Image: `lscr.io/linuxserver/prowlarr:2.6.5.5623-ls161` (pinned, verified on GHCR)
+- Image: `lscr.io/linuxserver/prowlarr:2.6.5.5623-ls163` (pinned, verified on GHCR)
 - SSO strategy: `forward-auth` (Authentik)
 - Route: `http://prowlarr.<host>:<traefik port>` → `http://localhost:9696`
 - Node / container: `apps-prowlarr`, network `apps-net`

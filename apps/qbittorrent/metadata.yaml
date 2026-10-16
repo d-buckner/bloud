@@ -32,7 +32,7 @@ sso:
 
 containers:
   - name: apps-qbittorrent
-    image: lscr.io/linuxserver/qbittorrent:5.2.3_v2.0.14-ls476
+    image: lscr.io/linuxserver/qbittorrent:5.2.4_v2.0.15-ls480
     network: apps-net
     restartPolicy: always
     environment:

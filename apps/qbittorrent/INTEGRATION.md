@@ -8,7 +8,7 @@ Traefik forward-auth: the WebUI's own login is deliberately bypassed, because
 qBittorrent has no external/header authentication mode to delegate to
 Authentik.
 
-- Image: `lscr.io/linuxserver/qbittorrent:5.2.3_v2.0.14-ls476` (pinned)
+- Image: `lscr.io/linuxserver/qbittorrent:5.2.4_v2.0.15-ls480` (pinned)
 - SSO strategy: `forward-auth` (Authentik), no bypass paths: the whole app is
   behind the gate
 - WebUI: `http://qbittorrent.localhost:8080` via Traefik, listening on host

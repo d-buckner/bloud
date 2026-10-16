@@ -7,7 +7,7 @@ the pilot app for the client-credentials pattern: a browser signs in with the
 identity provider, and a native client that cannot join the provider signs in
 with a password Bloud mints and reveals once.
 
-- Image: `ghcr.io/nesquena/hermes-webui:0.52.113` (pinned)
+- Image: `ghcr.io/nesquena/hermes-webui:0.52.495` (pinned)
 - SSO strategy: `native-oidc`, callback `/api/auth/oidc/callback`,
   confidential client
 - Port: `8787` (internal; not published to the host)

@@ -86,7 +86,7 @@ containers:
     # intent and the digest carries the evidence. Multi-arch (amd64 and arm64).
     # Upstream ships several releases a day, so a bump is a review of the tool
     # surface rather than a dependency refresh.
-    image: ghcr.io/bardesss/arr-mcp:1.41.1@sha256:efa7b7addcbce5b761fd9e7aef00d33aedc89be0a095d51300af9514d9acd209
+    image: ghcr.io/bardesss/arr-mcp:1.44.0@sha256:f9ac224023d7530456304ae81199c94a109ce5bef8de76860d7c3535b456f96c
     network: apps-net
     restartPolicy: always
     environment:

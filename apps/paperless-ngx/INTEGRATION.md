@@ -9,8 +9,8 @@ configuration file it needs, wires django-allauth's OpenID Connect provider to
 the Bloud identity provider (Authentik), and creates the internal admin
 account.
 
-- Image: `ghcr.io/paperless-ngx/paperless-ngx:3.2.0` (pinned)
-- Sidecars: `postgres:18`, `redis:7-alpine`, `gotenberg/gotenberg:8.37`,
+- Image: `ghcr.io/paperless-ngx/paperless-ngx:3.3.1` (pinned)
+- Sidecars: `postgres:18`, `redis:7-alpine`, `gotenberg/gotenberg:8.38`,
   `apache/tika:3.3.1.0` (all pinned)
 - SSO strategy: `native-oidc` (callback `/accounts/oidc/bloud/login/callback/`)
 - Public URL: `http://paperless-ngx.localhost:8080` (app subdomain on the Bloud
@@ -23,7 +23,7 @@ account.
 ```
 apps-paperless-ngx-postgres  (postgres 18)      ─┐
 apps-paperless-ngx-redis     (redis 7)          ─┼─> apps-paperless-ngx (webserver, :8000)
-apps-paperless-ngx-gotenberg (gotenberg 8.37)   ─┤   dependsOn postgres + redis
+apps-paperless-ngx-gotenberg (gotenberg 8.38)   ─┤   dependsOn postgres + redis
 apps-paperless-ngx-tika      (tika 3.3.1.0)     ─┘
 ```
 

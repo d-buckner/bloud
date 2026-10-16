@@ -154,7 +154,7 @@ extraPorts:
 
 containers:
   - name: apps-hermes
-    image: docker.io/nousresearch/hermes-agent:v2026.9.14
+    image: docker.io/nousresearch/hermes-agent:v2026.9.24
     # Host networking is load-bearing: the dashboard's OIDC issuer is the
     # host loopback (http://localhost:8080), and only inside the host network
     # namespace does localhost reach Traefik. Traefik routes to this app at

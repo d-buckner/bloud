@@ -59,7 +59,7 @@ containers:
     # dav-mcp 4.1.2, distroless (non-root uid 65532, no shell, no package
     # manager). Pinned to the exact release rather than the `4.1` minor line or
     # `latest` so the bytes are reviewable and a bump is a deliberate change.
-    image: ghcr.io/philflowio/dav-mcp:4.1.2
+    image: ghcr.io/philflowio/dav-mcp:4.3.1
     network: apps-net
     restartPolicy: always
     ports:
