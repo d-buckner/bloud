@@ -58,16 +58,24 @@
 </section>
 
 <style>
+	/* The same separator the Users section carries. This section follows another,
+	   so it needs a break above it; it had none, which is what let the AI heading
+	   read as the tail of the section above. The gap spaces the capability cards
+	   so none of them has to carry a top margin of its own. */
 	.ai-section {
 		display: flex;
 		flex-direction: column;
+		gap: var(--space-md);
+		margin-top: var(--space-2xl);
+		padding-top: var(--space-2xl);
+		border-top: 1px solid var(--color-border);
 	}
 
+	/* No max-width of its own: the shared `.section` measure already caps it. */
 	.section-description {
-		margin: 0 0 var(--space-lg) 0;
+		margin: 0;
 		font-size: 0.875rem;
 		color: var(--color-text-secondary);
 		line-height: 1.5;
-		max-width: 70ch;
 	}
 </style>

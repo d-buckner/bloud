@@ -93,9 +93,34 @@ describe('the field styles name tokens, not literals', () => {
 		const style = source.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? '';
 		const fieldRule = style.match(/\.form-field input,[\s\S]*?\}/)?.[0] ?? '';
 		// A hex here is a colour that cannot change with the palette, which is how
-		// the graph labels and the edge strokes failed in dark mode.
-		expect(fieldRule).toMatch(/background:\s*var\(--color-bg-elevated\)/);
-		expect(fieldRule).toMatch(/color:\s*var\(--color-text\)/);
+		// the graph labels and the edge strokes failed in dark mode. Which token is
+		// the component's business; that it is a token is not.
+		expect(fieldRule).toMatch(/background:\s*var\(--color-[a-z-]+\)/);
+		expect(fieldRule).toMatch(/color:\s*var\(--color-[a-z-]+\)/);
 		expect(fieldRule).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+	});
+});
+
+/**
+ * The section shell is one rule, not three copies.
+ *
+ * Svelte scopes a component's CSS to that component, so each settings section
+ * carried its own copy of the measure and heading rule. Two had it and the third
+ * did not, and nothing failed: the section that lost its copy simply rendered
+ * wider with an oversized heading, next to two that looked right.
+ */
+describe('the settings section shell is defined once, globally', () => {
+	const SECTIONS = ['AddressSettingsSection', 'AISettingsSection', 'UsersSettingsSection'];
+
+	it('lives in the global sheet', () => {
+		const base = read('lib/styles/base.css');
+		expect(base).toMatch(/\.section\s*\{[^}]*max-width/);
+		expect(base).toMatch(/\.section h2\s*\{/);
+	});
+
+	it.each(SECTIONS)('%s carries no private copy', (name) => {
+		const source = read(`lib/components/${name}.svelte`);
+		expect(source, `${name} restyles .section locally`).not.toMatch(/\.section\s*\{/);
+		expect(source, `${name} restyles .section h2 locally`).not.toMatch(/\.section h2\s*\{/);
 	});
 });

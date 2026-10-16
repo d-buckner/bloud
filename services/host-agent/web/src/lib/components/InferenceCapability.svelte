@@ -263,10 +263,15 @@
 </div>
 
 <style>
+	/* A card, not a section break. Each capability used to carry the same full-width
+	   rule and 5rem of air that a real section break gets, which made three
+	   sub-blocks outshine the two real sections either side of them. The AI section
+	   spaces these with a gap, so none carries a top margin. */
 	.capability {
-		margin-top: var(--space-2xl);
-		padding-top: var(--space-xl);
-		border-top: 1px solid var(--color-border);
+		padding: var(--space-lg);
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
 	}
 
 	.capability-title {
@@ -313,6 +318,9 @@
 		color: var(--color-text-secondary);
 	}
 
+	/* `--color-bg`, not `--color-bg-elevated`: the card is elevated, so an elevated
+	   field inside it would have nothing to read against. On the page colour the
+	   field sits back from the card in both palettes. */
 	.form-field input,
 	.form-field select {
 		padding: var(--space-sm) var(--space-md);
@@ -320,11 +328,10 @@
 		font-size: 0.9375rem;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		background: var(--color-bg-elevated);
+		background: var(--color-bg);
 		color: var(--color-text);
 		transition: border-color 0.15s ease;
 		width: 100%;
-		max-width: 100%;
 	}
 
 	.form-field input:focus,
@@ -333,8 +340,9 @@
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text) 12%, transparent);
 	}
 
-	.form-field input::placeholder,
-	.form-field select::placeholder {
+	/* `input` only: a `select` has no placeholder pseudo-element, so the paired
+	   selector matched nothing. */
+	.form-field input::placeholder {
 		color: var(--color-text-muted);
 	}
 

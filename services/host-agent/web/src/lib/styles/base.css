@@ -122,6 +122,24 @@ button {
    the whole page, and a result count would be noise next to the grid it
    describes. Clipping with clip-path rather than `display: none` because a
    hidden element is not announced at all. */
+/* The settings sections share one measure and one heading size.
+
+   This lives here rather than in a component because Svelte scopes a component's
+   CSS to that component: a rule written in one settings section styles only that
+   section. Two of the three carried a copy of this rule and the third carried
+   none, so it rendered uncapped with a browser-default `h2` while its neighbours
+   were capped and sized. A global sheet is the one place a rule can reach every
+   section, and the only place a fourth section cannot forget it. */
+.section {
+	max-width: 560px;
+}
+
+.section h2 {
+	margin: 0 0 var(--space-xs) 0;
+	font-size: 1.125rem;
+	font-weight: 500;
+}
+
 .visually-hidden {
 	position: absolute;
 	width: 1px;
