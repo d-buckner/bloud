@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { expect } from '@playwright/test';
 import type { Locator } from '@playwright/test';
 import { PageObject } from './base';
-import { catalogCard, expectInstalledInCatalog, expectRunningTile, homeTile } from '../apps';
+import {
+  assertInstalledInCatalog,
+  assertRunningTile,
+  catalogCard,
+  homeTile,
+} from '../dashboard';
 import { ensureSignedIn } from '../auth';
 
 /**
  * The Bloud dashboard itself: sign-in, catalog grid, home grid.
  *
- * The locators live in `lib/apps.ts` rather than being restated here, because
+ * The locators live in `../dashboard` rather than being restated here, because
  * that module already carries the hard-won scoping rules (a display name is
  * not a unique key, and a card's text includes its description). This class is
  * the object-shaped surface over them, not a second copy.
@@ -35,14 +39,14 @@ export class BloudPage extends PageObject {
     return homeTile(this.page, label);
   }
 
-  async expectInstalled(label: string): Promise<void> {
+  async assertInstalled(label: string): Promise<void> {
     await this.openCatalog();
-    await expectInstalledInCatalog(this.page, label);
+    await assertInstalledInCatalog(this.page, label);
   }
 
-  async expectRunningTile(label: string): Promise<void> {
+  async assertRunningTile(label: string): Promise<void> {
     await this.openHome();
-    await expectRunningTile(this.page, label);
+    await assertRunningTile(this.page, label);
   }
 
   /** Labels currently drawn on the home grid, in DOM order. */
@@ -55,6 +59,6 @@ export class BloudPage extends PageObject {
   /** The per-app waiting page Traefik serves while an app is down. */
   async openLoadingPage(app: string): Promise<void> {
     await this.page.goto(`/bloud-loading/${app}`);
-    await expect(this.page.locator('body')).toBeVisible();
+    await this.page.locator('body').waitFor({ state: 'visible' });
   }
 }

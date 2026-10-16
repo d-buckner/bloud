@@ -8,7 +8,7 @@
     "services/host-agent/web"
   ],
   "scripts": {
-    "setup": "npm install && npm --prefix e2e ci && npm run cli:build && ./bloud setup",
+    "setup": "npm install && npm --prefix e2e ci && npm --prefix harness ci && npm run cli:build && ./bloud setup",
     "prepare": "husky",
     "cli:build": "cd cli && go build -o ../bloud .",
     "dev": "turbo run dev",
@@ -45,6 +45,7 @@
     "checks:commit": "node scripts/checks.mjs commit",
     "checks:push": "node scripts/checks.mjs push",
     "test:e2e": "npm --prefix e2e test",
+    "browser": "node harness/bin/browser.mjs",
     "show-report": "cd e2e && npx playwright show-report"
   },
   "devDependencies": {

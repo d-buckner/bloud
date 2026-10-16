@@ -25,6 +25,7 @@ relationships working.
 | `services/host-agent/web/` | SvelteKit 2 + Svelte 5 frontend (npm workspace `@bloud/host-agent-web`), static build served by host-agent. |
 | `apps/` | Go module: the app catalog. One dir per app: `metadata.yaml` + `configurator.go` (+ assets). |
 | `e2e/` | Playwright (TS) browser tests of the user-visible lifecycle. |
+| `harness/` | Standalone npm package (`@bloud/browser-harness`): the browser code the e2e suite and ad-hoc agent recipes share. See [docs/guides/browser-harness.md](docs/guides/browser-harness.md). |
 | `dev/` | VM configs (`lima.yaml`, `qemu.yaml`). |
 | `validation.yaml` | Manifest for `./bloud validate`: tier commands + path→command inference. The app registry is derived from `apps/*/metadata.yaml`, not hand-edited. |
 | `docs/` | All documentation. Index and "read for..." table: [`docs/README.md`](docs/README.md). Contains `specs/` (release plan, reconciler spec, app spec, dated review), `architecture/`, `guides/`, `features/`, `operations/` (tech-debt ledger), `plans/`. |
@@ -541,7 +542,18 @@ cache, so `go run gotest.tools/gotestsum` works offline.
   (`npm run setup` does) and CI installs it in every job that launches a
   browser. The suite resolves `@playwright/test` from `e2e/node_modules`
   rather than from a root hoist, which is also why the root no longer carries
-  Playwright now that the graph image renderer is gone.
+  Playwright now that the graph image renderer is gone. The harness CLI is the
+  same shape: `npm --prefix harness ci` installs the CLI's own Playwright, and
+  the e2e suite does not need it.
+- The shared browser code lives in `harness/` (`@bloud/browser-harness`), not in
+  `e2e/lib/`. The specs import the platform code from that package; `e2e/lib`
+  holds the runner wiring only (`fixtures.ts` and the behavior ladders in
+  `app-suite.ts`). The same package backs an ad-hoc entry,
+  `node harness/bin/browser.mjs shot|review|verify`, so a manual look and the
+  gate suite resolve one set of selectors. The library imports
+  `@playwright/test` as types only: Playwright refuses to load twice in one
+  process, so the e2e runner and the harness CLI each own their instance. See
+  [docs/guides/browser-harness.md](docs/guides/browser-harness.md).
 - Browser tests target the **public port**: `BLOUD_URL` (default
   `http://localhost:8080`): user journeys go through Traefik.
 - API helpers target the **internal port**: `BLOUD_API_URL` (default
@@ -551,7 +563,8 @@ cache, so `go run gotest.tools/gotestsum` works offline.
   (native-oidc, login via issuer origin), `paperless-ngx.spec.ts` (native-oidc
   through django-allauth), `hermes.spec.ts` (native-oidc over the loopback
   issuer). Fixtures: `lib/fixtures.ts`
-  (`authenticatedPage`, `api`); shared login: `lib/auth.ts`, `lib/loginPage.ts`.
+  (`authenticatedPage`, `api`); login, origins, page objects, and the host-agent
+  API client live in `@bloud/browser-harness`.
 - Config: single worker, 15 min/test, trace/screenshot/video retained on
   failure. Retries: 1 in CI, 0 locally, both overridable with
   `BLOUD_E2E_RETRIES`. A spec that only passed on the retry is named by
@@ -1270,6 +1283,7 @@ to the right doc. When a doc moves, update it in both places.
 | Component overview + data flows | [architecture/overview.md](docs/architecture/overview.md) |
 | The full app + container graph (generated) | [README.md#the-full-graph](README.md#the-full-graph) (the Mermaid block `depgraph --write` refreshes) |
 | How to add an app | [guides/contributing-apps.md](docs/guides/contributing-apps.md) |
+| Drive the UI in a browser for e2e or an ad-hoc look | [guides/browser-harness.md](docs/guides/browser-harness.md) |
 | Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
 |Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|
 |Build the .deb release package|[operations/packaging.md](docs/operations/packaging.md)|

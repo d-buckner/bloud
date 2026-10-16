@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { expect, type Locator, type Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { escapeRegExp } from './origin';
+import { waitFor } from './wait';
 
 /**
+ * Locators for the Bloud dashboard itself: the catalog grid and the home grid.
+ *
  * A display name is not a unique key, so a label never goes into `hasText`
  * bare. A string `hasText` matches a substring, and "Home Assistant" is a
  * substring of "Home Assistant MCP": the catalog sorts by catalog ID, which
@@ -56,7 +59,7 @@ export function homeTile(page: Page, label: string): Locator {
 export async function openAppFromHome(page: Page, label: string): Promise<Page> {
   await page.goto('/');
   const tile = homeTile(page, label);
-  await expect(tile).toBeVisible({ timeout: 15_000 });
+  await tile.waitFor({ state: 'visible', timeout: 15_000 });
 
   // The tile opens the app through its own click handler: it is a div with
   // role="button" rather than a link (GridStack's drag handler ignores
@@ -82,23 +85,28 @@ export async function openAppFromHome(page: Page, label: string): Promise<Page> 
   }
 }
 
-/**
- * Assert the home-screen tile for a converged app: visible, with no live
- * install phase label or spinner (a converged tile carries neither).
- */
-export async function expectRunningTile(page: Page, label: string): Promise<void> {
+/** Assert the home-screen tile for a converged app: visible, with no live
+ * install phase label or spinner. */
+export async function assertRunningTile(page: Page, label: string): Promise<void> {
   const tile = homeTile(page, label);
-  await expect(tile).toBeVisible({ timeout: 15_000 });
-  await expect(tile.locator('.install-spinner')).toHaveCount(0);
-  await expect(tile.locator('.phase-label')).toHaveCount(0);
+  await tile.waitFor({ state: 'visible', timeout: 15_000 });
+  await waitFor(
+    `the ${label} tile to finish installing (an install spinner or phase label is still visible)`,
+    async () =>
+      (await tile.locator('.install-spinner').count()) === 0 &&
+      (await tile.locator('.phase-label').count()) === 0,
+    15_000,
+  );
 }
 
-/**
- * Assert the catalog lists the app and marks it installed.
- */
-export async function expectInstalledInCatalog(page: Page, label: string): Promise<void> {
+/** Assert the catalog lists the app and marks it installed. */
+export async function assertInstalledInCatalog(page: Page, label: string): Promise<void> {
   await page.goto('/catalog');
   const card = catalogCard(page, label);
-  await expect(card).toBeVisible({ timeout: 15_000 });
-  await expect(card).toHaveClass(/installed/);
+  await card.waitFor({ state: 'visible', timeout: 15_000 });
+  await waitFor(
+    `the catalog card for ${label} to be marked installed`,
+    async () => ((await card.getAttribute('class')) ?? '').includes('installed'),
+    15_000,
+  );
 }

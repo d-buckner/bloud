@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
-import { catalogCard, homeTile } from '../lib/apps';
-import { getAppStatus, uninstallApp, waitForApp } from '../lib/api';
+import { catalogCard, getAppStatus, homeTile, uninstallApp, waitForApp } from '@bloud/browser-harness';
 
 // The user-visible live install state contract
 // (plans/app-install-streaming.md):

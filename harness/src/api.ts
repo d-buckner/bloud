@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { BLOUD_API_URL } from './config';
 
 const run = promisify(execFile);
 
@@ -16,7 +17,7 @@ function delay(ms: number): Promise<void> {
   return promise;
 }
 
-const BASE_URL = process.env.BLOUD_API_URL ?? 'http://localhost:3000';
+const BASE_URL = BLOUD_API_URL;
 
 /**
  * Resolves the host-agent API token, in order of cost:
@@ -84,16 +85,16 @@ export interface PublicURLSettings {
 }
 
 /**
- * The configured address, read straight from the API. Specs use this instead of
- * the settings widget so an assertion checks what is stored rather than what the
- * UI is echoing back.
+ * The configured address, read straight from the API. Callers use this instead
+ * of the settings widget so an assertion checks what is stored rather than what
+ * the UI is echoing back.
  */
 export async function getPublicURL(): Promise<PublicURLSettings> {
   return fetchJSON<PublicURLSettings>('/api/settings/public-url');
 }
 
 /**
- * Save the address through the UI and return the value the API reports after the
+ * Save the address and return the value the API reports after the
  * orchestrator has applied it. The save is an intent, so this waits for the
  * live value to reach the canonical one the PUT returned.
  */
@@ -121,7 +122,7 @@ export interface TimezoneSettings {
 
 /**
  * The configured time zone, read straight from the API rather than from the
- * settings widget, so an assertion checks what is stored.
+ * settings widget, so a check tests what is stored.
  */
 export async function getTimezone(): Promise<TimezoneSettings> {
   return fetchJSON<TimezoneSettings>('/api/settings/timezone');
@@ -207,12 +208,12 @@ export async function ensureInstalled(name: string): Promise<void> {
 
 /**
  * One client credential, as the reveal endpoint hands it over. This is the only
- * API call in the suite that returns a credential value: the descriptor list at
- * the same path deliberately has no value field at any reveal policy.
+ * API call here that returns a credential value: the descriptor list at the
+ * same path deliberately has no value field at any reveal policy.
  *
  * Under `reveal: once` (the policy every app in the catalog declares) this is
  * single-use per value: a second reveal of the same credential answers 409, and
- * only a rotation produces one that can be shown again. A spec that needs the
+ * only a rotation produces one that can be shown again. A caller that needs the
  * value therefore has to ask before anything else has.
  */
 export interface ClientCredential {
@@ -233,7 +234,7 @@ export async function revealClientCredential(app: string, secret: string): Promi
  * hands over (that is what makes a lost credential recoverable).
  *
  * The call is not free: rotation ends every live session the app holds and forces
- * the recreate that installs whatever change the rotation implies. A spec should
+ * the recreate that installs whatever change the rotation implies. A caller should
  * reach for it only when the reveal is already spent.
  */
 export async function rotateClientCredential(app: string, secret: string): Promise<ClientCredential> {
@@ -243,7 +244,7 @@ export async function rotateClientCredential(app: string, secret: string): Promi
   );
 }
 
-// External apps (PR 1: launchers only). A launcher is a tile that opens a URL.
+// External apps (launchers only). A launcher is a tile that opens a URL.
 export interface Launcher {
   id: string;
   name: string;
@@ -286,7 +287,7 @@ export async function getTranscriptionSettings(): Promise<TranscriptionSettings>
  * The save is an intent: the PUT answers 202 and the write lands on the
  * orchestrator's queue, so a read-back fired straight after it reports whatever
  * the queue has reached, which is usually the previous value. That is the failure
- * where a spec passes for the wrong reason or fails for one it cannot name: the
+ * where a check passes for the wrong reason or fails for one it cannot name: the
  * assertion reads an empty endpoint seconds before the save is stored. So this
  * polls until the stored state matches what the save reported, the same way
  * `savePublicURLAndWait` does, and a payload that was dropped or rewritten fails

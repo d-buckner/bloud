@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { expect } from '@playwright/test';
 import type { Locator } from '@playwright/test';
 import { PageObject } from './base';
-import { LoginPage } from '../loginPage';
+import { LoginPage } from '../login';
 import { appOrigin, appUrlPattern } from '../origin';
-import { TEST_CREDS } from '../../tests/constants';
+import { CREDENTIALS } from '../config';
 
 /**
  * Which screen of Home Assistant a page is sitting on.
@@ -113,8 +112,8 @@ export class HomeAssistantPage extends PageObject {
    * signal that a Home Assistant upgrade changed the route.
    */
   async signIn(
-    username = TEST_CREDS.USERNAME,
-    password = TEST_CREDS.PASSWORD,
+    username = CREDENTIALS.username,
+    password = CREDENTIALS.password,
     maxSteps = 6,
   ): Promise<HaScreen> {
     for (let step = 0; step < maxSteps; step++) {
@@ -145,10 +144,14 @@ export class HomeAssistantPage extends PageObject {
   }
 
   /** Assert the authenticated dashboard, then report what proved it. */
-  async expectDashboard(): Promise<void> {
-    await expect(this.dashboard.first()).toBeVisible({ timeout: 60_000 });
-    await expect(this.userBadge.first()).toBeVisible({ timeout: 30_000 });
-    expect(this.url).not.toMatch(/onboarding/);
-    expect(this.url).toMatch(appUrlPattern('homeassistant', '/(?!auth/)'));
+  async assertDashboard(): Promise<void> {
+    await this.dashboard.first().waitFor({ state: 'visible', timeout: 60_000 });
+    await this.userBadge.first().waitFor({ state: 'visible', timeout: 30_000 });
+    if (/onboarding/.test(this.url)) {
+      throw new Error(`Home Assistant is still in onboarding at ${this.url}`);
+    }
+    if (!appUrlPattern('homeassistant', '/(?!auth/)').test(this.url)) {
+      throw new Error(`Home Assistant settled off its own origin: ${this.url}`);
+    }
   }
 }

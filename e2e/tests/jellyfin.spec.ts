@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
-import { openAppFromHome } from '../lib/apps';
-import { appUrlPattern } from '../lib/origin';
-import { TEST_CREDS } from './constants';
+import { CREDENTIALS, appUrlPattern, openAppFromHome } from '@bloud/browser-harness';
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. Rungs go pre-auth →
@@ -39,8 +37,8 @@ describeApp('jellyfin', (app) => {
       await manualLoginBtn.click();
     }
 
-    await jellyfin.locator('#txtManualName').fill(TEST_CREDS.USERNAME);
-    await jellyfin.locator('#txtManualPassword').fill(TEST_CREDS.PASSWORD);
+    await jellyfin.locator('#txtManualName').fill(CREDENTIALS.username);
+    await jellyfin.locator('#txtManualPassword').fill(CREDENTIALS.password);
     await jellyfin.getByRole('button', { name: 'Sign in' }).click();
 
     // Jellyfin dashboard should load.

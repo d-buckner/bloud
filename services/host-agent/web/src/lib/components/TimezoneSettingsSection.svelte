@@ -5,6 +5,7 @@
 	import { fetchTimezone, setTimezone } from '$lib/clients/settingsClient';
 	import { pollUntil } from '$lib/store/effects/convergence';
 	import { browserZone, offsetLabel, supportedZones, zoneOptions } from '$lib/utils/timezone';
+	import TimeZonePicker from './TimeZonePicker.svelte';
 
 	// Time zone state. One IANA name in, one name out, and "" is a value rather
 	// than a missing value: it means Bloud states no zone.
@@ -151,19 +152,13 @@
 		{/if}
 
 		<form class="timezone-form" onsubmit={(e) => { e.preventDefault(); handleSaveTimezone(); }}>
-			<label class="visually-hidden" for="timezone-select">Time zone</label>
-			<select
-				id="timezone-select"
-				class="timezone-select"
-				bind:value={draftZone}
+			<TimeZonePicker
+				zones={options}
+				value={draftZone}
 				disabled={saving}
-				aria-describedby={zoneDirty ? 'timezone-warning-title' : undefined}
-			>
-				<option value="">No zone (each app keeps its own default)</option>
-				{#each options as zone (zone)}
-					<option value={zone}>{zone}</option>
-				{/each}
-			</select>
+				describedby={zoneDirty ? 'timezone-warning-title' : undefined}
+				onchange={(zone) => (draftZone = zone)}
+			/>
 			<button class="btn btn-primary" type="submit" disabled={!zoneDirty || saving || saveBlocked}>
 				{saving ? 'Applying…' : 'Save'}
 			</button>
@@ -226,26 +221,6 @@
 		display: flex;
 		gap: var(--space-sm);
 		max-width: 32rem;
-	}
-
-	.timezone-select {
-		flex: 1;
-		min-width: 0;
-		padding: var(--space-sm) var(--space-md);
-		font-size: 0.875rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg-elevated);
-		color: var(--color-text);
-	}
-
-	.timezone-select:focus {
-		border-color: var(--color-accent);
-	}
-
-	.timezone-select:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
 	}
 
 	.preview {
