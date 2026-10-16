@@ -7,7 +7,6 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
@@ -15,8 +14,14 @@ import (
 
 // Everything Seerr-specific about Bloud's HTTP conversation with the app lives
 // in this file: paths, payloads, field names. They are taken from
-// seerr-team/seerr v3.4.1 (the pinned image tag), cited per method, so a future
-// version bump can re-verify each one against the same files:
+// seerr-team/seerr v3.5.0 (the pinned image tag), cited per method, so a future
+// version bump can re-verify each one against the same files. The v3.4.1 to
+// v3.5.0 bump was checked against this list: five of the eight files below
+// changed, and two of those changed a route Bloud calls.
+// server/routes/settings/index.ts moved the library endpoints, which is what
+// syncJellyfinLibraries is written against. server/routes/auth.ts made
+// POST /auth/jellyfin return a trimmed user and classify an unreachable media
+// server; Bloud discards that body and matches only the already-configured 500.
 //
 //	server/routes/index.ts             route registration + GET /settings/public
 //	server/routes/auth.ts              POST /auth/jellyfin
@@ -218,46 +223,66 @@ func (a *seerrAPI) loginWithJellyfin(ctx context.Context, login jellyfinLogin) e
 }
 
 // jellyfinLibrary is one entry of settings.jellyfin.libraries
-// (server/lib/settings/index.ts: id is Jellyfin's item key).
+// (server/lib/settings/index.ts: id is Jellyfin's item key, enabled is what
+// decides whether the scanner covers it).
 type jellyfinLibrary struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
 }
 
 // syncJellyfinLibraries mirrors the library step of Seerr's own wizard: it
-// re-reads the library list from Jellyfin and enables every library it finds,
-// then starts the full scan so the enabled libraries are actually populated.
+// re-reads the library list from Jellyfin, enables every library that is not
+// enabled yet, then starts the full scan so the enabled libraries are actually
+// populated.
 //
-// v3.4.1 exposes this as GET /settings/jellyfin/library with query flags
-// (server/routes/settings/index.ts, the `if (req.query.sync)` branch and the
-// `req.query.enable` mapping that follows it); an absent ?enable means "no
-// library enabled", so the second call is what turns them on. The
-// `POST /jellyfin/library/sync` + `PUT /jellyfin/library/{id}` shape only
-// exists on the develop branch, which is in no release yet; see
-// INTEGRATION.md.
+// v3.5.0 gave each half its own route, and the wizard in SettingsJellyfin.tsx
+// calls them in this same order. POST /settings/jellyfin/library/sync re-reads
+// the list from Jellyfin and stores it, keeping the `enabled` flag of an entry
+// it recognises; PUT /settings/jellyfin/library/{id} with {"enabled": true}
+// turns one on (libraryUpdateSchema, one library per call). GET
+// /settings/jellyfin/library is now a plain read: the v3.4.1 `?sync` and
+// `?enable` query flags are gone, and a call that still sends them is a 200 that
+// enables nothing.
+//
+// The sync answers 404 SYNC_ERROR_NO_LIBRARIES when Jellyfin serves no library
+// at all, and it throws before it replaces the stored list. That is a state and
+// not a failure, so this stops there: enabling the list a refused sync left
+// behind would act on libraries Jellyfin no longer has.
 func (a *seerrAPI) syncJellyfinLibraries(ctx context.Context, apiKey string) error {
+	synced, err := a.cl.POST(apiRoot+"/settings/jellyfin/library/sync").
+		Header(apiKeyHeader, apiKey).
+		OK(http.StatusOK).
+		AlreadyDone(http.StatusNotFound).
+		Ensure(ctx)
+	if err != nil {
+		return err
+	}
+	if !synced {
+		return nil
+	}
+
 	var libraries []jellyfinLibrary
 	if err := a.cl.GET(apiRoot+"/settings/jellyfin/library").
-		Query("sync", "true").
 		Header(apiKeyHeader, apiKey).
 		OK(http.StatusOK).
 		DoInto(ctx, &libraries); err != nil {
 		return err
 	}
-	if len(libraries) == 0 {
-		return nil
-	}
 
-	ids := make([]string, 0, len(libraries))
+	// Only the ones that are off: the call sets one library's state, so a re-run
+	// that got partway through this loop has nothing to undo.
 	for _, library := range libraries {
-		ids = append(ids, library.ID)
-	}
-	if err := a.cl.GET(apiRoot+"/settings/jellyfin/library").
-		Query("enable", strings.Join(ids, ",")).
-		Header(apiKeyHeader, apiKey).
-		OK(http.StatusOK).
-		Exec(ctx); err != nil {
-		return err
+		if library.Enabled {
+			continue
+		}
+		if err := a.cl.PUT(apiRoot+"/settings/jellyfin/library/"+library.ID).
+			Header(apiKeyHeader, apiKey).
+			JSON(map[string]bool{"enabled": true}).
+			OK(http.StatusOK).
+			Exec(ctx); err != nil {
+			return err
+		}
 	}
 
 	// server/routes/settings/index.ts: POST /jellyfin/sync reads body.start.
