@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
-import { openAppFromHome } from '../lib/apps';
-import { appUrlPattern } from '../lib/origin';
-import { HomeAssistantPage } from '../lib/pom';
+import { HomeAssistantPage, appUrlPattern, openAppFromHome } from '@bloud/browser-harness';
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. Home Assistant uses
@@ -63,6 +61,6 @@ describeApp('homeassistant', (app) => {
     // Terminal state: the authenticated dashboard, plus the sidebar identity
     // chip (display-name claim from the IdP), which proves the account came
     // from Authentik rather than Home Assistant's built-in legacy provider.
-    await ha.expectDashboard();
+    await ha.assertDashboard();
   });
 }, { label: 'Home Assistant' });

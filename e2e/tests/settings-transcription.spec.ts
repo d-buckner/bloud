@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
-import * as api from '../lib/api';
+import { api } from '@bloud/browser-harness';
 
 /**
  * The transcription half of Settings -> AI, end to end.

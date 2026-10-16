@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect } from '../lib/fixtures';
-import { addLauncher, listLaunchers, removeLauncher } from '../lib/api';
+import { addLauncher, listLaunchers, removeLauncher } from '@bloud/browser-harness';
 
 // An external app launcher is a tile that opens a URL and wires to nothing. The
 // tile is added through the API (the settings form is a thin wrapper over the

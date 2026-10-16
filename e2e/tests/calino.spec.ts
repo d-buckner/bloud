@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
-import { ensureInstalled, getAppStatus } from '../lib/api';
-import { appOrigin } from '../lib/origin';
+import { appOrigin, ensureInstalled, getAppStatus } from '@bloud/browser-harness';
 
 // Calino is a browser CalDAV client: a static bundle with no login of its own
 // and no storage on the server. Everything Bloud does for it happens at the

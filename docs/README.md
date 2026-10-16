@@ -14,6 +14,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Component overview + data flows | [architecture/overview.md](architecture/overview.md) |
 | The full app + container graph (generated from the catalog) | [../README.md#the-full-graph](../README.md#the-full-graph) |
 | How to add an app | [guides/contributing-apps.md](guides/contributing-apps.md) |
+| Drive the UI in a browser (the e2e suite and agent recipes) | [guides/browser-harness.md](guides/browser-harness.md) |
 | Run Bloud locally / hot-reload the control plane and dashboard | [../services/host-agent/README.md](../services/host-agent/README.md#development) |
 | Run Vaultwarden in dev (needs `BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1` over plain HTTP) | [../apps/vaultwarden/INTEGRATION.md](../apps/vaultwarden/INTEGRATION.md#plain-http) |
 | Backend debt + repayment plan | [operations/tech-debt.md](operations/tech-debt.md), the per-slice plan [plans/tech-debt-repayment.md](plans/tech-debt-repayment.md), and the closed-item record [operations/archive/tech-debt-history.md](operations/archive/tech-debt-history.md) |

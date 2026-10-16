@@ -3,8 +3,7 @@ import { test, expect } from '../lib/fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 import { createSign, generateKeyPairSync } from 'node:crypto';
 import { describeApp } from '../lib/app-suite';
-import { LoginPage } from '../lib/loginPage';
-import { appOrigin, appUrlPattern } from '../lib/origin';
+import { LoginPage, appOrigin, appUrlPattern } from '@bloud/browser-harness';
 
 const HERMES_ORIGIN = appOrigin('hermes');
 

@@ -2,8 +2,7 @@
 import { test, expect } from '../lib/fixtures';
 import type { Page } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
-import { LoginPage } from '../lib/loginPage';
-import { appOrigin, appUrlPattern } from '../lib/origin';
+import { LoginPage, appOrigin, appUrlPattern } from '@bloud/browser-harness';
 
 const PENPOT_URL = appOrigin('penpot');
 

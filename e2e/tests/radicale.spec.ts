@@ -2,9 +2,7 @@
 import { request } from '@playwright/test';
 import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
-import { openAppFromHome } from '../lib/apps';
-import { appOrigin, appUrlPattern } from '../lib/origin';
-import { TEST_CREDS } from './constants';
+import { CREDENTIALS, appOrigin, appUrlPattern, openAppFromHome } from '@bloud/browser-harness';
 
 const RADICALE_URL = appOrigin('radicale');
 
@@ -48,7 +46,7 @@ describeApp('radicale', (app) => {
       // Deliberately not pinned to 401 + `WWW-Authenticate: Basic realm=Bloud`.
       // CI returns 405 here, and the assertion is not the place to settle why;
       // what it must never do is pass on a 200 or 207.
-      const res = await ctx.fetch(`/${TEST_CREDS.USERNAME}/`, {
+      const res = await ctx.fetch(`/${CREDENTIALS.username}/`, {
         method: 'PROPFIND',
         maxRedirects: 0,
       });
@@ -66,8 +64,8 @@ describeApp('radicale', (app) => {
     const ctx = await request.newContext({
       baseURL: RADICALE_URL,
       httpCredentials: {
-        username: TEST_CREDS.USERNAME,
-        password: TEST_CREDS.PASSWORD,
+        username: CREDENTIALS.username,
+        password: CREDENTIALS.password,
       },
     });
     try {
@@ -75,7 +73,7 @@ describeApp('radicale', (app) => {
       // This is the whole integration working: Radicale searched Authentik's
       // LDAP for this login name, bound as the found user with the password
       // the client sent, and the rights model handed back that user's tree.
-      const res = await ctx.fetch(`/${TEST_CREDS.USERNAME}/`, {
+      const res = await ctx.fetch(`/${CREDENTIALS.username}/`, {
         method: 'PROPFIND',
         headers: { Depth: '0' },
       });
@@ -91,14 +89,14 @@ describeApp('radicale', (app) => {
     const ctx = await request.newContext({
       baseURL: RADICALE_URL,
       httpCredentials: {
-        username: TEST_CREDS.USERNAME,
-        password: `${TEST_CREDS.PASSWORD}-definitely-wrong`,
+        username: CREDENTIALS.username,
+        password: `${CREDENTIALS.password}-definitely-wrong`,
       },
     });
     try {
       // Same bar as the anonymous case: refused, with a 4xx. What matters is
       // that a wrong password does not buy a 207.
-      const res = await ctx.fetch(`/${TEST_CREDS.USERNAME}/`, {
+      const res = await ctx.fetch(`/${CREDENTIALS.username}/`, {
         method: 'PROPFIND',
         maxRedirects: 0,
       });
