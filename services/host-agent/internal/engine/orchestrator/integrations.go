@@ -21,6 +21,12 @@ func (o *Orchestrator) buildAppState(id string) *configurator.AppState {
 	state := &configurator.AppState{
 		DataPath:      dirs.AppDataDir(o.dataDir, o.ownerApp(id)),
 		BloudDataPath: o.dataDir,
+		PrimaryBaseURL: func() string {
+			if o.hosts != nil {
+				return o.hosts.Get().PrimaryBaseURL()
+			}
+			return o.ssoBaseURL
+		},
 	}
 
 	if o.catalog == nil {

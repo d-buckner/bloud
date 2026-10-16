@@ -4,14 +4,13 @@ package arrmcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/mcp"
 )
 
 const (
@@ -22,14 +21,6 @@ const (
 	// evidence that the config parsed and the credential Bloud published is the
 	// credential this listener accepts.
 	mcpEndpoint = "/mcp"
-
-	// acceptStreams is what an MCP streamable-HTTP client must offer.
-	acceptStreams = "application/json, text/event-stream"
-
-	// initializeRequest is the MCP handshake.
-	initializeRequest = `{"jsonrpc":"2.0","id":1,"method":"initialize",` +
-		`"params":{"protocolVersion":"2024-11-05","capabilities":{},` +
-		`"clientInfo":{"name":"bloud-readiness-probe","version":"1"}}}`
 
 	// initializedNotification is the second half of the handshake.
 	initializedNotification = `{"jsonrpc":"2.0","method":"notifications/initialized"}`
@@ -71,13 +62,13 @@ func (a *mcpAPI) waitServing(ctx context.Context, bearer string) error {
 func (a *mcpAPI) openSession(ctx context.Context, bearer string) (string, error) {
 	var session string
 	call := a.cl.POST(mcpEndpoint).
-		Body([]byte(initializeRequest), "application/json").
-		Header("Accept", acceptStreams).
+		Body([]byte(mcp.InitializeRequest), "application/json").
+		Header("Accept", mcp.AcceptStreams).
 		CaptureHeader(sessionHeader, &session)
 	if bearer != "" {
 		call = call.Header("Authorization", "Bearer "+bearer)
 	}
-	if err := call.Wait(mcpHandshakeOK).Within(30 * time.Second).Do(ctx); err != nil {
+	if err := call.Wait(mcp.HandshakeOK).Within(30 * time.Second).Do(ctx); err != nil {
 		return "", err
 	}
 
@@ -87,7 +78,7 @@ func (a *mcpAPI) openSession(ctx context.Context, bearer string) (string, error)
 	// attach the header only when one was issued.
 	note := a.cl.POST(mcpEndpoint).
 		Body([]byte(initializedNotification), "application/json").
-		Header("Accept", acceptStreams)
+		Header("Accept", mcp.AcceptStreams)
 	if session != "" {
 		note = note.Header(sessionHeader, session)
 	}
@@ -111,7 +102,7 @@ func (a *mcpAPI) waitStackHealthy(ctx context.Context, bearer string) error {
 	}
 	call := a.cl.POST(mcpEndpoint).
 		Body([]byte(stackHealthRequest), "application/json").
-		Header("Accept", acceptStreams)
+		Header("Accept", mcp.AcceptStreams)
 	if session != "" {
 		call = call.Header(sessionHeader, session)
 	}
@@ -134,7 +125,7 @@ func stackHealthOK(status int, body []byte) bool {
 	if status != http.StatusOK {
 		return false
 	}
-	msg, ok := jsonRPCMessage(body)
+	msg, ok := mcp.JSONRPCMessage(body)
 	if !ok {
 		return false
 	}
@@ -151,59 +142,4 @@ func stackHealthOK(status int, body []byte) bool {
 	structured, _ := result["structuredContent"].(map[string]any)
 	degraded, _ := structured["degraded"].([]any)
 	return len(degraded) == 0
-}
-
-// mcpHandshakeOK reports whether the response is a successful MCP
-// `initialize` result naming a server.
-func mcpHandshakeOK(status int, body []byte) bool {
-	if status != http.StatusOK {
-		return false
-	}
-	msg, ok := jsonRPCMessage(body)
-	if !ok {
-		return false
-	}
-	if _, failed := msg["error"]; failed {
-		return false
-	}
-	result, ok := msg["result"].(map[string]any)
-	if !ok {
-		return false
-	}
-	info, ok := result["serverInfo"].(map[string]any)
-	if !ok {
-		return false
-	}
-	name, _ := info["name"].(string)
-	return name != ""
-}
-
-// jsonRPCMessage pulls the JSON-RPC envelope out of a response body that may
-// arrive as bare JSON or as a server-sent-events stream.
-func jsonRPCMessage(body []byte) (map[string]any, bool) {
-	trimmed := strings.TrimSpace(string(body))
-	if trimmed == "" {
-		return nil, false
-	}
-	if strings.HasPrefix(trimmed, "{") {
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(trimmed), &msg); err == nil {
-			return msg, true
-		}
-	}
-	var last map[string]any
-	for _, line := range strings.Split(trimmed, "\n") {
-		payload, isData := strings.CutPrefix(strings.TrimSpace(line), "data:")
-		if !isData {
-			continue
-		}
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &msg); err == nil {
-			last = msg
-		}
-	}
-	if last == nil {
-		return nil, false
-	}
-	return last, true
 }

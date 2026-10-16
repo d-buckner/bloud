@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,10 +98,9 @@ const (
 // are available there), so they are delivered through the config file rather
 // than container env.
 type Configurator struct {
-	port       int
-	ssoBaseURL func() string // current Bloud base URL (host-set aware; read each PreStart)
-	logger     *slog.Logger
-	api        *hermesAPI
+	port   int
+	logger *slog.Logger
+	api    *hermesAPI
 
 	// exec runs a command inside the running Hermes container. It is the
 	// fallback reader for config.yaml, which the host agent cannot read once
@@ -142,7 +140,6 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	}
 	c := &Configurator{
 		port:             port,
-		ssoBaseURL:       deps.Address.PrimaryBaseURL,
 		logger:           logger.With("app", "hermes"),
 		exec:             deps.Runtime.Exec,
 		containerRunning: deps.Runtime.ContainerRunning,
@@ -170,31 +167,6 @@ func (c *Configurator) Name() string {
 // `port:` when registration passed 0. The conformance harness compares it
 // against metadata.yaml, because only one of the two routes traffic.
 func (c *Configurator) Port() int { return c.port }
-
-// appExternalURL returns the public URL the browser uses to reach Hermes,
-// e.g. "http://hermes.localhost:8080". The dashboard derives its OIDC
-// callback (<public_url>/auth/callback) from this, so it must match the
-// redirect URI the host-agent registered with Authentik.
-func (c *Configurator) appExternalURL() string {
-	baseURL := ""
-	if c.ssoBaseURL != nil {
-		baseURL = c.ssoBaseURL()
-	}
-	if baseURL == "" {
-		return "http://hermes.localhost:8080"
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Host == "" {
-		return "http://hermes.localhost:8080"
-	}
-	parsed.Host = appName + "." + parsed.Host
-	parsed.Path = ""
-	parsed.RawPath = ""
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	parsed.User = nil
-	return strings.TrimSuffix(parsed.String(), "/")
-}
 
 // readConfig reads Hermes' config file, falling back to the container when
 // the host-side read is refused.
@@ -369,7 +341,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 	ssoActive := state != nil && state.SSOEnabled && state.OIDC != nil
 	if ssoActive {
-		applyOIDC(doc, state.OIDC, c.appExternalURL())
+		applyOIDC(doc, state.OIDC, state.AppExternalURL(appName))
 	} else {
 		stripOIDC(doc)
 	}

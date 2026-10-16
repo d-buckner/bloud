@@ -65,48 +65,6 @@ func configuratorForServer(t *testing.T, handler http.Handler, secrets configura
 	return c
 }
 
-func TestAppExternalURL_DerivesSubdomain(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{
-		Logger: quietLogger(),
-		Address: configurator.AddressDeps{
-			PrimaryBaseURL: staticBaseURL("http://localhost:8080"),
-		},
-	})
-	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
-
-	c = NewConfigurator(0, configurator.Deps{
-		Logger: quietLogger(),
-		Address: configurator.AddressDeps{
-			PrimaryBaseURL: staticBaseURL("http://192.168.1.5:8080"),
-		},
-	})
-	assert.Equal(t, "http://affine.192.168.1.5:8080", c.appExternalURL())
-
-	c = NewConfigurator(0, configurator.Deps{
-		Logger: quietLogger(),
-		Address: configurator.AddressDeps{
-			PrimaryBaseURL: staticBaseURL("https://bloud.example.com"),
-		},
-	})
-	assert.Equal(t, "https://affine.bloud.example.com", c.appExternalURL())
-
-	// Empty/invalid base URL falls back to the dev default.
-	c = NewConfigurator(0, configurator.Deps{
-		Logger: quietLogger(),
-		Address: configurator.AddressDeps{
-			PrimaryBaseURL: staticBaseURL(""),
-		},
-	})
-	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
-	c = NewConfigurator(0, configurator.Deps{
-		Logger: quietLogger(),
-		Address: configurator.AddressDeps{
-			PrimaryBaseURL: staticBaseURL("://nonsense"),
-		},
-	})
-	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
-}
-
 func TestRenderConfigFile_WithOIDC(t *testing.T) {
 	oidc := &configurator.OIDCOutput{
 		ClientID:     "affine-client",

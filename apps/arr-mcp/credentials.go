@@ -3,13 +3,13 @@
 package arrmcp
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 
 	"golang.org/x/crypto/scrypt"
+
+	"codeberg.org/d-buckner/bloud/pkg/configurator"
 )
 
 const (
@@ -36,20 +36,13 @@ const (
 // publishing one on the first pass and reusing it afterwards: an opaque string
 // the listener checks by exact match.
 func (c *Configurator) ensureInboundToken() (string, error) {
-	if c.secrets == nil {
-		return "", nil
-	}
-	if existing := c.secrets.GetAppSecret(appName, httpTokenKey); existing != "" {
-		return existing, nil
-	}
-	token, err := randomSecret(32)
+	token, minted, err := configurator.EnsureSecret(c.secrets, appName, httpTokenKey, 32, "MCP bearer")
 	if err != nil {
-		return "", fmt.Errorf("generating the %s MCP bearer: %w", appName, err)
+		return "", err
 	}
-	if err := c.secrets.SetAppSecret(appName, httpTokenKey, token); err != nil {
-		return "", fmt.Errorf("publishing the %s bearer: %w", appName, err)
+	if minted {
+		c.logger.Info("generated the arr-mcp MCP bearer")
 	}
-	c.logger.Info("generated the arr-mcp MCP bearer")
 	return token, nil
 }
 
@@ -58,30 +51,14 @@ func (c *Configurator) ensureInboundToken() (string, error) {
 // reveal it. The config file carries only the scrypt hash of it, never the
 // plaintext.
 func (c *Configurator) ensureUIPassword() (string, error) {
-	if c.secrets == nil {
-		return "", nil
-	}
-	if existing := c.secrets.GetAppSecret(appName, clientPasswordKey); existing != "" {
-		return existing, nil
-	}
-	password, err := randomSecret(24)
+	password, minted, err := configurator.EnsureSecret(c.secrets, appName, clientPasswordKey, 24, "config UI password")
 	if err != nil {
-		return "", fmt.Errorf("generating the %s config UI password: %w", appName, err)
-	}
-	if err := c.secrets.SetAppSecret(appName, clientPasswordKey, password); err != nil {
-		return "", fmt.Errorf("publishing the %s config UI password: %w", appName, err)
-	}
-	c.logger.Info("minted the arr-mcp config UI password")
-	return password, nil
-}
-
-// randomSecret returns n bytes of entropy as URL-safe base64.
-func randomSecret(n int) (string, error) {
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
+	if minted {
+		c.logger.Info("minted the arr-mcp config UI password")
+	}
+	return password, nil
 }
 
 // scryptHash renders a password in the exact format arr-mcp's verifier reads:

@@ -44,10 +44,9 @@ const devSwitchEnv = "BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP"
 const devSwitchKey = "BLOUD_DEV_ALLOW_HTTP"
 
 type Configurator struct {
-	port       int
-	ssoBaseURL func() string // current Bloud base URL (host-set aware; read on every PreStart)
-	logger     *slog.Logger
-	api        *vaultwardenAPI
+	port   int
+	logger *slog.Logger
+	api    *vaultwardenAPI
 
 	// baseURL is a test seam: when set, the API client resolves to it instead
 	// of localhost:port. Never used to build request URLs by hand.
@@ -71,10 +70,9 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger = slog.Default()
 	}
 	c := &Configurator{
-		port:       port,
-		ssoBaseURL: deps.Address.PrimaryBaseURL,
-		logger:     logger.With("app", appName),
-		getenv:     os.Getenv,
+		port:   port,
+		logger: logger.With("app", appName),
+		getenv: os.Getenv,
 	}
 	if deps.HTTP != nil {
 		c.api = newAPI(deps.HTTP, func() string {
@@ -102,14 +100,6 @@ func (c *Configurator) Name() string {
 // `port:` when registration passed 0. The conformance harness compares it
 // against metadata.yaml, because only one of the two routes traffic.
 func (c *Configurator) Port() int { return c.port }
-
-// appExternalURL returns the public URL the browser uses to reach Vaultwarden,
-// e.g. "http://vaultwarden.localhost:8080". It is the app's DOMAIN, from which
-// Vaultwarden derives its OIDC redirect URI, so it must match the redirect URI
-// base the host-agent registers (app subdomain + callbackPath).
-func (c *Configurator) appExternalURL() string {
-	return configurator.AppExternalURL(c.ssoBaseURL, appName)
-}
 
 // devAllowHTTP reports whether this install has opted into the plain-HTTP dev
 // switch: BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP is set on the host-agent AND the app's
@@ -149,7 +139,7 @@ func (c *Configurator) devAllowHTTP(publicURL string) bool {
 func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	path := filepath.Join(state.DataPath, "config", envFileName)
 
-	publicURL := c.appExternalURL()
+	publicURL := state.AppExternalURL(appName)
 	allowHTTP := c.devAllowHTTP(publicURL)
 	content, err := renderEnv(publicURL, state.OIDC, allowHTTP)
 	if err != nil {
@@ -190,7 +180,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	if err != nil {
 		return fmt.Errorf("verifying SSO is enabled in the running app: %w", err)
 	}
-	if err := c.api.probeAuthorize(ctx, c.appExternalURL(), token); err != nil {
+	if err := c.api.probeAuthorize(ctx, state.AppExternalURL(appName), token); err != nil {
 		return fmt.Errorf("verifying OIDC authorization redirect: %w", err)
 	}
 	c.logger.Info("OIDC sign-in verified", "issuer", state.OIDC.IssuerURL)

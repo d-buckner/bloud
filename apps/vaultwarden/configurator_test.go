@@ -247,22 +247,25 @@ func TestPreStart_UnchangedConfigDoesNotRestart(t *testing.T) {
 
 func TestPreStart_FollowsSSOAndHostChanges(t *testing.T) {
 	base := "http://localhost:8080"
-	c := NewConfigurator(0, configurator.Deps{
-		Logger: quietLogger(),
-		Address: configurator.AddressDeps{
-			PrimaryBaseURL: func() string { return base },
-		},
-	})
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
 	dir := t.TempDir()
 	ctx := context.Background()
+	state := func(oidc *configurator.OIDCOutput) *configurator.AppState {
+		return &configurator.AppState{
+			DataPath:       dir,
+			SSOEnabled:     oidc != nil,
+			OIDC:           oidc,
+			PrimaryBaseURL: func() string { return base },
+		}
+	}
 
-	_, err := c.PreStart(ctx, appState(dir, nil))
+	_, err := c.PreStart(ctx, state(nil))
 	require.NoError(t, err)
 	assert.NotContains(t, readEnvFile(t, dir), "SSO_ENABLED")
 
 	// SSO gets wired later (Authentik installed after Vaultwarden): the file
 	// changes and the container restarts.
-	changed, err := c.PreStart(ctx, appState(dir, testOIDC()))
+	changed, err := c.PreStart(ctx, state(testOIDC()))
 	require.NoError(t, err)
 	assert.True(t, changed.RestartNeeded)
 	assert.Contains(t, readEnvFile(t, dir), "SSO_ENABLED='true'")
@@ -270,7 +273,7 @@ func TestPreStart_FollowsSSOAndHostChanges(t *testing.T) {
 	// The primary host changes in the UI: DOMAIN follows it without a restart
 	// of the host-agent, because the base URL is read on every PreStart.
 	base = "http://bloud.local"
-	changed, err = c.PreStart(ctx, appState(dir, testOIDC()))
+	changed, err = c.PreStart(ctx, state(testOIDC()))
 	require.NoError(t, err)
 	assert.True(t, changed.RestartNeeded)
 	assert.Contains(t, readEnvFile(t, dir), "DOMAIN='http://vaultwarden.bloud.local'")
@@ -493,8 +496,10 @@ func TestPreStart_DevSwitchIsOptIn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := switchedConfigurator(t, tc.value, "http://localhost:8080")
 			dir := t.TempDir()
+			state := appState(dir, testOIDC())
+			state.PrimaryBaseURL = staticBaseURL("http://localhost:8080")
 
-			_, err := c.PreStart(context.Background(), appState(dir, testOIDC()))
+			_, err := c.PreStart(context.Background(), state)
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, strings.Contains(readEnvFile(t, dir), devSwitchKey+"='true'"))
@@ -515,8 +520,10 @@ func TestPreStart_DevSwitchIsRefusedOffLocalhost(t *testing.T) {
 		t.Run(base, func(t *testing.T) {
 			c := switchedConfigurator(t, "1", base)
 			dir := t.TempDir()
+			state := appState(dir, testOIDC())
+			state.PrimaryBaseURL = staticBaseURL(base)
 
-			_, err := c.PreStart(context.Background(), appState(dir, testOIDC()))
+			_, err := c.PreStart(context.Background(), state)
 
 			require.NoError(t, err)
 			assert.NotContains(t, readEnvFile(t, dir), devSwitchKey)

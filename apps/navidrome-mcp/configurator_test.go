@@ -143,17 +143,18 @@ func TestPreStartWithoutSecretsProviderIsStable(t *testing.T) {
 func TestBearerMintedOnce(t *testing.T) {
 	secrets := newFakeSecrets()
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets})
+	state := boundState(t.TempDir())
 
-	first, err := c.ensureBearer()
+	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
+	first := secrets.GetAppSecret(appName, httpTokenKey)
 	require.NotEmpty(t, first)
 	require.Equal(t, 1, secrets.writes)
 
-	second, err := c.ensureBearer()
+	_, err = c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	require.Equal(t, first, second)
 	require.Equal(t, 1, secrets.writes, "a second pass must mint nothing")
-	require.Equal(t, first, c.currentBearer())
+	require.Equal(t, first, secrets.GetAppSecret(appName, httpTokenKey))
 }
 
 // TestPreStartFileModes: the env file holds the music server's account password,

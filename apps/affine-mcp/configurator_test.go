@@ -20,6 +20,7 @@ import (
 	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/pkg/mcpwrapper"
 )
 
 func quietLogger() *slog.Logger {
@@ -83,10 +84,10 @@ func configPath(dataDir string) string {
 	return filepath.Join(dataDir, configDirName, configSubdir, configFileName)
 }
 
-func configuratorForServer(t *testing.T, url string) *Configurator {
+func configuratorForServer(t *testing.T, url string) *mcpwrapper.Wrapper {
 	t.Helper()
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
-	c.baseURL = url
+	c.SetBaseURL(url)
 	return c
 }
 

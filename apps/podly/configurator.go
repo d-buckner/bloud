@@ -20,9 +20,7 @@ package podly
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -150,7 +148,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 
 	signingKey := readEnvFile(path)["PODLY_SECRET_KEY"]
 	if signingKey == "" {
-		minted, err := randomToken(signingKeyBytes)
+		minted, err := configurator.RandomToken(signingKeyBytes)
 		if err != nil {
 			return configurator.NoRestart(), fmt.Errorf("%s: mint session key: %w", appName, err)
 		}
@@ -395,7 +393,7 @@ func (c *Configurator) RevokeSessions(_ context.Context, state *configurator.App
 		return fmt.Errorf("%s: reading %s: %w", appName, envFileName, err)
 	}
 
-	minted, err := randomToken(signingKeyBytes)
+	minted, err := configurator.RandomToken(signingKeyBytes)
 	if err != nil {
 		return fmt.Errorf("%s: mint session key: %w", appName, err)
 	}
@@ -441,18 +439,14 @@ func (c *Configurator) servicePassword() (string, error) {
 // publishing one on first use. The reveal endpoint reads the same key, which is
 // what makes the value Bloud hands the app the same value it shows a person.
 func (c *Configurator) ensureClientPassword() (string, error) {
-	if existing := c.secrets.GetAppSecret(appName, clientPasswordSecret); existing != "" {
-		return existing, nil
-	}
-	minted, err := randomToken(clientPasswordBytes)
+	password, minted, err := configurator.EnsureSecret(c.secrets, appName, clientPasswordSecret, clientPasswordBytes, "client password")
 	if err != nil {
-		return "", fmt.Errorf("%s: generate client password: %w", appName, err)
+		return "", err
 	}
-	if err := c.secrets.SetAppSecret(appName, clientPasswordSecret, minted); err != nil {
-		return "", fmt.Errorf("%s: persist client password: %w", appName, err)
+	if minted {
+		c.logger.Info("minted the sign-in password", "secret", clientPasswordSecret)
 	}
-	c.logger.Info("minted the sign-in password", "secret", clientPasswordSecret)
-	return minted, nil
+	return password, nil
 }
 
 // humanUserExists asks the app whether the sign-in account is there. It is
@@ -573,14 +567,4 @@ func whisperDigest(w whisperSection) string {
 		h.Write([]byte{0})
 	}
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-// randomToken returns n bytes of cryptographic randomness as unpadded
-// base64url: safe unquoted in an env file and safe to type or paste.
-func randomToken(n int) (string, error) {
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

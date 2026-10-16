@@ -337,27 +337,6 @@ func testOIDC() *configurator.OIDCOutput {
 	}
 }
 
-func TestAppExternalURL_DerivesSubdomain(t *testing.T) {
-	cases := map[string]string{
-		"http://localhost:8080":            "http://paperless-ngx.localhost:8080",
-		"http://192.168.1.5:8080":          "http://paperless-ngx.192.168.1.5:8080",
-		"https://bloud.example.com":        "https://paperless-ngx.bloud.example.com",
-		"":                                 "http://paperless-ngx.localhost:8080",
-		"://nonsense":                      "http://paperless-ngx.localhost:8080",
-		"http://localhost:8080/":           "http://paperless-ngx.localhost:8080",
-		"http://localhost:8080/dashboard/": "http://paperless-ngx.localhost:8080",
-	}
-	for base, want := range cases {
-		c := NewConfigurator(0, configurator.Deps{
-			Logger: quietLogger(),
-			Address: configurator.AddressDeps{
-				PrimaryBaseURL: staticBaseURL(base),
-			},
-		})
-		assert.Equal(t, want, c.appExternalURL(), "base URL %q", base)
-	}
-}
-
 func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 	c, dataPath := testConfigurator(t, nil)
 	state := appState(dataPath, testOIDC())
