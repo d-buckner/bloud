@@ -7,8 +7,13 @@ drives its first-run wizard through its own API, and wires the PVRs (Sonarr,
 Radarr) that fulfil the requests, so users land on a usable request UI rather
 than a setup form.
 
-- Image: `ghcr.io/seerr-team/seerr:v3.4.1` (pinned; latest release, published
-  2026-07-30, digest `sha256:f4768de5f616248d723e05891f3345a1402123775d03bf0890dbfedc0831bda1`)
+- Image: `ghcr.io/seerr-team/seerr:v3.4.1` (pinned; digest `sha256:f4768de5f616248d723e05891f3345a1402123775d03bf0890dbfedc0831bda1`).
+  Seerr 3.5.0 is **not** taken yet: it removes the `sync` and `enable` query
+  parameters from `GET /settings/jellyfin/library`, which is the call
+  `syncJellyfinLibraries` in `api.go` makes. The bump needs that client moved to
+  `POST /settings/jellyfin/library/sync` and `PUT /settings/jellyfin/library/{id}`
+  first. See the 3.5.0 release note, *Breaking change: Plex and Jellyfin library
+  API endpoints*.
 - Container: `apps-seerr` on `apps-net`, port `5055` → `5055`
 - Volume: `{{appDataDir}}/config` → `/app/config` (settings.json, SQLite
   database, logs, cache; SQLite is Seerr's default, so no database container)

@@ -59,7 +59,7 @@ provides:
 
 containers:
   - name: apps-homeassistant
-    image: docker.io/homeassistant/home-assistant:2026.9.0
+    image: docker.io/homeassistant/home-assistant:2026.10.1
     network: apps-net
     # always: homeassistant.restart (used by the configurator after config
     # changes) exits the process; the restart policy brings the container back.

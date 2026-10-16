@@ -157,7 +157,7 @@ containers:
     # The upstream image is built with the bcrypt, argon2, and ldap extras
     # (see .github/workflows/docker-publish.yml in Kozea/Radicale), which is
     # what puts ldap3 in the venv this app's auth backend imports.
-    image: ghcr.io/kozea/radicale:3.8.1
+    image: ghcr.io/kozea/radicale:3.8.3
     network: apps-net
     restartPolicy: always
     # Replaces the image's default `--hosts 0.0.0.0:5232,...`, so the bind

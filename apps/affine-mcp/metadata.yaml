@@ -53,7 +53,7 @@ provides:
 
 containers:
   - name: apps-affine-mcp
-    image: ghcr.io/dawncr0w/affine-mcp-server:3.8.5
+    image: ghcr.io/dawncr0w/affine-mcp-server:3.9.1
     network: apps-net
     restartPolicy: always
     ports:

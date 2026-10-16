@@ -4,7 +4,7 @@
 
 The catalog ID is `dav-mcp`, named after the upstream package it wraps:
 [`PhilflowIO/dav-mcp`](https://github.com/PhilflowIO/dav-mcp), image
-`ghcr.io/philflowio/dav-mcp:4.1.2`.
+`ghcr.io/philflowio/dav-mcp:4.3.1`.
 
 It exposes 27 MCP tools over the CalDAV and CardDAV that Radicale already
 serves: calendars, events, to-dos, contacts, address books, free/busy queries.

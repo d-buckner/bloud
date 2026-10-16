@@ -53,7 +53,7 @@ containers:
       retries: 5
 
   - name: apps-authentik-server
-    image: ghcr.io/goauthentik/server:2025.10.3
+    image: ghcr.io/goauthentik/server:2025.10.4
     command: [server]
     # Authentik's workers mmap /dev/shm. At podman's 64MB default a full tmpfs
     # sends a gunicorn worker SIGBUS on its next write to a mapped page: the
@@ -98,7 +98,7 @@ containers:
       - apps-authentik-redis
 
   - name: apps-authentik-worker
-    image: ghcr.io/goauthentik/server:2025.10.3
+    image: ghcr.io/goauthentik/server:2025.10.4
     command: [worker]
     # Same shared-memory story as apps-authentik-server: the worker process is
     # the one doing the mmap work that fills /dev/shm in the first place.
@@ -125,7 +125,7 @@ containers:
       - apps-authentik-redis
 
   - name: apps-authentik-ldap
-    image: ghcr.io/goauthentik/ldap:2025.10.3
+    image: ghcr.io/goauthentik/ldap:2025.10.4
     networks:
       - authentik-internal
       - apps-net

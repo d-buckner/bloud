@@ -12,7 +12,11 @@ is not `https://`, and Bloud serves apps over plain HTTP today. Until Bloud
 serves HTTPS, the web vault works only with an opt-in development switch
 (see [Plain HTTP](#plain-http)). Everything server-side works without it.
 
-- Image: `docker.io/vaultwarden/server:1.37.3` (pinned; bundles web vault 2026.7.0)
+- Image: `docker.io/vaultwarden/server:1.37.4` (pinned). 1.37.4 is a security
+  release: it fixes seven advisories, the highest rated High (organization member
+  revocation, GHSA-69q9-v8p6-xvx3). Its upgrade notes change `IP_HEADER` client-IP
+  selection and remove retired `EXPERIMENTAL_CLIENT_FEATURE_FLAGS` names; Bloud
+  sets neither, so neither reaches this deployment.
 - SSO strategy: `native-oidc` (callback `/identity/connect/oidc-signin`)
 - Public URL: `http://vaultwarden.localhost:8080` (app subdomain on the Bloud base
   domain; `localhost:8222` direct for debugging)

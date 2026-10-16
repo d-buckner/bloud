@@ -68,7 +68,7 @@ containers:
   # parses them. The chromium route is used for .eml, so scripts and external
   # content are switched off and file access is restricted (upstream defaults).
   - name: apps-paperless-ngx-gotenberg
-    image: docker.io/gotenberg/gotenberg:8.37
+    image: docker.io/gotenberg/gotenberg:8.38
     network: paperless-internal
     restartPolicy: always
     command:
@@ -104,7 +104,7 @@ containers:
       retries: 30
 
   - name: apps-paperless-ngx
-    image: ghcr.io/paperless-ngx/paperless-ngx:3.2.0
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.3.1
     networks:
       - paperless-internal
       - apps-net

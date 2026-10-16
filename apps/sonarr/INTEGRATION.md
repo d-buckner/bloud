@@ -8,7 +8,7 @@ container behind Traefik forward-auth, with the instance put into Servarr's
 own "External" authentication mode so it never presents a login form of its
 own.
 
-- Image: `lscr.io/linuxserver/sonarr:4.0.20.3014-ls325` (pinned, verified on GHCR)
+- Image: `lscr.io/linuxserver/sonarr:4.0.20.3014-ls329` (pinned, verified on GHCR)
 - SSO strategy: `forward-auth` (Authentik)
 - Route: `http://sonarr.<host>:<traefik port>` → `http://localhost:8989`
 - Node / container: `apps-sonarr`, network `apps-net`

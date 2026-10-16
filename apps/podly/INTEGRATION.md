@@ -8,7 +8,7 @@ them, and republishes the result as an RSS feed a podcast player can subscribe
 to. It is the first catalog app whose job is to rewrite media rather than serve
 it.
 
-- Image: `ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.5-lite` (pinned)
+- Image: `ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.7-lite` (pinned)
 - SSO strategy: `none`. The human credential is a `clientPassword`
   (`reveal: once`, `rotate: bloud`)
 - Port: `5001`, published to the host and routed by Traefik

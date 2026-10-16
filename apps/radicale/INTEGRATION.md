@@ -8,7 +8,7 @@ phone rather than by a browser. Bloud installs it as one container, generates
 its INI configuration, and wires authentication to the Bloud identity
 provider (Authentik) through the LDAP outpost.
 
-- Image: `ghcr.io/kozea/radicale:3.8.1` (pinned)
+- Image: `ghcr.io/kozea/radicale:3.8.3` (pinned)
 - SSO strategy: `ldap`
 - Public URL: `http://radicale.localhost:8080` (app subdomain on the Bloud
   base domain; `localhost:5232` direct for debugging)

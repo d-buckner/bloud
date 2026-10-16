@@ -81,7 +81,7 @@ provides:
 
 containers:
   - name: apps-hermes-webui
-    image: ghcr.io/nesquena/hermes-webui:0.52.113
+    image: ghcr.io/nesquena/hermes-webui:0.52.495
     network: apps-net
     restartPolicy: always
     # The image's own init is a bash script that does a uid/gid handoff before

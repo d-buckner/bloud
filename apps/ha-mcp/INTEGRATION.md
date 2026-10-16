@@ -4,7 +4,7 @@
 
 The catalog ID is `ha-mcp`, named after the upstream project it runs:
 [`homeassistant-ai/ha-mcp`](https://github.com/homeassistant-ai/ha-mcp), image
-`ghcr.io/homeassistant-ai/ha-mcp:8.6.0`.
+`ghcr.io/homeassistant-ai/ha-mcp:8.7.0`.
 
 It exposes Home Assistant to an MCP harness as a tool namespace: entity and
 device search, state reads, automation, script, scene and dashboard authoring,
@@ -15,8 +15,8 @@ The app is two containers:
 
 | Node | Image | Publishes | Owns |
 |---|---|---|---|
-| `apps-ha-mcp` | `ghcr.io/homeassistant-ai/ha-mcp:8.6.0` | nothing | the MCP server |
-| `apps-ha-mcp-gate` | `docker.io/library/nginx:1.29-alpine` | 8086 | the bearer check, and the only door |
+| `apps-ha-mcp` | `ghcr.io/homeassistant-ai/ha-mcp:8.7.0` | nothing | the MCP server |
+| `apps-ha-mcp-gate` | `docker.io/library/nginx:1.31-alpine` | 8086 | the bearer check, and the only door |
 
 Each node has its own configurator, the way Radicale's pimsync sidecar does: a
 node's config is written by the pass that owns the container reading it.

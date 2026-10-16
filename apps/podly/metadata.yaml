@@ -107,7 +107,7 @@ containers:
   # web app. Both are in one container by upstream's design, so there is nothing
   # for the graph to order here.
   - name: apps-podly
-    image: ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.5-lite
+    image: ghcr.io/podly-pure-podcasts/podly-pure-podcasts:2.7.7-lite
     network: apps-net
     restartPolicy: always
     environment:

@@ -54,7 +54,7 @@ sso:
 
 containers:
   - name: apps-prowlarr
-    image: lscr.io/linuxserver/prowlarr:2.6.5.5623-ls161
+    image: lscr.io/linuxserver/prowlarr:2.6.5.5623-ls163
     network: apps-net
     restartPolicy: always
     environment:

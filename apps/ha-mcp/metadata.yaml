@@ -57,7 +57,7 @@ containers:
   - name: apps-ha-mcp
     # ha-mcp 8.6.0. The image tag carries no `v` prefix: upstream publishes
     # `v8.6.0` on GitHub but the registry tag is the bare version.
-    image: ghcr.io/homeassistant-ai/ha-mcp:8.6.0
+    image: ghcr.io/homeassistant-ai/ha-mcp:8.7.0
     # The image's default command is the stdio server. `ha-mcp-web` is the
     # streamable-HTTP entry point, and it is the standard-mode one: the OAuth
     # entry point (`ha-mcp-oauth`) exists to collect a token from a human at a
@@ -130,7 +130,7 @@ containers:
   # own, and this is the smallest upstream artifact that does exactly one thing:
   # one header comparison and one proxy. See INTEGRATION.md.
   - name: apps-ha-mcp-gate
-    image: docker.io/library/nginx:1.29-alpine
+    image: docker.io/library/nginx:1.31-alpine
     network: apps-net
     # The server's own endpoint path is a secret this app mints, and the server
     # node's PreStart is what publishes it, so the gate is ordered after it.

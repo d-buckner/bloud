@@ -7,7 +7,7 @@ behind Caddy with no backend of its own. Bloud installs it as one container,
 puts it behind the identity provider, and requires a CalDAV server to be
 present, because a calendar client with nothing to read is an empty window.
 
-- Image: `ghcr.io/ivan-malinovski/calino:0.36.0` (pinned)
+- Image: `ghcr.io/ivan-malinovski/calino:0.39.1` (pinned)
 - SSO strategy: `forward-auth`
 - Required integration: `caldav` → Radicale
 - Public URL: `http://calino.localhost:8080` (app subdomain on the Bloud
