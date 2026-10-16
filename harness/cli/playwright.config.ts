@@ -17,6 +17,11 @@ export default defineConfig({
   reporter: [['list']],
   timeout: 5 * 60_000,
   use: {
+    // The public origin, so a relative path in the harness (`page.goto('/')`
+    // during sign-in) resolves. It matches the library default in
+    // `src/config.ts`; a proxied deployment overrides it with `BLOUD_URL`. The
+    // e2e config sets the same value for the same reason.
+    baseURL: process.env.BLOUD_URL ?? 'http://localhost:8080',
     ...devices['Desktop Chrome'],
     // A recipe reports what it found through stdout, so the traces that the
     // e2e suite keeps would only slow the run down.
