@@ -54,14 +54,26 @@ describeApp('opengym', (app) => {
     const gym = await openAppFromHome(app.page, 'openGym');
     try {
       await expect(gym).toHaveURL(appUrlPattern('opengym', '/'), { timeout: 60_000 });
-      await gym.getByRole('button', { name: /sign in with password/i }).click();
+      await gym.getByRole('button', { name: /create new profile/i }).click();
+
+      // The sheet puts the passkey branch first wherever the browser can make one,
+      // and a headless Chromium on a `localhost` name can. The segment only exists
+      // when both paths are available: where the browser cannot make a passkey, the
+      // password form renders on its own. So the choice is taken when it is offered
+      // and skipped when it is not.
+      const choosePassword = gym.getByRole('button', { name: /^password$/i });
+      if (await choosePassword.count()) await choosePassword.click();
 
       // A run-unique name, because registration is open on a fresh install and
       // `./bloud e2e lifecycle` runs this spec twice against one runtime. The app
       // refuses a name two profiles already share.
       await gym.getByPlaceholder('Your name').fill(`E2E ${Date.now()}`);
-      await gym.getByPlaceholder(/passphrase/).fill('bloud e2e passphrase');
-      await gym.getByRole('button', { name: /create account/i }).click();
+      // The two password fields share a type and differ only by their `name`
+      // attribute, so the repeat field cannot be found by placeholder: "Password"
+      // is also a button label on this same sheet.
+      await gym.locator('input[name="new-password"]').fill('bloud e2e passphrase');
+      await gym.locator('input[name="new-password-again"]').fill('bloud e2e passphrase');
+      await gym.getByRole('button', { name: /^create profile$/i }).click();
 
       // The login overlay is replaced by the app on success, and the tab bar is what
       // an unauthenticated visitor never sees. A refused origin or a proxy that never

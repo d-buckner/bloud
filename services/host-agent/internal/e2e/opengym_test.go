@@ -83,15 +83,15 @@ func TestOpenGymTurnsOnTheSignInsBloudMeansToOffer(t *testing.T) {
 		t.Fatalf("GET /api/config: status %d, want 200: %s", resp.StatusCode, body)
 	}
 
+	// The document is flat: the config fields sit at the top level next to the media
+	// sub-object, not under a `config` key.
 	var cfg struct {
-		Config struct {
-			PasswordLogin *bool `json:"password_login"`
-		} `json:"config"`
+		PasswordLogin *bool `json:"password_login"`
 	}
 	if err := json.Unmarshal(body, &cfg); err != nil {
 		t.Fatalf("decoding /api/config: %v\n%s", err, body)
 	}
-	if cfg.Config.PasswordLogin == nil || !*cfg.Config.PasswordLogin {
+	if cfg.PasswordLogin == nil || !*cfg.PasswordLogin {
 		t.Fatalf("the app does not offer password sign-in although PASSWORD_LOGIN=1 is declared: %s", body)
 	}
 }

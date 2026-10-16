@@ -145,11 +145,20 @@ role belongs to nobody until someone reads the docs and edits `db.json` by hand.
   and `uploads/` into the one mounted directory. Confirmed on a fresh run: `secret` and
   `vapid.json` appear in the mounted host directory, mode 600.
 - `GET /api/health` is public and answers `{"ok":true,"users":0,"writable":true}`.
-  `GET /api/config` reports `password_login: true`, which is how a test can prove
-  `PASSWORD_LOGIN` reached the container without reading a config file.
+  `GET /api/config` answers its fields at the top level, not under a `config` key, and
+  reports `password_login: true`. That is how a test can prove `PASSWORD_LOGIN` reached
+  the container without reading a config file.
 - `POST /api/register/password` with a name and a password of at least 10 characters
   creates the profile and answers `{"user":{"id":"...","admin":true}}` on a fresh
   install, which is `FIRST_USER_ADMIN=1` observed from outside.
+- In the browser the register flow sits behind **Create new profile**, not behind **Sign
+  in with password**, and the sheet opens on the passkey branch wherever the browser can
+  make one. A headless Chromium on a `localhost` name can, so a test that wants the
+  password form has to pick the **Password** segment first, and that segment exists only
+  when both paths are available. The two password fields differ only by their `name`
+  attribute (`new-password`, `new-password-again`); "Password" is also a button label on
+  the same sheet, so a placeholder lookup is ambiguous there. All of this is measured
+  against the pinned image, not read from a newer `main`.
 - The API refuses a same-origin check when the request's `Origin` does not equal
   `ORIGIN`. Health and config requests carry no `Origin`, so a host-side probe is not
   affected by the value.
