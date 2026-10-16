@@ -605,7 +605,7 @@ traversal) holds the connection. Measured on the pinned plugin:
   "mode": "local_external",
   "api_url": "http://localhost:9999",
   "api_key": "<the bearer the provider published>",
-  "bank_id": "hermes",
+  "bank_id": "default",
   "memory_mode": "hybrid"
 }
 ```
@@ -614,7 +614,8 @@ traversal) holds the connection. Measured on the pinned plugin:
 name the server Bloud runs, and a rotated bearer or a moved address has to land.
 `bank_id` and `memory_mode` are adopt-once, because they say where the agent's
 memory lives and how much of it is injected, and an operator who changed either
-means it.
+means it. Bloud writes `default` for the bank: that is Hindsight's own bank, where
+the operator's memory already is, rather than a second one named after the harness.
 
 The address is the **host loopback**, for the same reason the MCP entries use it:
 Hermes runs in the host network namespace, so a container name does not resolve,
