@@ -4,7 +4,7 @@
 `apps/arr-mcp`, `apps/ha-mcp`, `apps/navidrome-mcp`, and `apps/penpot` (the app's
 own server), all consumed by Hermes. AFFiNE's own MCP server is deliberately not
 exposed.
-**Last updated:** 2026-10-14
+**Last updated:** 2026-10-16
 **Roadmap:** [plans/archive/mcp-integrations.md](../plans/archive/mcp-integrations.md),
 [plans/arr-mcp-provider.md](../plans/archive/arr-mcp-provider.md) for a provider that
 fills several contracts at once,
@@ -646,6 +646,34 @@ hand-chosen model.
 
 The whole map is re-rendered each pass, so a removed provider leaves no entry
 behind rather than lingering as a stale namespace.
+
+### Tool Search: how the namespaces reach the model
+
+The same pass that writes a namespace pins Hermes' progressive-disclosure layer
+on:
+
+```yaml
+tools:
+  tool_search:
+    enabled: "on"
+```
+
+With the layer active, Hermes leaves the MCP tools out of the model-facing tools
+array and offers `tool_search`, `tool_describe`, and `tool_call` instead. The
+model loads one schema when it needs one. The catalog needs this: `affine-mcp`
+publishes 106 tools, `ha-mcp` 77, and `dav-mcp` 27, and the model would otherwise
+receive all of those schemas on every turn.
+
+Hermes defers MCP tools by default, so the saving already happens without the pin.
+Bloud writes it because the default is `auto`, which the upstream documentation
+says is an alias of `on` today and reserves for a future mode. Bloud wires the
+namespaces, so Bloud states the policy it depends on. An operator who sets the
+switch keeps their own value, including `off`, and Bloud removes only the value it
+wrote when the last provider is uninstalled.
+
+[apps/hermes/INTEGRATION.md](../../apps/hermes/INTEGRATION.md) carries the full
+rationale, the cost the bridge still charges, and the managed-scope design Bloud
+rejected.
 
 ---
 
