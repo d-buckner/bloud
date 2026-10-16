@@ -20,7 +20,7 @@ import { join } from 'node:path';
 
 const SRC = new URL('../../..', import.meta.url).pathname;
 const source = readFileSync(join(SRC, 'lib/components/ExternalAppModal.svelte'), 'utf8');
-const page = readFileSync(join(SRC, 'routes/+page.svelte'), 'utf8');
+const page = readFileSync(join(SRC, 'lib/components/HomeView.svelte'), 'utf8');
 
 describe('ExternalAppModal: what it opens on', () => {
 	it('defaults to the remote app tab', () => {

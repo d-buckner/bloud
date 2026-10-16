@@ -122,22 +122,70 @@ button {
    the whole page, and a result count would be noise next to the grid it
    describes. Clipping with clip-path rather than `display: none` because a
    hidden element is not announced at all. */
-/* The settings sections share one measure and one heading size.
+/* The settings sections share one heading size.
 
-   This lives here rather than in a component because Svelte scopes a component's
-   CSS to that component: a rule written in one settings section styles only that
-   section. Two of the three carried a copy of this rule and the third carried
-   none, so it rendered uncapped with a browser-default `h2` while its neighbours
-   were capped and sized. A global sheet is the one place a rule can reach every
-   section, and the only place a fourth section cannot forget it. */
-.section {
-	max-width: 560px;
-}
-
+   The measure is not capped here. The page container caps the width, and a
+   section fills the column it is given: on a wide screen the settings grid puts
+   two short sections side by side, and a 560px cap inside a 600px column only
+   re-introduced the empty right side this pass removed. Each form still caps
+   its own controls. */
 .section h2 {
 	margin: 0 0 var(--space-xs) 0;
 	font-size: 1.125rem;
 	font-weight: 500;
+}
+
+/* One page container for every route.
+
+   Home, Catalog, and Settings used to carry three different width rules: Home
+   was centered at 1300px, Catalog filled the window, and Settings was a 560px
+   column pinned to the left gutter. Switching routes moved the content's left
+   edge and its right edge, which is what made the app look broken on a wide
+   screen. One container means the header rule, the section rules, and the
+   content all start and end at the same two lines. */
+.page {
+	width: 100%;
+	max-width: 1280px;
+	margin: 0 auto;
+	padding: var(--space-xl) var(--space-lg);
+}
+
+/* The shared page header. The rule under it is the same width as the sections
+   below, so the page reads as one column instead of a long band over a narrow
+   ribbon. */
+.page-header {
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: var(--space-lg);
+	margin-bottom: var(--space-lg);
+	padding-bottom: var(--space-md);
+	border-bottom: 1px solid var(--color-border);
+}
+
+.page-header h1 {
+	margin: 0;
+	font-size: 1.75rem;
+	font-weight: 500;
+}
+
+.page-header .subtitle {
+	margin: var(--space-xs) 0 0;
+	font-family: var(--font-sans);
+	font-size: 0.8125rem;
+	color: var(--color-text-muted);
+}
+
+@media (max-width: 640px) {
+	.page {
+		padding: var(--space-lg) var(--space-md);
+	}
+
+	.page-header {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: var(--space-md);
+	}
 }
 
 .visually-hidden {

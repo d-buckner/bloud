@@ -37,42 +37,37 @@
 	</header>
 
 	{#if ready}
-		<AddressSettingsSection />
-		<TimezoneSettingsSection />
-		<AISettingsSection />
-		<UsersSettingsSection />
+		<div class="settings-grid">
+			<AddressSettingsSection />
+			<TimezoneSettingsSection />
+			<AISettingsSection />
+			<UsersSettingsSection />
+		</div>
 	{/if}
 </div>
 
 <style>
-	.page {
-		padding: var(--space-2xl) var(--space-xl);
+	/* The four sections flow into two columns once the window is wide enough for
+	   both. A single 560px column left half the window empty on a large display,
+	   which is the page with the most content using the least width. The two
+	   short forms pair up; the AI and Users blocks span the full width because
+	   each is a list, not a form. */
+	.settings-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: var(--space-2xl) var(--space-xl);
+		align-items: start;
 	}
 
-	.page-header {
-		margin-bottom: var(--space-2xl);
-		padding-bottom: var(--space-xl);
-		border-bottom: 1px solid var(--color-border);
+	.settings-grid :global(.ai-section),
+	.settings-grid :global(.users-section) {
+		grid-column: 1 / -1;
 	}
 
-	.header-content h1 {
-		margin: 0;
-		font-size: 1.75rem;
-		font-weight: 500;
-	}
-
-	.subtitle {
-		margin: var(--space-xs) 0 0 0;
-		color: var(--color-text-muted);
-		font-style: italic;
-	}
-
-	/* Same trim as the catalog: 32px of gutter a side is a sixth of a 390px
-	   screen, and the settings sections are a single 560px measure that wants the
-	   whole width once there is not enough for the gutter. */
-	@media (max-width: 480px) {
-		.page {
-			padding: var(--space-lg) var(--space-md);
+	@media (max-width: 900px) {
+		.settings-grid {
+			grid-template-columns: 1fr;
+			gap: var(--space-xl);
 		}
 	}
 </style>

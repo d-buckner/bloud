@@ -38,15 +38,33 @@ install detail modal, because investigation is the point. The tile shows only
 the app name while installing; the icon carries the spinner, and live phase
 detail lives in the modal.
 
+## The catalog
+
+The catalog is a modal over the dashboard, not a route with a layout of its
+own. It opens from **Browse catalog** in the Home header. `/catalog` still
+exists: it renders the dashboard with the modal open, so the address is
+shareable and the browser Back button closes the modal. Closing returns to
+`/`.
+
+The modal has two views. The list is the search field, the category filters,
+and the card grid. Choosing a card swaps the list for that app's page in the
+same dialog, and **Back** swaps it back. Before, the catalog was a route and
+the app detail was a second modal stacked on top of it, so the detail covered
+the list it came from and the only way back was to close it.
+
+The app page is `AppDetail.svelte`, without a dialog of its own.
+`CatalogModal` owns the dialog and the two views, and names the dialog by the
+heading that is showing.
+
 ## External tiles
 
 A launcher or a remote install of a catalog app renders as a `LauncherTile`
 and is not an installed app, so it gets its own affordances rather than the
 lifecycle ones:
 
-- **Add** lives in the page header grouped with **Add widget** in one action
-  cluster, not in the catalog. An external app is not a catalog entry, and
-  putting it in the catalog list made it look like one: the same card shape,
+- **Add** lives in the page header behind one **Add** menu with **Widget** and
+  **External app**, not in the catalog. An external app is not a catalog entry,
+  and putting it in the catalog list made it look like one: the same card shape,
   the same place you go to install, and no install behind it.
 - **Right-click** opens a menu with **Configure** and **Remove**. Configure
   edits the record the operator declared: name and endpoint always, the icon
@@ -74,7 +92,10 @@ right-click.
 
 |File|Role|
 |---|---|
-|`src/routes/+page.svelte`|Page shell: header, toolbar, empty/loading/error states, modals|
+|`src/lib/components/HomeView.svelte`|The dashboard: header, toolbar, empty/loading/error states, modals|
+|`src/routes/catalog/+page.svelte`|The `/catalog` deep link: the dashboard plus the catalog modal|
+|`src/lib/components/CatalogModal.svelte`|The catalog dialog: list and one app's page|
+|`src/lib/components/AppDetail.svelte`|One app's page, shared by the catalog dialog|
 |`src/lib/components/GridStackGrid.svelte`|GridStack instance, mounting, sync, persistence|
 |`src/lib/components/AppTile.svelte`|App tile (`app-slot`, `install-spinner`, `phase-label` are e2e contracts)|
 |`src/lib/components/LauncherTile.svelte`|Tile for a launcher or a remote install|

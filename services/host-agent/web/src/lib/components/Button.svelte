@@ -1,12 +1,15 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import type { Snippet } from 'svelte';
+	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	interface Props {
+	/* The component's own props plus whatever a native button takes, so a caller
+	   can add `aria-haspopup`, a name, or a data attribute without this file
+	   growing a prop per attribute. `onclick` and `children` are restated because
+	   the local shapes are narrower than the DOM ones. */
+	interface Props extends Omit<HTMLButtonAttributes, 'onclick' | 'children'> {
 		variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
 		size?: 'sm' | 'md';
-		disabled?: boolean;
-		type?: 'button' | 'submit';
 		onclick?: () => void;
 		children: Snippet;
 	}
@@ -17,7 +20,8 @@
 		disabled = false,
 		type = 'button',
 		onclick,
-		children
+		children,
+		...rest
 	}: Props = $props();
 </script>
 
@@ -31,6 +35,7 @@
 	{type}
 	{disabled}
 	{onclick}
+	{...rest}
 >
 	{@render children()}
 </button>
@@ -79,7 +84,12 @@
 	}
 
 	.btn.sm {
-		padding: var(--space-xs) var(--space-md);
+		/* The 44px tap target comes from the base rule, so the only thing left to
+		   trim is the room around the label: --space-md a side read as padding
+		   around a word rather than a button, and the icon sat a full --space-sm
+		   away from its text. */
+		padding: var(--space-xs) var(--space-sm);
+		gap: var(--space-xs);
 		font-size: 0.875rem;
 	}
 

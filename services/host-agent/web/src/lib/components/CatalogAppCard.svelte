@@ -28,6 +28,7 @@
 	let displayName = $derived(app.displayName || formatAppName(app.catalogId));
 	let sizeLabel = $derived(formatSizeMB(app.estimatedSizeMB));
 	let cardLabel = $derived(catalogCardLabel(displayName, state));
+	let hasMeta = $derived(Boolean(app.category) || Boolean(sizeLabel));
 
 	// An installed card opens the app as well as managing it, so the state
 	// carries a consequence instead of being a colour.
@@ -44,90 +45,96 @@
 	class:installing
 	aria-busy={installing || uninstalling}
 >
-	<div class="icon-wrapper">
-		<AppIcon appName={app.catalogId} displayName={app.displayName} transparent={installing} />
-		{#if installing}
-			<div class="install-spinner" role="status" aria-label="Installing"></div>
-		{/if}
-	</div>
-	<div class="app-content">
-		<div class="app-header">
-			<h3 class="app-title">
-				<button class="card-action" {onclick} disabled={installing} aria-label={cardLabel}>
-					{displayName}
-				</button>
-			</h3>
-			{#if sizeLabel}
-				<span class="app-size">{sizeLabel}</span>
-			{/if}
-			{#if app.category}
-				<span class="app-category">{app.category}</span>
+	<!-- The icon and the state share the top row, so the state is in the same
+	     place on every card and the body below it can align row to row. The old
+	     card put the state in a side column that wrapped under the text at a
+	     narrow width, which is what made the grid rows ragged. -->
+	<div class="card-top">
+		<div class="icon-wrapper">
+			<AppIcon appName={app.catalogId} displayName={app.displayName} transparent={installing} />
+			{#if installing}
+				<div class="install-spinner" role="status" aria-label="Installing"></div>
 			{/if}
 		</div>
-		{#if app.description}
-			<p class="app-description">{app.description}</p>
+		{#if installed}
+			<span class="state-badge">
+				<Icon name="check-circle" size={12} />
+				Installed
+			</span>
+		{:else if uninstalling}
+			<span class="state-badge neutral">Uninstalling</span>
+		{:else if blocked}
+			<!-- title carries the first reason so the badge alone is not the only
+			     place the requirement is stated. The modal states it in full. -->
+			<span class="state-badge neutral" title={app.installBlockers?.[0]}>Needs setup</span>
 		{/if}
 	</div>
 
-	{#if installed || uninstalling}
-		<div class="card-side">
-			{#if uninstalling}
-				<span class="state-badge neutral">Uninstalling</span>
-			{:else if installed}
-				<span class="state-badge">
-					<Icon name="check-circle" size={12} />
-					Installed
-				</span>
-				<!-- An app's own subdomain is not a Bloud route, so resolve() has nothing
-				     to say about it. A link rather than a button calling window.open so
-				     middle-click and "open in new tab" still work. -->
-				<!-- eslint-disable svelte/no-navigation-without-resolve -->
-				<a
-					class="open-link"
-					href={openUrl}
-					target="_blank"
-					rel="noopener"
-					aria-label={`Open ${displayName} in a new tab`}
-				>
-					Open
-					<Icon name="external-link" size={12} />
-				</a>
-				<!-- eslint-enable svelte/no-navigation-without-resolve -->
+	<h3 class="app-title">
+		<button class="card-action" {onclick} disabled={installing} aria-label={cardLabel}>
+			{displayName}
+		</button>
+	</h3>
+
+	{#if hasMeta}
+		<p class="app-meta">
+			{#if app.category}
+				<span class="app-category">{app.category}</span>
 			{/if}
-		</div>
-	{:else if blocked}
-		<div class="card-side">
-			<!-- title carries the first reason so the badge alone is not the only
-			     place the requirement is stated. The modal states it in full. -->
-			<span class="state-badge neutral" title={app.installBlockers?.[0]}>
-				Needs setup
-			</span>
-		</div>
+			{#if app.category && sizeLabel}
+				<span class="meta-sep" aria-hidden="true">·</span>
+			{/if}
+			{#if sizeLabel}
+				<span class="app-size">{sizeLabel}</span>
+			{/if}
+		</p>
+	{/if}
+
+	{#if app.description}
+		<p class="app-description">{app.description}</p>
+	{/if}
+
+	{#if installed}
+		<!-- An app's own subdomain is not a Bloud route, so resolve() has nothing
+		     to say about it. A link rather than a button calling window.open so
+		     middle-click and "open in new tab" still work. -->
+		<!-- eslint-disable svelte/no-navigation-without-resolve -->
+		<a
+			class="open-link"
+			href={openUrl}
+			target="_blank"
+			rel="noopener"
+			aria-label={`Open ${displayName} in a new tab`}
+		>
+			Open
+			<Icon name="external-link" size={12} />
+		</a>
+		<!-- eslint-enable svelte/no-navigation-without-resolve -->
 	{/if}
 </article>
 
 <style>
-	/* The card is an article, not a button: an installed card also carries an Open
-	   link, and a link inside a button is not markup anything will honour. The
-	   title is the control, and its ::after covers the card so the whole surface
-	   is still clickable. That keeps the button's own visible text to the app
-	   name, which is what lets the accessible name stay short without tripping
-	   WCAG 2.5.3 (a control's visible label has to appear in its name). */
+	/* A vertical card: icon and state on top, then the name, the meta line, the
+	   description, and the action. The card is an article, not a button: an
+	   installed card also carries an Open link, and a link inside a button is not
+	   markup anything will honour. The title is the control, and its ::after
+	   covers the card so the whole surface is still clickable. That keeps the
+	   button's own visible text to the app name, which is what lets the accessible
+	   name stay short without tripping WCAG 2.5.3 (a control's visible label has
+	   to appear in its name). */
 	.app-card {
 		position: relative;
 		display: flex;
-		/* Wrapped rather than widened: the side column is real content, and a
-		   nowrap card would set the minimum width of every route that shows one
-		   (the catalog already overflows at 390px). Below the width where both
-		   columns fit, the state gets its own line. */
-		flex-wrap: wrap;
-		align-items: flex-start;
-		gap: var(--space-md);
-		padding: var(--space-lg);
+		flex-direction: column;
+		gap: var(--space-sm);
+		/* One height for every card, so the grid is even whether an app carries a
+		   state, a long name, or a third line of description. */
+		min-height: 216px;
+		padding: var(--space-md);
 		background: var(--color-bg-elevated);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
-		transition: all 0.15s ease;
+		transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 	}
 
 	.app-card:hover {
@@ -141,10 +148,7 @@
 	   card, which is no separation at all, and it disappeared entirely under
 	   deuteranopia simulation. A solid --color-success border is 7:1 against
 	   both the card and the page, so it survives greyscale. */
-	.app-card.installed {
-		border: 2px solid var(--color-success);
-	}
-
+	.app-card.installed,
 	.app-card.installed:hover {
 		border-color: var(--color-success);
 	}
@@ -152,6 +156,20 @@
 	.app-card:has(.card-action:focus-visible) {
 		outline: 2px solid var(--color-focus);
 		outline-offset: 2px;
+	}
+
+	.card-top {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: var(--space-sm);
+	}
+
+	.icon-wrapper {
+		position: relative;
+		flex-shrink: 0;
+		width: 40px;
+		height: 40px;
 	}
 
 	.card-action {
@@ -190,101 +208,59 @@
 		cursor: default;
 	}
 
-	/* Brand marks render as delivered. The card used to desaturate every icon that
-	   was not installed and bring the colour back on hover, which read the brand
-	   as decoration rather than as the thing you scan the grid for: greyscale
-	   Jellyfin and greyscale Jellyfin MCP are one grey square, and the icon is the
-	   only difference between them. The letter fallback in AppIcon is the one
-	   treatment an app without an icon gets, so both paths now look the same. */
-
-	.app-content {
-		/* min-content as the basis is what makes the wrap decision honest: the
-		   side column moves to its own line exactly when the card is too narrow
-		   to hold both, not at a breakpoint guessed in viewport units. */
-		flex: 1 1 min-content;
-		min-width: 0;
-		overflow: hidden;
-	}
-
-	.app-header {
-		display: flex;
-		align-items: center;
-		/* The header is the widest thing on the card only because its three
-		   pieces sit on one line: letting them wrap drops the card's minimum
-		   width to a single chip, which is what keeps the card from setting the
-		   minimum width of the page. */
-		flex-wrap: wrap;
-		gap: var(--space-sm);
-	}
-
 	.app-title {
 		margin: 0;
-		font-size: 1rem;
-		font-weight: 500;
-		min-width: 0;
-		max-width: 100%;
+		font-size: 0.9375rem;
+		font-weight: 600;
 	}
 
-	.app-size {
-		font-size: 0.6875rem;
+	.app-meta {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: var(--space-xs) var(--space-sm);
+		margin: 0;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
-		white-space: nowrap;
-		flex-shrink: 0;
 	}
 
 	.app-category {
-		font-size: 0.6875rem;
 		text-transform: uppercase;
-		letter-spacing: 0.03em;
-		color: var(--color-text-muted);
-		background: var(--color-bg-subtle);
-		padding: 2px 6px;
-		border-radius: var(--radius-sm);
-		flex-shrink: 0;
+		letter-spacing: 0.04em;
+	}
+
+	.meta-sep {
+		color: var(--color-border-strong);
 	}
 
 	.app-description {
-		margin: var(--space-xs) 0 0 0;
+		margin: 0;
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
-		line-height: 1.4;
-		/* Two lines, then a real ellipsis at a word boundary. The -webkit- prefix
+		line-height: 1.45;
+		/* Three lines, then a real ellipsis at a word boundary. The -webkit prefix
 		   is still the only way to get the clamp and the glyph together; without it
 		   the description was cut mid-word, which reads as a bug rather than as
 		   there being more to read. */
 		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
+		-webkit-line-clamp: 3;
+		line-clamp: 3;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
 	}
 
-	.card-side {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: var(--space-sm);
-		flex-shrink: 0;
-		align-self: stretch;
-		/* When the card is too narrow for both columns the side column falls to
-		   its own line, and this is what pulls it back to the right edge there.
-		   On a line that has no free space to distribute it does nothing. */
-		margin-left: auto;
-	}
-
 	/* A pill, not italic text: italic reads as decorative, which is the wrong
-	   register for the one fact about the card that changes what it does. The
-	   check icon means the state still reads with the colour taken out. */
+	   register for the one fact about the card that changes what it does. */
 	.state-badge {
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
+		flex-shrink: 0;
 		padding: 2px 8px;
 		border-radius: 9999px;
 		background: var(--color-success-tint);
 		color: var(--color-success);
-		font-size: 0.75rem;
+		font-size: 0.6875rem;
 		font-weight: 600;
 		white-space: nowrap;
 	}
@@ -302,7 +278,9 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
+		/* Pushed to the bottom so every Open sits on the same line. */
 		margin-top: auto;
+		align-self: flex-start;
 		padding: 4px 10px;
 		border: 1px solid var(--color-success);
 		border-radius: var(--radius-md);
@@ -320,13 +298,6 @@
 		color: var(--color-on-success);
 	}
 
-	.icon-wrapper {
-		position: relative;
-		flex-shrink: 0;
-		width: 44px;
-		height: 44px;
-	}
-
 	.app-card.installing {
 		opacity: 0.7;
 		pointer-events: none;
@@ -340,7 +311,6 @@
 		border-radius: 50%;
 		animation: spin 1s linear infinite;
 	}
-
 
 	@keyframes spin {
 		to { transform: rotate(360deg); }

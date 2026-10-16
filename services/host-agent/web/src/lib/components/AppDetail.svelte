@@ -1,8 +1,8 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import Modal from './Modal.svelte';
 	import AppIcon from './AppIcon.svelte';
 	import CloseButton from './CloseButton.svelte';
+	import IconButton from './IconButton.svelte';
 	import Icon from './Icon.svelte';
 	import type { CatalogApp } from '$lib/types';
 	import type { BriefSection } from '$lib/utils/installBrief';
@@ -10,30 +10,42 @@
 
 	const admin = select(isAdmin);
 
+	/**
+	 * The app detail, without a modal of its own.
+	 *
+	 * The catalog is a modal with two views, and this is the second one: the
+	 * list swaps to a single app's page in the same dialog, and Back swaps back.
+	 * The body was the inside of `AppDetailModal`, which owned its own dialog;
+	 * a nested dialog for the detail would put one modal over another and make
+	 * the back button the only way to see the list again.
+	 */
 	interface Props {
-		app: CatalogApp | null;
+		app: CatalogApp;
 		status?: string | null;
 		/**
-		 * What the install will do, built by the catalog page from this app's
-		 * metadata. The decision to install a multi-gigabyte app deserves more than
-		 * one line of description: this is where the download size, the sign-in
-		 * wiring, and any app pulled in alongside get stated, before the install
-		 * rather than in the changelog after it.
+		 * What the install will do, built by the catalog from this app's metadata.
+		 * The decision to install a multi-gigabyte app deserves more than one line
+		 * of description: this is where the download size, the sign-in wiring, and
+		 * any app pulled in alongside get stated, before the install rather than in
+		 * the changelog after it.
 		 */
 		sections?: BriefSection[];
+		/** Return to the catalog list. */
+		onback: () => void;
+		/** Close the whole catalog. */
 		onclose: () => void;
 		oninstall: (appName: string) => void;
 	}
 
-	let { app, status = null, sections = [], onclose, oninstall }: Props = $props();
+	let { app, status = null, sections = [], onback, onclose, oninstall }: Props = $props();
 
 	let installed = $derived(status === 'running' || status === 'error' || status === 'failed');
 	let installing = $derived(status === 'installing' || status === 'starting');
 	let isUninstalling = $derived(status === 'uninstalling');
 	// Why this app cannot be installed yet, straight from the API. The same rule
-	// the orchestrator applies to the install, so the modal cannot offer a button
+	// the orchestrator applies to the install, so the detail cannot offer a button
 	// the backend would refuse.
-	let blockers = $derived(app?.installBlockers ?? []);
+	let blockers = $derived(app.installBlockers ?? []);
 	let blocked = $derived(!installed && !installing && blockers.length > 0);
 
 	let uninstallInProgress = $state(false);
@@ -45,8 +57,6 @@
 	}
 
 	async function doUninstall() {
-		if (!app) return;
-
 		uninstallInProgress = true;
 		uninstallError = null;
 
@@ -54,7 +64,7 @@
 			const res = await fetch(`/api/apps/${app.catalogId}/uninstall`, { method: 'POST' });
 
 			if (res.ok) {
-				handleClose();
+				handleBack();
 			} else {
 				const result = await res.json();
 				uninstallError = result.error || 'Uninstall failed';
@@ -67,14 +77,13 @@
 	}
 
 	function doInstall() {
-		if (!app) return;
 		oninstall(app.catalogId);
-		handleClose();
+		handleBack();
 	}
 
-	function handleClose() {
+	function handleBack() {
 		resetState();
-		onclose();
+		onback();
 	}
 
 	function formatAppName(name: string): string {
@@ -82,140 +91,145 @@
 	}
 </script>
 
-<Modal open={app !== null} onclose={handleClose} size="lg" labelledBy="app-detail-title">
-	{#if app}
-		<header class="modal-header">
-			<div class="modal-app-header">
-				<AppIcon appName={app.catalogId} displayName={app.displayName} size="lg" />
-				<div class="modal-app-info">
-					<h2 id="app-detail-title">{app.displayName || formatAppName(app.catalogId)}</h2>
-					{#if app.category}
-						<span class="modal-app-category">{app.category}</span>
-					{/if}
-				</div>
-			</div>
-			<CloseButton onclick={handleClose} />
-		</header>
-
-		<div class="modal-body">
-			{#if app.description}
-				<p class="modal-description">{app.description}</p>
+<header class="detail-header">
+	<IconButton
+		icon="arrow-left"
+		size={20}
+		title="Back to catalog"
+		variant="ghost"
+		onclick={handleBack}
+	/>
+	<div class="detail-app-header">
+		<AppIcon appName={app.catalogId} displayName={app.displayName} size="lg" />
+		<div class="detail-app-info">
+			<h2 id="app-detail-title">{app.displayName || formatAppName(app.catalogId)}</h2>
+			{#if app.category}
+				<span class="detail-app-category">{app.category}</span>
 			{/if}
+		</div>
+	</div>
+	<CloseButton onclick={onclose} />
+</header>
 
-			{#if app.screenshots?.length}
-				<div class="screenshots">
-					{#each app.screenshots as screenshot, i (i)}
-						<img src={screenshot} alt="Screenshot" class="screenshot" />
-					{/each}
-				</div>
-			{/if}
+<div class="detail-body">
+	{#if app.description}
+		<p class="detail-description">{app.description}</p>
+	{/if}
 
-			{#if sections.length}
-				<!-- Stated as a list of plain facts rather than as prose: the reader is
-				     deciding, so each line has to be scannable in one pass. -->
-				<div class="brief">
-					{#each sections as section (section.title)}
-						<div class="brief-section">
-							<h3 class="brief-title">{section.title}</h3>
-							<ul class="brief-list">
-								{#each section.lines as line (line)}
-									<li>{line}</li>
-								{/each}
-							</ul>
-						</div>
-					{/each}
-				</div>
-			{/if}
+	{#if app.screenshots?.length}
+		<div class="screenshots">
+			{#each app.screenshots as screenshot, i (i)}
+				<img src={screenshot} alt="Screenshot" class="screenshot" />
+			{/each}
+		</div>
+	{/if}
 
-			{#if blocked}
-				<div class="alert alert-error">
+	{#if sections.length}
+		<!-- Stated as a list of plain facts rather than as prose: the reader is
+		     deciding, so each line has to be scannable in one pass. -->
+		<div class="brief">
+			{#each sections as section (section.title)}
+				<div class="brief-section">
+					<h3 class="brief-title">{section.title}</h3>
 					<ul class="brief-list">
-						{#each blockers as reason (reason)}
-							<li>{reason}</li>
+						{#each section.lines as line (line)}
+							<li>{line}</li>
 						{/each}
 					</ul>
 				</div>
-			{/if}
-
-			{#if installed}
-				{#if uninstallError}
-					<div class="alert alert-error">
-						<p>{uninstallError}</p>
-					</div>
-				{/if}
-
-				<div class="installed-notice">
-					<Icon name="check-circle" size={20} />
-					<span>This app is installed</span>
-				</div>
-			{/if}
+			{/each}
 		</div>
-
-		<footer class="modal-footer">
-			{#if isUninstalling}
-				<button class="btn btn-secondary" onclick={handleClose}>Close</button>
-				<span class="status-text">Uninstalling...</span>
-			{:else if installed}
-				<button class="btn btn-secondary" onclick={handleClose} disabled={uninstallInProgress}>Close</button>
-				{#if admin.current}
-					<button class="btn btn-danger" onclick={doUninstall} disabled={uninstallInProgress}>
-						{#if uninstallInProgress}Removing...{:else}Uninstall{/if}
-					</button>
-				{/if}
-			{:else}
-				<button class="btn btn-secondary" onclick={handleClose}>Cancel</button>
-				{#if admin.current}
-					<!-- Disabled rather than hidden: the requirement is stated next to
-					     the control it blocks, so the operator is not left hunting for
-					     why an Install button is missing. -->
-					<button
-						class="btn btn-primary"
-						onclick={doInstall}
-						disabled={installing || blocked}
-						title={blocked ? (app.installBlockers?.[0] ?? '') : ''}
-					>
-						{#if installing}Installing...{:else}Install{/if}
-					</button>
-				{/if}
-			{/if}
-		</footer>
 	{/if}
-</Modal>
+
+	{#if blocked}
+		<div class="alert alert-error">
+			<ul class="brief-list">
+				{#each blockers as reason (reason)}
+					<li>{reason}</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
+
+	{#if installed}
+		{#if uninstallError}
+			<div class="alert alert-error">
+				<p>{uninstallError}</p>
+			</div>
+		{/if}
+
+		<div class="installed-notice">
+			<Icon name="check-circle" size={20} />
+			<span>This app is installed</span>
+		</div>
+	{/if}
+</div>
+
+<footer class="detail-footer">
+	{#if isUninstalling}
+		<button class="btn btn-secondary" onclick={handleBack}>Close</button>
+		<span class="status-text">Uninstalling...</span>
+	{:else if installed}
+		<button class="btn btn-secondary" onclick={handleBack} disabled={uninstallInProgress}>Close</button>
+		{#if admin.current}
+			<button class="btn btn-danger" onclick={doUninstall} disabled={uninstallInProgress}>
+				{#if uninstallInProgress}Removing...{:else}Uninstall{/if}
+			</button>
+		{/if}
+	{:else}
+		<button class="btn btn-secondary" onclick={handleBack}>Cancel</button>
+		{#if admin.current}
+			<!-- Disabled rather than hidden: the requirement is stated next to the
+			     control it blocks, so the operator is not left hunting for why an
+			     Install button is missing. -->
+			<button
+				class="btn btn-primary"
+				onclick={doInstall}
+				disabled={installing || blocked}
+				title={blocked ? (app.installBlockers?.[0] ?? '') : ''}
+			>
+				{#if installing}Installing...{:else}Install{/if}
+			</button>
+		{/if}
+	{/if}
+</footer>
 
 <style>
-	.modal-header {
+	.detail-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: var(--space-lg);
+		gap: var(--space-sm);
+		padding: var(--space-md) var(--space-lg);
 		border-bottom: 1px solid var(--color-border);
 	}
 
-	.modal-app-header {
+	.detail-app-header {
 		display: flex;
 		align-items: center;
 		gap: var(--space-md);
 		flex: 1;
+		min-width: 0;
 	}
 
-	.modal-app-info h2 {
+	.detail-app-info h2 {
 		margin: 0;
 		font-size: 1.25rem;
 		font-weight: 500;
 	}
 
-	.modal-app-category {
+	.detail-app-category {
 		font-size: 0.75rem;
 		text-transform: uppercase;
 		letter-spacing: 0.03em;
 		color: var(--color-text-muted);
 	}
 
-	.modal-body {
+	.detail-body {
 		padding: var(--space-lg);
 	}
 
-	.modal-footer {
+	.detail-footer {
 		display: flex;
 		gap: var(--space-sm);
 		justify-content: flex-end;
@@ -223,7 +237,7 @@
 		border-top: 1px solid var(--color-border);
 	}
 
-	.modal-description {
+	.detail-description {
 		margin: 0 0 var(--space-lg) 0;
 		font-size: 0.9375rem;
 		color: var(--color-text-secondary);
@@ -300,10 +314,6 @@
 		margin-bottom: var(--space-md);
 		font-size: 0.9375rem;
 	}
-
-	.alert p { margin: var(--space-sm) 0; }
-	.alert p:first-child { margin-top: 0; }
-	.alert p:last-child { margin-bottom: 0; }
 
 	.alert-error {
 		background: var(--color-error-bg);

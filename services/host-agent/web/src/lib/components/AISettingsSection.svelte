@@ -27,42 +27,49 @@
 		Chat, transcription, and embedding settings
 	</p>
 
-	<InferenceCapability {onbaseUrl} />
+	<div class="ai-capabilities">
+		<InferenceCapability {onbaseUrl} />
 
-	<EndpointCapability
-		contract="transcription"
-		label="Transcription"
-		defaultName="Transcription"
-		placeholder="https://api.openai.com/v1"
-		aiBaseUrl={chatBaseUrl}
-		description={TRANSCRIPTION_DESCRIPTION}
-	/>
+		<EndpointCapability
+			contract="transcription"
+			label="Transcription"
+			defaultName="Transcription"
+			placeholder="https://api.openai.com/v1"
+			aiBaseUrl={chatBaseUrl}
+			description={TRANSCRIPTION_DESCRIPTION}
+		/>
 
-	<EndpointCapability
-		contract="embeddings"
-		label="Embeddings"
-		defaultName="Embeddings"
-		placeholder="https://api.openai.com/v1"
-		aiBaseUrl={chatBaseUrl}
-		description={EMBEDDINGS_DESCRIPTION}
-	/>
+		<EndpointCapability
+			contract="embeddings"
+			label="Embeddings"
+			defaultName="Embeddings"
+			placeholder="https://api.openai.com/v1"
+			aiBaseUrl={chatBaseUrl}
+			description={EMBEDDINGS_DESCRIPTION}
+		/>
+	</div>
 </section>
 
 <style>
-	/* The same separator the Users section carries. This section follows another,
-	   so it needs a break above it; it had none, which is what let the AI heading
-	   read as the tail of the section above. The gap spaces the three capability
-	   blocks, which carry no separator of their own, so none needs a top margin. */
+	/* The settings grid owns the spacing between sections, so this one carries no
+	   rule of its own. */
 	.ai-section {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-lg);
-		margin-top: var(--space-2xl);
-		padding-top: var(--space-2xl);
-		border-top: 1px solid var(--color-border);
+		gap: var(--space-md);
 	}
 
-	/* No max-width of its own: the shared `.section` measure already caps it. */
+	/* The three capability forms flow into columns once there is room. Stacked,
+	   they left the right half of a full-width section empty and made the section
+	   the tallest thing on the page. */
+	.ai-capabilities {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+		gap: var(--space-lg);
+		align-items: start;
+	}
+
+	/* No max-width of its own: the page container and the grid own the width. */
 	.section-description {
 		margin: 0;
 		font-size: 0.875rem;
