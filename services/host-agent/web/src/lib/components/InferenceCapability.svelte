@@ -283,16 +283,122 @@
 		max-width: 60ch;
 	}
 
+	.loading-state {
+		padding: var(--space-xl);
+		text-align: center;
+		color: var(--color-text-muted);
+	}
+
 	.ai-form {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-md);
 	}
 
+	/* The field styles are the ones `EndpointCapability` already carries, and they
+	   have to be repeated here rather than shared: Svelte scopes a component's
+	   CSS to that component, so a class with no rule in this file renders as a
+	   browser default. That is what this file was: an unstyled text input with a
+	   `2px inset` border sitting next to the themed ones two sections down. */
+	.form-field {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+		min-width: 0;
+	}
+
+	.form-field label {
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--color-text-secondary);
+	}
+
+	.form-field input,
+	.form-field select {
+		padding: var(--space-sm) var(--space-md);
+		font-family: var(--font-serif);
+		font-size: 0.9375rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-elevated);
+		color: var(--color-text);
+		transition: border-color 0.15s ease;
+		width: 100%;
+		max-width: 100%;
+	}
+
+	.form-field input:focus,
+	.form-field select:focus {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text) 12%, transparent);
+	}
+
+	.form-field input::placeholder,
+	.form-field select::placeholder {
+		color: var(--color-text-muted);
+	}
+
+	.form-field input:disabled,
+	.form-field select:disabled {
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		cursor: not-allowed;
+	}
+
 	.form-row {
 		display: grid;
 		grid-template-columns: 1fr 1.5fr;
 		gap: var(--space-md);
+	}
+
+	.hint {
+		font-size: 0.75rem;
+		line-height: 1.4;
+		color: var(--color-text-muted);
+	}
+
+	.error-message {
+		margin-top: var(--space-md);
+		padding: var(--space-sm) var(--space-md);
+		font-size: 0.875rem;
+		color: var(--color-error);
+		background: var(--color-error-bg);
+		border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
+		border-radius: var(--radius-md);
+	}
+
+	.pill {
+		display: inline-block;
+		margin-left: var(--space-xs);
+		padding: 2px 8px;
+		border-radius: 9999px;
+		font-size: 0.6875rem;
+		font-weight: 500;
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		border: 1px solid var(--color-border);
+		vertical-align: middle;
+	}
+
+	.pill-success {
+		background: var(--color-success-bg);
+		color: var(--color-success);
+		border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
+	}
+
+	/* The two `Served to` states that are neither good nor broken (gateway) and
+	   neither good nor broken-but-absent (none). No component defined these
+	   before, so the markup carried classes nothing styled. */
+	.pill-info {
+		background: var(--color-info-bg);
+		color: var(--color-info);
+		border-color: color-mix(in srgb, var(--color-info) 30%, transparent);
+	}
+
+	.pill-error {
+		background: var(--color-error-bg);
+		color: var(--color-error);
+		border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
 	}
 
 	.actions {
