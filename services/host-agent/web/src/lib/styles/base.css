@@ -103,7 +103,7 @@ button {
 	z-index: 100;
 	padding: var(--space-sm) var(--space-md);
 	background: var(--color-accent);
-	color: #fff;
+	color: var(--color-on-accent);
 	font-family: var(--font-sans);
 	font-size: 0.875rem;
 	text-decoration: none;

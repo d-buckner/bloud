@@ -14,6 +14,7 @@
 	import WidgetWrapper from './WidgetWrapper.svelte';
 	import { diffGrid, type GridDiff, type GridNodeState } from '$lib/utils/gridDiff';
 	import { firstFreeSlot } from '$lib/utils/gridPlacement';
+	import { GRID_BREAKPOINTS, GRID_CELL_HEIGHT, GRID_COLUMNS, GRID_GUTTER } from '$lib/gridGeometry';
 
 	interface Props {
 		onAppClick?: (app: App) => void;
@@ -26,16 +27,18 @@
 
 	/**
 	 * Columns the layout is authored at. Narrower viewports get fewer columns
-	 * as a read-only preview: see handleGridChange.
+	 * as a read-only preview: see handleGridChange. The numbers live in
+	 * `$lib/gridGeometry` because the loading skeleton has to draw the same boxes
+	 * before this grid exists.
 	 */
-	const DESKTOP_COLUMNS = 6;
+	const DESKTOP_COLUMNS = GRID_COLUMNS;
 	/** Row height in px, so a 1x1 app tile is one cell. */
-	const CELL_HEIGHT = 128;
+	const CELL_HEIGHT = GRID_CELL_HEIGHT;
 	/**
 	 * Gap between tiles in px. Mirrored into `--grid-gutter` for the container,
 	 * which cancels the outer margins so tiles align with the page content.
 	 */
-	const CELL_MARGIN = 12;
+	const CELL_MARGIN = GRID_GUTTER;
 	/**
 	 * GridStack moves the dragged element under the cursor, so releasing a
 	 * drag still delivers a click on it. Swallow that one click.
@@ -375,10 +378,7 @@
 					// not the configured `column`.
 					columnMax: DESKTOP_COLUMNS,
 					breakpointForWindow: false,
-					breakpoints: [
-						{ w: 560, c: 2 },
-						{ w: 820, c: 4 },
-					],
+					breakpoints: GRID_BREAKPOINTS.map((b) => ({ w: b.maxWidth, c: b.columns }))
 				},
 			},
 			gridEl
@@ -465,7 +465,7 @@
 	/* The dragged tile floats above its slot */
 	.gridstack-container :global(.grid-stack-item.ui-draggable-dragging .app-tile),
 	.gridstack-container :global(.grid-stack-item.ui-draggable-dragging .widget) {
-		box-shadow: var(--shadow-md), 0 12px 28px rgba(28, 25, 23, 0.14);
+		box-shadow: var(--shadow-md), 0 12px 28px color-mix(in srgb, var(--color-text) 22%, transparent);
 		border-color: var(--color-text-muted);
 	}
 

@@ -333,7 +333,7 @@
 		font-size: 0.875rem;
 		color: var(--color-error);
 		background: var(--color-error-bg);
-		border: 1px solid rgba(153, 27, 27, 0.15);
+		border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
 		border-radius: var(--radius-md);
 	}
 </style>

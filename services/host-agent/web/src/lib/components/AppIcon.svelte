@@ -41,6 +41,11 @@
 		flex-shrink: 0;
 		position: relative;
 		overflow: hidden;
+		/* App icons are third-party files, and four of the ones in the catalog are
+		   solid black. The light theme has nothing to correct, so the plate is
+		   transparent and the icon sits on the tile exactly as it always did. */
+		background: var(--color-icon-plate);
+		border-radius: var(--radius-md);
 	}
 
 	.app-icon.transparent {

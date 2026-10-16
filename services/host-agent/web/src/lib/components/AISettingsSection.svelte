@@ -313,7 +313,7 @@
 	.form-field input:focus,
 	.form-field select:focus {
 				border-color: var(--color-accent);
-		box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text) 12%, transparent);
 	}
 
 	.form-field input::placeholder,
@@ -380,13 +380,13 @@
 	.test-result.ok {
 		color: var(--color-success);
 		background: var(--color-success-bg);
-		border-color: rgba(22, 101, 52, 0.15);
+		border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
 	}
 
 	.test-result.fail {
 		color: var(--color-error);
 		background: var(--color-error-bg);
-		border-color: rgba(153, 27, 27, 0.15);
+		border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
 	}
 
 	.error-message {
@@ -395,7 +395,7 @@
 		font-size: 0.875rem;
 		color: var(--color-error);
 		background: var(--color-error-bg);
-		border: 1px solid rgba(153, 27, 27, 0.15);
+		border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
 		border-radius: var(--radius-md);
 	}
 
@@ -415,19 +415,19 @@
 	.pill-success {
 		background: var(--color-success-bg);
 		color: var(--color-success);
-		border-color: rgba(22, 101, 52, 0.15);
+		border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
 	}
 
 	.pill-info {
 		background: var(--color-info-bg);
 		color: var(--color-info);
-		border-color: rgba(12, 74, 110, 0.15);
+		border-color: color-mix(in srgb, var(--color-info) 30%, transparent);
 	}
 
 	.pill-error {
 		background: var(--color-error-bg);
 		color: var(--color-error);
-		border-color: rgba(153, 27, 27, 0.15);
+		border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
 	}
 
 	.served-to {

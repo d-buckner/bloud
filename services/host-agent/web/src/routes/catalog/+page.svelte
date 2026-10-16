@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import CatalogAppCard from '$lib/components/CatalogAppCard.svelte';
+	import CatalogSkeleton from '$lib/components/CatalogSkeleton.svelte';
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
@@ -110,9 +111,7 @@
 	</header>
 
 	{#if catalogLoading}
-		<div class="loading-state">
-			<p>Loading catalog...</p>
-		</div>
+		<CatalogSkeleton />
 	{:else if catalogError}
 		<div class="error-state">
 			<p>{catalogError}</p>
@@ -233,7 +232,7 @@
 		font-style: italic;
 	}
 
-	.loading-state, .error-state, .empty-state {
+	.error-state, .empty-state {
 		padding: var(--space-2xl);
 		text-align: center;
 		color: var(--color-text-muted);
@@ -319,7 +318,7 @@
 
 	.search-input:focus {
 				border-color: var(--color-accent);
-		box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text) 12%, transparent);
 	}
 
 	.search-clear {
@@ -374,7 +373,7 @@
 	.pill.active {
 		background: var(--color-accent);
 		border-color: var(--color-accent);
-		color: white;
+		color: var(--color-on-accent);
 	}
 
 	.apps-grid {

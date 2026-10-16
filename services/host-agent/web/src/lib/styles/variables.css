@@ -2,6 +2,13 @@
 /* Bloud Design System - CSS Variables */
 
 :root {
+	/* The browser is told which palettes this file carries, and then told which
+	   one is in use. The meta tag in app.html is what the browser paints with
+	   before this stylesheet loads; this property is what it uses after, so a
+	   manual override changes the scrollbars and form controls too and not only
+	   the parts of the page this file draws. */
+	color-scheme: light;
+
 	/* Color palette - warm, refined */
 	--color-bg: #FAF9F6;
 	--color-bg-elevated: #FFFFFF;
@@ -36,8 +43,24 @@
 	/* Accent colors */
 	--color-accent: #1C1917;
 	--color-accent-hover: #292524;
+	/* The label on a filled control is a token, not `white`. A filled control
+	   flips to a light fill in the dark theme, and a hardcoded white label would
+	   then sit on white. --color-on-accent is the pair of --color-accent in both
+	   themes, and every filled button reads the pair. */
+	--color-on-accent: #FFFFFF;
+	/* Destructive actions are a fill pair of their own. They used to borrow
+	   --color-error, which is the colour of an error *word*, and those two jobs
+	   pull in opposite directions once a second palette exists: the word has to
+	   stay dark-on-light and light-on-dark, and the fill has to stay dark enough
+	   to carry a white label in both. */
+	--color-danger: #991B1B;
+	--color-danger-hover: #7F1D1D;
+	--color-on-danger: #FFFFFF;
 	--color-success: #166534;
 	--color-success-bg: #F0FDF4;
+	/* The label on a filled success control, for the same reason as
+	   --color-on-accent: the success fill inverts in the dark theme. */
+	--color-on-success: #FFFFFF;
 	/* The installed-state badge fill. Darker than --color-success-bg: the
 	   card tint at #F0FDF4 sits 1.04:1 from white, which is why the badge
 	   gets its own, perceptible fill (#DCF0E2, 12.4 delta-E from white). */
@@ -71,6 +94,28 @@
 	/* Shadows */
 	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
 	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+	/* The two lifts that used to be written out per component: a floating panel
+	   (a menu, a toast) and a modal. They are tokens now because a shadow is a
+	   palette value. On a dark canvas a 15% black shadow is the same colour as
+	   the canvas, so the dark theme carries a deeper one and the panels keep
+	   their edge. */
+	--shadow-popover: 0 4px 20px rgba(0, 0, 0, 0.15);
+	--shadow-modal: 0 20px 40px rgba(0, 0, 0, 0.15);
+	/* The layer a modal or a menu dims the page behind. It is a token for the
+	   same reason: on a cream canvas 40% black reads as a dim, and on a dark
+	   canvas it reads as nothing at all. */
+	--color-scrim: rgba(0, 0, 0, 0.4);
+	/* The block a skeleton draws while a real one is on its way. It is a token
+	   rather than `--color-bg-subtle` because the two want different values in
+	   the dark theme, where the subtle fill is a well and a skeleton has to be a
+	   lift to read as "content is coming" instead of "content is missing". */
+	--color-skeleton: #E5E3DE;
+	/* App icons are third-party PNGs, and four of the ones in the catalog are
+	   solid black. On a dark tile a black glyph is 1.20:1, which is invisible.
+	   The dark theme gives the icon a light plate so every icon, whatever it was
+	   drawn with, arrives with the same contrast it has on the cream canvas.
+	   The light theme has nothing to correct, so it stays transparent. */
+	--color-icon-plate: transparent;
 
 	/* Layout */
 	--sidebar-width: 220px;
@@ -80,4 +125,73 @@
 	   measured the sign-out control at 25x25 and the header actions 26px tall.
 	   See the rule in base.css that applies it. */
 	--tap-target-min: 44px;
+}
+
+/* The second palette.
+
+   It is a second set of the same tokens, not a second design: every name keeps
+   its meaning, and only the values change. That is what lets a component opt out
+   of dark mode by accident nowhere, and what lets `contrast.test.ts` hold both
+   themes to the same numbers.
+
+   Three decisions in here are not a straight inversion of the light values.
+
+   1. The primary fill inverts. On cream, a near-black button is the loudest
+      thing on the page; on a dark canvas the loudest thing is a light button,
+      and --color-on-accent carries the label across the flip.
+
+   2. --color-bg-subtle is a well, not a lift. In the light theme the subtle fill
+      is lighter than the canvas, and every hover and disabled control uses it.
+      A single focus ring cannot clear the 3:1 WCAG 1.4.11 bar against both a
+      near-white primary button and a mid-grey lift, so the dark theme keeps the
+      one ring by making the interactive fill darker instead. The ring is then
+      3.45:1 on the canvas, 3.06:1 on a card, and 3.72:1 in a well.
+
+   3. The status words get their own light values. #166534 on a dark canvas is
+      1.3:1, so the dark theme uses the bright end of the same hue families and
+      tints its own dark fills behind them. */
+:root[data-theme='dark'] {
+	color-scheme: dark;
+
+	--color-bg: #1C1917;
+	--color-bg-elevated: #262321;
+	--color-bg-subtle: #141210;
+	--color-text: #F5F4F1;
+	--color-text-secondary: #C6C1BB;
+	--color-text-muted: #A09A93;
+	--color-text-faint: #8B857E;
+	--color-border: #3D3934;
+	--color-border-strong: #57534E;
+	--color-border-subtle: #2C2926;
+
+	/* The same amber as the light theme, and it still works only because the
+	   primary fill is light rather than mid-grey. A ring that has to clear 3:1 on
+	   a near-black canvas and a near-white button has exactly one band of
+	   lightness it can live in, and this is it in both themes. */
+	--color-focus: #B45309;
+
+	--color-accent: #E7E5E4;
+	--color-accent-hover: #FFFFFF;
+	--color-on-accent: #1C1917;
+	--color-danger: #DC2626;
+	--color-danger-hover: #B91C1C;
+	--color-on-danger: #FFFFFF;
+	--color-success: #4ADE80;
+	--color-success-bg: #12261B;
+	--color-on-success: #052E16;
+	--color-success-tint: #1B3A28;
+	--color-error: #F87171;
+	--color-error-bg: #2B1515;
+	--color-warning: #FBBF24;
+	--color-warning-bg: #2A2110;
+	--color-info: #7DD3FC;
+	--color-info-bg: #10263A;
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+	--shadow-popover: 0 4px 20px rgba(0, 0, 0, 0.55);
+	--shadow-modal: 0 20px 40px rgba(0, 0, 0, 0.6);
+	--color-scrim: rgba(0, 0, 0, 0.65);
+	--color-skeleton: #3A3632;
+	--color-icon-plate: #EDEBE6;
 }

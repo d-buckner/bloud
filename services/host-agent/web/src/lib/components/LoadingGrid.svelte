@@ -1,45 +1,50 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
+	import Skeleton from './Skeleton.svelte';
+	import { GRID_CELL_HEIGHT, GRID_COLUMNS, GRID_GUTTER } from '$lib/gridGeometry';
+
 	interface Props {
 		count?: number;
 	}
 
-	// Two rows of the six-column desktop grid.
+	// Two rows of the desktop grid.
 	let { count = 12 }: Props = $props();
+
+	// Written onto the element rather than typed into the stylesheet below, so the
+	// skeleton and the real grid cannot disagree about a number.
+	const geometry = [
+		`--grid-gutter: ${GRID_GUTTER}px`,
+		`--grid-cell-height: ${GRID_CELL_HEIGHT}px`,
+		`--grid-columns: ${GRID_COLUMNS}`
+	].join('; ');
 </script>
 
-<div class="loading-grid" aria-hidden="true">
-	{#each Array(count) as _, i (i)}
-		<div class="skeleton-item">
-			<div class="skeleton-icon"></div>
-			<div class="skeleton-label"></div>
-		</div>
-	{/each}
+<div class="loading-grid-wrap" style={geometry} aria-hidden="true">
+	<div class="loading-grid">
+		{#each Array(count) as _, i (i)}
+			<div class="skeleton-item">
+				<Skeleton width="48px" height="48px" radius="12px" />
+				<Skeleton width="56px" height="9px" radius="4px" />
+			</div>
+		{/each}
+	</div>
 </div>
 
 <style>
+	/* GridStack sizes itself from the width of its own element and insets every
+	   cell by half the gutter. The skeleton copies both, so a tile does not
+	   slide when the real grid replaces it. */
+	.loading-grid-wrap {
+		container-type: inline-size;
+		width: calc(100% + 2 * var(--grid-gutter));
+		margin: calc(-1 * var(--grid-gutter)) calc(-1 * var(--grid-gutter)) 0;
+	}
+
 	.loading-grid {
 		display: grid;
-		grid-template-columns: repeat(6, 1fr);
-		gap: 12px;
-		/* Same gutter trick as the real grid: cancel the outer gutter so the
-		   skeleton sits exactly where the tiles will land. */
-		width: calc(100% + 24px);
-		margin: -12px -12px 0;
-	}
-
-	/* Mirrors the grid's column breakpoints so the skeleton does not jump
-	   when the real tiles arrive. */
-	@media (max-width: 1100px) {
-		.loading-grid {
-			grid-template-columns: repeat(4, 1fr);
-		}
-	}
-
-	@media (max-width: 700px) {
-		.loading-grid {
-			grid-template-columns: repeat(2, 1fr);
-		}
+		grid-template-columns: repeat(var(--grid-columns), 1fr);
+		gap: var(--grid-gutter);
+		padding-inline: calc(var(--grid-gutter) / 2);
 	}
 
 	.skeleton-item {
@@ -48,37 +53,28 @@
 		align-items: center;
 		justify-content: center;
 		gap: 6px;
-		height: 104px;
+		/* One cell, less the gutter: the same arithmetic that gives a real tile
+		   its height. */
+		height: calc(var(--grid-cell-height) - var(--grid-gutter));
 		padding: var(--space-sm);
 		background: var(--color-bg-elevated);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 	}
 
-	.skeleton-icon {
-		width: 44px;
-		height: 44px;
-		border-radius: 12px;
-		background: var(--color-bg-subtle);
-		animation: pulse 1.4s ease-in-out infinite;
-	}
-
-	.skeleton-label {
-		width: 56px;
-		height: 9px;
-		border-radius: 4px;
-		background: var(--color-bg-subtle);
-		animation: pulse 1.4s ease-in-out infinite;
-		animation-delay: 0.15s;
-	}
-
-	@keyframes pulse {
-		0%,
-		100% {
-			opacity: 1;
+	/* The column counts come from `$lib/gridGeometry`, largest width first, and
+	   `gridGeometry.test.ts` fails the build if this block stops matching them.
+	   A container query rather than a media query because the grid measures its
+	   own box, and the sidebar is not part of it. */
+	@container (max-width: 820px) {
+		.loading-grid {
+			grid-template-columns: repeat(4, 1fr);
 		}
-		50% {
-			opacity: 0.45;
+	}
+
+	@container (max-width: 560px) {
+		.loading-grid {
+			grid-template-columns: repeat(2, 1fr);
 		}
 	}
 </style>

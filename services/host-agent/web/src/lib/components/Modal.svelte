@@ -238,7 +238,7 @@
 		max-height: 85vh;
 		overflow: visible;
 		background: transparent;
-		box-shadow: var(--shadow-md), 0 20px 40px rgba(0, 0, 0, 0.15);
+		box-shadow: var(--shadow-md), var(--shadow-modal);
 	}
 
 	dialog.modal:focus {
@@ -246,7 +246,7 @@
 	}
 
 	dialog.modal::backdrop {
-		background: rgba(0, 0, 0, 0.4);
+		background: var(--color-scrim);
 		backdrop-filter: blur(2px);
 	}
 

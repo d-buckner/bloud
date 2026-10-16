@@ -193,7 +193,7 @@
 		display: block;
 		width: 44px;
 		height: 24px;
-		background: var(--color-border);
+		background: var(--color-border-strong);
 		border-radius: 12px;
 		padding: 2px;
 		transition: background 0.2s ease;
@@ -207,14 +207,18 @@
 		display: block;
 		width: 20px;
 		height: 20px;
-		background: white;
+		/* The thumb is the inverse of the track, so it needs a token per state and
+		   not a literal. A white thumb on the light active track is the same shape
+		   as a white thumb on the dark one, and only one of them is visible. */
+		background: var(--color-bg-elevated);
 		border-radius: 50%;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-		transition: transform 0.2s ease;
+		box-shadow: var(--shadow-sm);
+		transition: transform 0.2s ease, background 0.2s ease;
 	}
 
 	.widget-toggle.active .toggle-thumb {
 		transform: translateX(20px);
+		background: var(--color-on-accent);
 	}
 
 	.picker-footer {
