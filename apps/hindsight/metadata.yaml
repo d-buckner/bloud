@@ -1,0 +1,279 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: hindsight
+displayName: Hindsight
+description: Agent memory server that lets an AI agent retain facts, recall them, and reflect on them
+category: infrastructure
+port: 9999
+# Measured by summing the amd64 manifest layer sizes of the three images after
+# pulling: Hindsight 928 MB, pgvector/pgvector:pg16 159 MB, nginx:1.29-alpine
+# 55 MB. A registry publishes no uncompressed layer sizes, so this is a sum of
+# compressed bytes, the same basis every other app's estimate uses.
+#
+# The 928 MB is the full image, not the `-slim` one (488 MB). Bloud ships the
+# larger of the two because the slim build has no local embedding model, and an
+# embedding endpoint is one the `inference` contract does not promise. See
+# INTEGRATION.md.
+estimatedSizeMB: 1150
+
+docs:
+  homepage: https://hindsight.vectorize.io/
+  source: https://github.com/vectorize-io/hindsight
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # Hindsight's retain, reflect, and consolidation steps are LLM calls. Bloud is
+  # the endpoint: the configurator points `HINDSIGHT_API_LLM_*` at the resolved
+  # inference binding, so the same Settings row that drives every other AI-aware
+  # app drives this one.
+  #
+  # `required: false` because the operator is the only one who can fill that row,
+  # and an install must not sit in ERROR waiting on a credential only they can
+  # supply. With no binding the configurator selects Hindsight's own `none` LLM
+  # provider, which is a supported mode rather than a broken one: the server
+  # starts, retain stores the text as a chunk, and semantic recall still works.
+  # What is lost is the LLM half (fact extraction, reflect, consolidation), and
+  # Hindsight raises a clear error on those calls instead of a connection failure.
+  # Verified against the real image; see INTEGRATION.md.
+  #
+  # `inference` and not a new contract because the app is agreeing to exactly what
+  # `inference` promises: completions from an OpenAI-compatible endpoint. It does
+  # not dial a transcription route, run an agent, or need tools.
+  inference:
+    required: false
+    multi: false
+    requires:
+      - apiKey
+    compatible:
+      - source: setting
+        default: true
+
+# Two credentials, for two audiences.
+#
+# `mcp` is the machine half: every Hindsight server ships a streamable-HTTP MCP
+# endpoint at `/mcp`, and a harness (Hermes) registers it as a tool namespace
+# that exposes retain, recall, and reflect. The `httpToken` is the bearer the
+# endpoint authenticates with. Hindsight's own API-key tenant extension checks
+# it, so it is a credential the provider validates rather than a string Bloud
+# invented and hopes the app agrees with.
+#
+# `clientPassword` is the human half. Hindsight cannot join the identity
+# provider: it has no OIDC client, no trusted-header mode, and no proxy-auth
+# hook, so `none` is the honest SSO strategy and the Control Plane's access key
+# is the sign-in. Bloud mints it, reveals it once, and can rotate it; rotation
+# reaches the app through the env file the configurator rewrites, which is what
+# makes `rotate: bloud` a mechanism rather than a label.
+provides:
+  mcp:
+    secrets: [httpToken]
+    values:
+      serverName: hindsight
+      # The multi-bank endpoint, not a per-bank one. `/mcp/{bank_id}/` scopes a
+      # connection to one bank and hides the bank-management tools; `/mcp`
+      # exposes all of them and takes `bank_id` per call. A harness that serves
+      # one operator's whole instance wants to create and list banks through the
+      # same namespace, so the wider surface is the one to publish.
+      #
+      # It is a static value rather than a runtime one because nothing has to be
+      # running to know it: the path is fixed by the image, and the gate below
+      # routes exactly this prefix and nothing else.
+      path: /mcp
+  clientPassword:
+    secrets:
+      - password
+    clientAccess:
+      secret: password
+      reveal: once
+      rotate: bloud
+      label: "Hindsight access key"
+      reaches: "Hindsight's web UI, and every memory bank it shows, as one shared instance-wide key"
+      snippet: url-and-key
+
+containers:
+  # Hindsight's own PostgreSQL, with pgvector pre-installed (invariant 3: an app
+  # declares the infrastructure it needs).
+  #
+  # pg16 rather than the pg18 upstream's own compose defaults to. The official
+  # PostgreSQL images made PGDATA version-specific in 18 (`/var/lib/postgresql/
+  # 18/docker`), so a host bind mount written for one major version reads as an
+  # empty directory to the next one and the server initializes a fresh cluster
+  # beside the real data. A stable path plus a pinned tag is the difference
+  # between a reviewed upgrade and silent data loss. pg16 is also the tag AFFiNE
+  # and Immich already pull, so an install of several of these apps downloads one
+  # image, not two.
+  - name: apps-hindsight-postgres
+    image: docker.io/pgvector/pgvector:pg16
+    network: hindsight-internal
+    restartPolicy: always
+    environment:
+      POSTGRES_DB: hindsight
+      POSTGRES_USER: hindsight
+      POSTGRES_PASSWORD: "{{postgresPassword}}"
+    volumes:
+      - source: "{{appDataDir}}/postgres"
+        destination: /var/lib/postgresql/data
+    healthCheck:
+      test: ["CMD-SHELL", "pg_isready -U hindsight -d hindsight"]
+      interval: 5
+      timeout: 5
+      retries: 10
+
+  # The memory server. One container runs both of the processes that matter: the
+  # image's `start-all.sh` starts the API, waits for it to answer `/health`, then
+  # starts the Control Plane, and exits the container if either process dies.
+  # There is nothing for the graph to order inside it.
+  #
+  # It publishes no port. Traefik reaches this app through the gate below, which
+  # is the only container holding the app's port, so neither the API nor the
+  # Control Plane gains a second way in that the gate did not route.
+  - name: apps-hindsight
+    # 1.0.0. The registry tag carries no `v` prefix: upstream's git tag is
+    # `v1.0.0` and the image tag is `1.0.0`.
+    image: ghcr.io/vectorize-io/hindsight:1.0.0
+    # `hindsight-internal` for the database, `apps-net` so the gate can reach
+    # both of its ports by container name.
+    networks: [hindsight-internal, apps-net]
+    dependsOn: [apps-hindsight-postgres]
+    restartPolicy: always
+    environment:
+      # The one variable on this list that Bloud cannot afford to leave unset.
+      # Its default is `pg0`, an embedded PostgreSQL that runs inside this
+      # container and writes to a directory nobody mounted, so an install would
+      # come up healthy, answer every request, and lose everything on the next
+      # recreate, with the postgres container above idle and innocent. Setting
+      # it is what makes that container the database instead of decoration.
+      #
+      # It is also the reason the graph edge is not enough on its own: the server
+      # does not refuse to start when the URL is unreachable, it fails its
+      # migrations, which is a slower and less obvious signal than a refused
+      # connection.
+      HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:{{postgresPassword}}@apps-hindsight-postgres:5432/hindsight
+      # Pinned to the number three other places depend on: the gate's MCP route
+      # dials it, the health check below probes it, and the Control Plane's
+      # dataplane URL below names it. The default is the same value today; it is
+      # written down so a future image that moved it breaks the catalog review
+      # rather than the running app.
+      HINDSIGHT_API_PORT: "8888"
+      # The Control Plane is a Next.js server that calls the API server-side and
+      # re-exposes the result under its own `/api/*` routes, so a browser only
+      # ever needs the Control Plane origin. Same container, so loopback.
+      #
+      # This one is explicit for a different reason than the port above: it is
+      # the wire between the two processes in this container, and getting it wrong
+      # produces a UI that loads, signs in, and then 401s on every panel.
+      HINDSIGHT_CP_DATAPLANE_API_URL: http://localhost:8888
+      # The MCP endpoint is what this app publishes through the `mcp` contract, so
+      # a future upstream that changed the default would otherwise take the tool
+      # namespace down quietly.
+      HINDSIGHT_API_MCP_ENABLED: "true"
+      # The image's own supervisor kills the container when the API has not
+      # answered `/health` within this window, and it follows
+      # HINDSIGHT_API_MODEL_INIT_TIMEOUT when that is longer. First boot runs
+      # Alembic migrations against an empty database and loads two local models.
+      # 300s is the default, and the health-check retries below are budgeted
+      # against exactly this number.
+      HINDSIGHT_API_STARTUP_WAIT_SECONDS: "300"
+    # Written by the configurator on every pass, and never mounted: the runtime
+    # reads it on the host when it creates the container, so these values stay out
+    # of the container spec and out of `podman inspect`. It is the only way a
+    # resolved contract binding reaches this image, which takes its whole
+    # configuration through process environment and nothing else.
+    #
+    # It carries the two credentials this app mints (the MCP bearer and the
+    # Control Plane access key) and the LLM endpoint the inference binding
+    # resolved to. The database password is not here: `{{postgresPassword}}` is
+    # static metadata the renderer can substitute, so it stays in `environment:`.
+    envFile: "{{appDataDir}}/config/env"
+    healthCheck:
+      # The readiness endpoint: it takes a database connection, so a pass means
+      # the API and its database agree, which is what promotion to RUNNING should
+      # mean. `/health/live` would answer during the window where the process is
+      # up and the database is not.
+      #
+      # The image is a Python image with no curl and no wget, but it ships its own
+      # probe module for exactly this, and `start-all.sh` uses it for the same
+      # /health URL. Using the image's own probe rather than a hand-written one
+      # means the container and the supervisor agree on what "ready" means.
+      test:
+        - CMD-SHELL
+        - python3 -m hindsight_api.http_probe http://127.0.0.1:8888/health 5
+      interval: 10
+      timeout: 10
+      # 30 retries at 10s is 300s, which is HINDSIGHT_API_STARTUP_WAIT_SECONDS
+      # above and no more. Past that point the image's own supervisor has already
+      # killed the container for not coming up, so extra retries would only be
+      # polling a process that no longer exists.
+      retries: 30
+
+  # The front door, in the literal sense: this is the only container that
+  # publishes the app's port, so Traefik's generated service points here and
+  # nothing reaches the server around it.
+  #
+  # It exists because this app has two surfaces and Bloud routes an app on one
+  # port. `extraPorts` is the other answer, and it is the wrong one here: an
+  # extra port has to be reachable on the host for Traefik to dial it, and the
+  # documented rule is that an extra port is not a published port. A proxy that
+  # branches on a path prefix keeps the second surface behind the one port this
+  # app already publishes. This is the shape apps/ha-mcp already uses for the
+  # same reason.
+  #
+  # The gate does no authentication of its own. Both surfaces behind it check their
+  # own credential: the API refuses anything that does not carry the published MCP
+  # bearer, and the Control Plane refuses anything that has not presented the
+  # access key. A second check here would be a copy of a credential the gate does
+  # not own. What the gate does own is the locked shape: while either credential
+  # is missing it serves neither surface. See gate.go.
+  - name: apps-hindsight-gate
+    image: docker.io/library/nginx:1.29-alpine
+    network: apps-net
+    # The server's credentials are what the route is built from, and the server
+    # node's PreStart is what mints them, so the gate is ordered after it.
+    dependsOn: [apps-hindsight]
+    restartPolicy: always
+    ports:
+      # The app's port, and the only published one.
+      - host: 9999
+        container: 9999
+    volumes:
+      - source: "{{appDataDir}}/config/nginx.conf"
+        destination: /etc/nginx/bloud.conf.template
+        options: [ro]
+    # The generated config carries one placeholder: the address of the DNS
+    # resolver nginx must use. nginx resolves a literal upstream name once, at
+    # config load, and then never again, so a static `proxy_pass` would pin the
+    # server's container IP and answer 502 forever the moment that container is
+    # recreated with a new one. A variable upstream plus a `resolver` makes nginx
+    # re-resolve every few seconds instead.
+    #
+    # The resolver address is only knowable from inside the container: podman puts
+    # its per-network DNS at that network's gateway, and the gateway address
+    # depends on how many networks already exist. Measured on one host, the host's
+    # own /etc/resolv.conf named 10.0.0.1 and the container's named 10.89.0.1,
+    # and only the second one answers. So the entrypoint reads it from the
+    # container and substitutes it, then runs nginx from the result.
+    #
+    # The result goes to /tmp, not back over the mount: the mount is read-only,
+    # and even if it were writable, a container editing a file Bloud manages would
+    # make every reconciliation pass see a diff, restart the gate, and never
+    # settle. nginxResolverScript in gate.go is this command, and a test asserts
+    # the two agree.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        resolver="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)"
+        test -n "$resolver"
+        sed "s|@RESOLVER@|$resolver|" /etc/nginx/bloud.conf.template > /tmp/bloud.conf
+        exec nginx -g 'daemon off;' -c /tmp/bloud.conf
+    healthCheck:
+      # Answered by nginx itself, not proxied: a server mid-restart is not a dead
+      # gate, and a probe that follows the upstream turns every reconcile of the
+      # server into a failed gate.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9999/healthz"]
+      interval: 10
+      timeout: 10
+      retries: 6

@@ -244,6 +244,7 @@ func TestDeriveRealCatalog(t *testing.T) {
 		"9222 AFFiNE MCP",
 		"9333 DAV MCP",
 		"9696 Prowlarr",
+		"9999 Hindsight",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("derived list changed:\n%s\n\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

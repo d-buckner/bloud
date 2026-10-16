@@ -218,6 +218,7 @@ Every other row is a debug port, and the table is generated from `apps/*/metadat
 | 9222 | AFFiNE MCP | debugging |
 | 9333 | DAV MCP | debugging |
 | 9696 | Prowlarr | debugging |
+| 9999 | Hindsight | debugging |
 Not forwarded: 6881 (qbittorrent: host port 6881 already forwards qBittorrent); 8080 (traefik: host port 8080 already forwards Traefik: the user-facing port)
 <!-- END GENERATED DEBUG PORTS -->
 

@@ -111,6 +111,14 @@ flowchart TD
         c_hermes_webui["hermes-webui"]
     end
 
+    subgraph app_hindsight["Hindsight"]
+        c_hindsight_postgres["postgres"]
+        c_hindsight["hindsight"]
+        c_hindsight_gate["gate"]
+        c_hindsight --> c_hindsight_postgres
+        c_hindsight_gate --> c_hindsight
+    end
+
     subgraph app_homeassistant["Home Assistant"]
         c_homeassistant["homeassistant"]
     end
@@ -218,9 +226,11 @@ flowchart TD
     app_hermes -->|native-oidc| app_authentik
     app_hermes -->|mcp| app_dav_mcp
     app_hermes -->|mcp| app_ha_mcp
+    app_hermes -->|mcp| app_hindsight
     app_hermes -->|mcp| app_penpot
     app_hermes -->|inference| ai_model
     app_hermes_webui -->|agentApi| app_hermes
+    app_hindsight -->|inference| ai_model
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
     app_jellyfin -->|ldap| app_authentik
@@ -252,6 +262,7 @@ flowchart TD
     app_traefik -->|proxy| app_ha_mcp
     app_traefik -->|proxy| app_hermes
     app_traefik -->|proxy| app_hermes_webui
+    app_traefik -->|proxy| app_hindsight
     app_traefik -->|proxy| app_homeassistant
     app_traefik -->|proxy| app_immich
     app_traefik -->|proxy| app_jellyfin
@@ -286,6 +297,7 @@ removal.
 - **DAV MCP**: MCP tool server for the calendars and contacts Bloud already serves, so agents read and write events, to-dos, and address books
 - **Hermes**: Self-improving AI agent with persistent memory, scheduled automations, and a web dashboard
 - **Hermes Web UI**: Browser and mobile front end for the Hermes agent, with SSO sign-in and a dedicated client password
+- **Hindsight**: Agent memory server that lets an AI agent retain facts, recall them, and reflect on them
 - **Home Assistant**: Open-source home automation platform
 - **Home Assistant MCP**: MCP tool server for Home Assistant, so an agent can search entities and design automations against the instance Bloud already runs
 - **Immich**: Self-hosted photo and video management
@@ -324,7 +336,7 @@ It's built for things you have the right to use.
 | **LDAP** | Jellyfin, Radicale, Seerr |
 | **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
 | **Native OIDC** | AFFiNE, Hermes, Hermes Web UI, Home Assistant, Immich, Paperless-ngx, Penpot, Vaultwarden |
-| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Home Assistant MCP, Podly |
+| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Hindsight, Home Assistant MCP, Podly |
 <!-- END GENERATED LOGIN TABLE -->
 
 Clients that speak a native protocol, a Subsonic player or a TV app talking to Jellyfin, keep
