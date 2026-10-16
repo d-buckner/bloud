@@ -26,10 +26,14 @@ export type EdgeKind = 'ingress' | 'proxy' | 'identity' | 'integration' | 'depen
  * heavier than the container borders starts to read as the subject of the
  * picture rather than the wiring under it.
  *
- * `#57534E` on the canvas (#FAF9F6) is 7.0:1, far past the 3:1 a meaningful
- * graphic needs (WCAG 1.4.11), so a line this thin is still a line you can see.
+ * The stroke names a token, not a hex, because the graph draws on the page
+ * canvas and the canvas follows the theme. `--color-text-secondary` is `#57534E`
+ * on the light canvas `#FAF9F6` and `#C6C1BB` on the dark canvas `#1C1917`, so
+ * one line clears the 3:1 a meaningful graphic needs (WCAG 1.4.11) in either
+ * palette. `edgeKinds.test.ts` measures both, so this sentence is checked and
+ * not trusted.
  */
-export const EDGE_STYLE = { stroke: '#57534E', width: 1 } as const;
+export const EDGE_STYLE = { stroke: 'var(--color-text-secondary)', width: 1 } as const;
 
 /**
  * Whether an edge of this kind draws its label.
