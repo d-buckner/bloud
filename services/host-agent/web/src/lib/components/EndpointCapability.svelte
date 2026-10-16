@@ -149,7 +149,7 @@
 	}
 </script>
 
-<div class="capability">
+<div class="capability" data-contract={contract}>
 	<h3 class="capability-title">{label}</h3>
 	<p class="capability-description">{description}</p>
 

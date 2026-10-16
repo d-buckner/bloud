@@ -3,7 +3,7 @@ import { test, expect } from '../lib/fixtures';
 import * as api from '../lib/api';
 
 /**
- * The Settings -> Transcription round trip.
+ * The transcription half of Settings -> AI, end to end.
  *
  * Two things here could break quietly, and both look like a working page.
  *
@@ -30,7 +30,7 @@ import * as api from '../lib/api';
 const ENDPOINT = 'https://transcribe.example.test/v1';
 const MODEL = 'whisper-large-v3-turbo';
 
-test.describe('podly transcription settings (Settings -> Transcription)', () => {
+test.describe('podly transcription settings (Settings -> AI)', () => {
   test('the section loads and reports the stored endpoint', async ({
     authenticatedPage: page,
     api: apiLib,
@@ -38,12 +38,12 @@ test.describe('podly transcription settings (Settings -> Transcription)', () => 
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
 
-    const section = page.locator('.transcription-section');
+    const section = page.locator('[data-contract="transcription"]');
     await expect(section).toBeVisible({ timeout: 15_000 });
-    await expect(section.locator('#tr-base-url')).toBeVisible();
+    await expect(section.locator('#transcription-base-url')).toBeVisible();
 
     const live = await apiLib.getTranscriptionSettings();
-    await expect(section.locator('#tr-base-url')).toHaveValue(live.baseUrl);
+    await expect(section.locator('#transcription-base-url')).toHaveValue(live.baseUrl);
   });
 
   test('the endpoint and model survive the save; the path does not get stripped', async ({
@@ -78,12 +78,12 @@ test.describe('podly transcription settings (Settings -> Transcription)', () => 
 
       await page.goto('/settings');
       await page.waitForLoadState('domcontentloaded');
-      const section = page.locator('.transcription-section');
+      const section = page.locator('[data-contract="transcription"]');
       await expect(section).toBeVisible({ timeout: 15_000 });
 
       // The field is blank and marked "stored": the page knows a key exists
       // without knowing what it is.
-      await expect(section.locator('#tr-key')).toHaveValue('');
+      await expect(section.locator('#transcription-key')).toHaveValue('');
       // Exact, not substring: the hint under the field reads "Leave blank to
       // keep the stored key.", so a loose match resolves to two nodes and the
       // assertion becomes a strict-mode violation whenever a key is stored.
@@ -110,10 +110,10 @@ test.describe('podly transcription settings (Settings -> Transcription)', () => 
       // key field alone: no apiKey field at all in the payload.
       await page.goto('/settings');
       await page.waitForLoadState('domcontentloaded');
-      const section = page.locator('.transcription-section');
+      const section = page.locator('[data-contract="transcription"]');
       await expect(section).toBeVisible({ timeout: 15_000 });
 
-      await section.locator('#tr-model').fill('whisper-1');
+      await section.locator('#transcription-model').fill('whisper-1');
       await section.getByRole('button', { name: /^Save$/ }).click();
       await expect(page.getByText('Saved. Apps pick this up on their next pass.')).toBeVisible({
         timeout: 15_000,
@@ -135,11 +135,11 @@ test.describe('podly transcription settings (Settings -> Transcription)', () => 
 
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
-    const section = page.locator('.transcription-section');
+    const section = page.locator('[data-contract="transcription"]');
     await expect(section).toBeVisible({ timeout: 15_000 });
 
     await section.getByRole('button', { name: /^Remove$/ }).click();
-    await expect(section.locator('#tr-base-url')).toHaveValue('', { timeout: 15_000 });
+    await expect(section.locator('#transcription-base-url')).toHaveValue('', { timeout: 15_000 });
 
     const live = await apiLib.getTranscriptionSettings();
     expect(live.configured).toBe(false);
