@@ -1315,6 +1315,7 @@ to the right doc. When a doc moves, update it in both places.
 |Back up, restore, and update an install|[operations/backup-restore.md](docs/operations/backup-restore.md)|
 |Sharing/federation (removed)|archived design in [docs/plans/archive/](docs/plans/archive/)|
 |MCP servers as catalog apps (shipped: the catalog carries MCP providers, and Hermes is a consumer)|[features/mcp.md](docs/features/mcp.md)|
+|The agent's long-term memory (the `memory` contract, the pin, the two files Hermes owns)|[features/memory.md](docs/features/memory.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
 | Agent API + multi-port apps (`extraPorts`, `agentApi` contract) | [features/agent-api.md](docs/features/agent-api.md) |
 | Speech-to-text endpoint the instance declares (`transcription` contract) | [features/transcription.md](docs/features/transcription.md) |

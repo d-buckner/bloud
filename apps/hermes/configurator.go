@@ -104,9 +104,16 @@ type Configurator struct {
 
 	// exec runs a command inside the running Hermes container. It is the
 	// fallback reader for config.yaml, which the host agent cannot read once
-	// the container owns it (see readConfig). Nil in CLI/test contexts, where
-	// a denied host read has no remedy.
+	// the container owns it (see readConfig), and the way the memory provider's
+	// plugin is installed. Nil in CLI/test contexts, where a denied host read has
+	// no remedy and no plugin can be installed.
 	exec configurator.ExecFunc
+
+	// restartContainer stops and starts the container through the host runtime.
+	// The memory provider's plugin is read when the gateway starts, and a plugin
+	// installed while the gateway is already running is not loaded until it
+	// restarts. Nil in CLI/test contexts.
+	restartContainer func(ctx context.Context, name string) error
 
 	// containerRunning reports whether the Hermes container is up. readConfig
 	// uses it to tell "stopped, so the read cannot be attempted" from "running
@@ -131,6 +138,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger:           configurator.AppLogger(deps.Logger, appName),
 		exec:             deps.Runtime.Exec,
 		containerRunning: deps.Runtime.ContainerRunning,
+		restartContainer: deps.Runtime.RestartContainer,
 		secrets:          deps.Secrets,
 	}
 	if deps.HTTP != nil {
@@ -326,28 +334,72 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	}
 
 	applyMCPServers(doc, state)
+	pruneRetiredMCPServers(doc, state)
 	// After applyMCPServers: the pin is written only when a namespace survives
 	// this pass, so the two managed sections cannot disagree about what the
 	// agent actually has.
 	applyToolSearch(doc, state)
+	applyMemoryProvider(doc, state)
+
+	written, err := c.writeManagedConfig(cfgPath, doc, base, state)
+	if err != nil {
+		return configurator.NoRestart(), err
+	}
+	if written.any() {
+		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive, "inference", hasInference,
+			"mcpServers", mcpServerNames(state), "toolSearch", toolSearchPolicy(doc),
+			"memoryProvider", memoryProviderOf(doc), "memoryConfig", written.memory)
+	}
+	return configurator.RestartIf(written.any(), "Hermes config rewritten"), nil
+}
+
+// managedConfigWrite records what one pass had to change, so the phase can report
+// it and decide whether the container has to read the files again.
+//
+// Two flags rather than one: they are two files, and the log line names which one
+// moved. `memory` is separate because the memory provider's config carries a bearer
+// that can rotate, and a rotation is the ordinary reason only that file changes.
+type managedConfigWrite struct {
+	config bool
+	memory bool
+}
+
+func (w managedConfigWrite) any() bool { return w.config || w.memory }
+
+// writeManagedConfig puts both managed files on disk: Hermes' own config, and the
+// memory provider's settings beside it.
+//
+// The YAML is compared semantically against *base*, the document as it was
+// parsed, so a re-parse-and-re-marshal of an unchanged file reports no change. The
+// memory config is written on every pass instead: it holds the provider's address
+// and a bearer, both of which can move while config.yaml is already right, and it
+// compares its own bytes.
+func (c *Configurator) writeManagedConfig(
+	cfgPath string,
+	doc map[string]any,
+	base []byte,
+	state *configurator.AppState,
+) (managedConfigWrite, error) {
+	var written managedConfigWrite
 
 	want, err := yaml.Marshal(doc)
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("serializing %s: %w", cfgPath, err)
+		return written, fmt.Errorf("serializing %s: %w", cfgPath, err)
 	}
-	if bytes.Equal(base, want) {
-		return configurator.NoRestart(), nil
+	if !bytes.Equal(base, want) {
+		written.config, err = managedfile.Write(cfgPath, want, managedfile.ModeSharedConfig)
+		if err != nil {
+			return written, fmt.Errorf("writing %s: %w%s", cfgPath, err, permissionHint(err))
+		}
 	}
 
-	changed, err := managedfile.Write(cfgPath, want, managedfile.ModeSharedConfig)
-	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("writing %s: %w%s", cfgPath, err, permissionHint(err))
+	if binding, ok := memoryBinding(state); ok {
+		written.memory, err = c.writeMemoryConfig(state, binding)
+		if err != nil {
+			return written, fmt.Errorf("writing the memory provider config: %w", err)
+		}
 	}
-	if changed {
-		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive, "inference", hasInference,
-			"mcpServers", mcpServerNames(state), "toolSearch", toolSearchPolicy(doc))
-	}
-	return configurator.RestartIf(changed, "Hermes config rewritten"), nil
+	return written, nil
 }
 
 // --- MCP servers ---
@@ -383,6 +435,37 @@ func applyMCPServers(doc map[string]any, state *configurator.AppState) {
 			continue
 		}
 		mapAt(doc, mcpServersKey)[name] = entry
+	}
+}
+
+// retiredMCPServers are namespaces Bloud wrote and no longer wires, mapped to the
+// reason. The add/remove rule above covers a provider that is declared but not
+// installed; it cannot cover a provider Bloud stopped declaring, because nothing
+// resolves for it any more and its entry would sit in the operator's config
+// forever, pointing at a route the gate no longer serves.
+//
+// Deleting a name here is the same claim the wiring makes: the namespace is
+// Bloud's, so a retired one is Bloud's to clean up. The value is not decoration.
+// A name whose provider is wired again would delete a live entry, so a test
+// proves each entry still names a namespace nothing offers; an entry that guards
+// nothing is itself a failure, the same rule the catalog's exception tables
+// follow.
+var retiredMCPServers = map[string]string{
+	"hindsight": "Hindsight serves the `memory` contract now; the harness activates it as its own memory provider",
+}
+
+// pruneRetiredMCPServers removes the entries above, and only when Bloud is not
+// wiring that name this pass: a provider that came back keeps its entry.
+func pruneRetiredMCPServers(doc map[string]any, state *configurator.AppState) {
+	live := map[string]bool{}
+	for _, name := range mcpServerNames(state) {
+		live[name] = true
+	}
+	for name := range retiredMCPServers {
+		if live[name] {
+			continue
+		}
+		removeMCPServer(doc, name)
 	}
 }
 
@@ -466,18 +549,79 @@ func mcpServerEntry(b bindings.MCPBinding) (map[string]any, bool) {
 // provider registered (not the bundled password provider, and not an
 // accidental loopback bind with the gate off). A green pass means the Bloud
 // OIDC integration is the thing standing in front of this dashboard.
+//
+// The memory provider is the second thing this phase owns, and for the opposite
+// reason: it needs the container running to install its plugin, so it cannot wait
+// for PreStart.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
 	if err := c.api.waitDashboard(ctx); err != nil {
 		return fmt.Errorf("waiting for hermes dashboard: %w", err)
 	}
-	if state == nil || !state.SSOEnabled || state.OIDC == nil {
+	if state != nil && state.SSOEnabled && state.OIDC != nil {
+		if err := c.api.waitSelfHostedProvider(ctx); err != nil {
+			return fmt.Errorf("verifying self-hosted OIDC provider: %w", err)
+		}
+		c.logger.Info("Hermes dashboard serving under Bloud SSO", "issuer", state.OIDC.IssuerURL)
+		if err := c.publishAgentAPIKey(ctx); err != nil {
+			return err
+		}
+	}
+	return c.startMemoryProvider(ctx, state)
+}
+
+// startMemoryProvider installs the pinned plugin and restarts the container when it
+// had to, which is the one step of the memory integration that cannot happen in
+// PreStart: the plugin is installed with a command run inside the container, and
+// the container is not up until this phase.
+//
+// The restart is what the vendor's own install message asks for ("Restart the
+// gateway for the plugin to take effect"). It is bounded to the pass that
+// installed the plugin: the record the installer writes is compared before
+// anything runs, so a later pass finds the pin already in place and leaves the
+// running agent alone.
+//
+// Everything here is best-effort except the restart itself. A clone that fails on
+// a slow network leaves the agent running with the memory it had and is retried on
+// the next pass, which is the honest outcome for an enhancement; a container that
+// cannot be restarted after a successful install is a wiring fault, and says so.
+func (c *Configurator) startMemoryProvider(ctx context.Context, state *configurator.AppState) error {
+	binding, ok := memoryBinding(state)
+	if !ok {
 		return nil
 	}
-	if err := c.api.waitSelfHostedProvider(ctx); err != nil {
-		return fmt.Errorf("verifying self-hosted OIDC provider: %w", err)
+	installed, err := c.ensureMemoryPlugin(ctx, state, binding)
+	if err != nil {
+		c.logger.Warn("the Hermes memory plugin is not in place; the agent keeps its current memory configuration",
+			"plugin", memoryPluginName(binding), "error", err)
+		return nil
 	}
-	c.logger.Info("Hermes dashboard serving under Bloud SSO", "issuer", state.OIDC.IssuerURL)
-	return c.publishAgentAPIKey(ctx)
+	if !installed {
+		return nil
+	}
+	if c.restartContainer == nil {
+		return errors.New("the memory plugin was installed but no container restart is wired to load it")
+	}
+	c.logger.Info("installed the Hermes memory plugin; restarting the container so the gateway loads it",
+		"plugin", memoryPluginName(binding), "commit", binding.PluginCommit)
+	if err := c.restartContainer(ctx, nodeName); err != nil {
+		return fmt.Errorf("the memory plugin is installed but the container could not be restarted: %w", err)
+	}
+	return nil
+}
+
+// memoryProviderOf names the memory provider choice for the config-change log
+// line. It reads the merged document, so it reports what Hermes will see rather
+// than what Bloud wanted.
+func memoryProviderOf(doc map[string]any) string {
+	memory, ok := doc[memoryKey].(map[string]any)
+	if !ok {
+		return "unset"
+	}
+	value, ok := memory[memoryProviderKey].(string)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "unset"
+	}
+	return value
 }
 
 // agentAPIKeyEnvVar is the name Hermes stores its agent API bearer under in

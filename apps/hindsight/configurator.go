@@ -12,15 +12,15 @@
 //     metadata.
 //   - apps-hindsight-gate, the nginx front that holds the app's only published
 //     port and branches it between the server's two surfaces. Its PreStart writes
-//     the nginx config, and its PostStart is where the composed MCP endpoint is
+//     the nginx config, and its PostStart is where the composed memory API is
 //     proven, because the gate is the last node to come up and the only address
 //     anything outside this app can dial.
 //
 // apps-hindsight-postgres needs no configurator: it is a declared container with
 // a declared health check, and the orchestrator drives a node with none.
 //
-// The two nodes share two credentials, both minted here: the bearer the MCP
-// endpoint authenticates with, and the key the web UI demands at its sign-in.
+// The two nodes share two credentials, both minted here: the bearer the memory
+// API authenticates with, and the key the web UI demands at its sign-in.
 // See INTEGRATION.md for what each one is the boundary for.
 package hindsight
 
@@ -49,7 +49,7 @@ const (
 	defaultPort = 9999
 
 	// apiPort is the port the memory API listens on inside the server container.
-	// The gate routes the MCP path here and the Control Plane everything else, so
+	// The gate routes the API paths here and the Control Plane everything else, so
 	// the number is a fact both this package and metadata.yaml need.
 	apiPort = 8888
 
@@ -95,8 +95,10 @@ const (
 	// on a credential only they can supply.
 	llmProviderNone = "none"
 
-	// httpTokenKey is the secret name the `mcp` contract carries: the bearer a
-	// consumer presents and the API checks.
+	// httpTokenKey is the secret name the `memory` contract carries: the bearer a
+	// consumer presents and the API checks. The image's own env var for it is
+	// HINDSIGHT_API_TENANT_API_KEY, which is a fact of the app rather than of the
+	// contract, so the two names stay separate.
 	httpTokenKey = "httpToken"
 
 	// passwordKey is the secret name the `clientPassword` contract carries: the
@@ -165,7 +167,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	}
 	if result.RestartNeeded {
 		c.logger.Info("wrote hindsight config", "path", envPath,
-			"mcp_bearer", bearer != "", "access_key", accessKey != "", "llm", llmProviderOf(hasInference))
+			"api_bearer", bearer != "", "access_key", accessKey != "", "llm", llmProviderOf(hasInference))
 	}
 	return result, nil
 }
@@ -190,7 +192,7 @@ func (c *Configurator) PostStart(_ context.Context, _ *configurator.AppState) er
 
 // --- credentials ---
 
-// ensureCredentials returns the bearer MCP consumers present and the key the web
+// ensureCredentials returns the bearer memory consumers present and the key the web
 // UI signs in with, generating and publishing either on first use.
 //
 // Both containers need both values, and either node's PreStart may run first, so
@@ -202,12 +204,12 @@ func ensureCredentials(secrets configurator.AppSecretsProvider, logger *slog.Log
 	if secrets == nil {
 		return "", "", nil
 	}
-	bearer, minted, err := configurator.EnsureSecret(secrets, appName, httpTokenKey, 32, "MCP bearer")
+	bearer, minted, err := configurator.EnsureSecret(secrets, appName, httpTokenKey, 32, "memory API bearer")
 	if err != nil {
 		return "", "", err
 	}
 	if minted {
-		logger.Info("generated the hindsight MCP bearer")
+		logger.Info("generated the hindsight memory API bearer")
 	}
 	accessKey, minted, err = configurator.EnsureSecret(secrets, appName, passwordKey, 32, "access key")
 	if err != nil {

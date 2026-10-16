@@ -362,6 +362,20 @@ var contractBinders = map[string]contractBinder{
 			Token:       o.publishedSecret(src, "mcp", offer, requires),
 		})
 	},
+	"memory": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		// The address and bearer, plus the three facts the harness needs to
+		// install the plugin that speaks this API. All three are static
+		// metadata: a plugin's catalog name, its pin, and where it reads its
+		// config are decisions its publisher made, not values a running
+		// container reports.
+		out.Memories = append(out.Memories, bindings.MemoryBinding{
+			ProviderRef:      ref,
+			Token:            o.publishedSecret(src, "memory", offer, requires),
+			PluginName:       o.contractValue(src, "memory", offer, "pluginName"),
+			PluginCommit:     o.contractValue(src, "memory", offer, "pluginCommit"),
+			PluginConfigPath: o.contractValue(src, "memory", offer, "pluginConfigPath"),
+		})
+	},
 	"appApi": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// The username is a non-secret value the provider mints at runtime (the
 		// account it bootstrapped), so it resolves through the published-value

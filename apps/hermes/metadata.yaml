@@ -41,6 +41,11 @@ integrations:
   # scoped bearer and nothing else. Each entry lands in Hermes' own
   # `mcp_servers` map under the provider's serverName, so installing an
   # MCP-capable app gives the agent a new namespace without any Hermes change.
+  #
+  # Hindsight is deliberately not on this list. It served a tool namespace here
+  # until it gained the `memory` contract below, and one server with two memories
+  # is worse than either one alone: the model chooses which surface to write to,
+  # and the two banks drift apart. See apps/hermes/INTEGRATION.md.
   mcp:
     required: false
     multi: true
@@ -71,12 +76,6 @@ integrations:
       # long-lived token Bloud minted for the owner account. Same shape as the
       # other wrappers: Hermes changes nothing when the app appears.
       - app: ha-mcp
-      # The memory. Hindsight is not a wrapper around another app: it is a store
-      # the agent keeps facts in and reads back, so its namespace answers the
-      # question the others cannot, which is what the agent knew last week.
-      # Declared on the same terms as the rest: install it and the agent gains the
-      # namespace, uninstall it and the entry goes away on the next pass.
-      - app: hindsight
       # The music library. Navidrome holds the collection and `apps/navidrome-mcp`
       # exposes it as a tool namespace over one Navidrome account, which is what
       # answers "what have I actually been listening to" and builds the playlist
@@ -90,6 +89,34 @@ integrations:
       # Plugin API code against the focused page, and the model doing that is
       # whatever Bloud's AI settings point Hermes at.
       - app: penpot
+  # The agent's long-term memory. This is not an MCP tool namespace, and the
+  # difference is the reason it is a separate contract: a namespace makes the
+  # model remember by calling a tool, and this makes the harness remember by
+  # capturing each turn and injecting what it learned. Install the provider and the
+  # agent keeps facts across sessions; uninstall it and the plugin stops being
+  # configured on the next pass.
+  #
+  # `multi: false` because Hermes activates exactly one memory provider (its
+  # plugin manifest marks a provider `kind: exclusive`). Two bindings would not
+  # mean "keep both": the harness picks one, and the other's memory sits in a
+  # server nothing reads. There is one compatible provider today, so the set has
+  # one entry either way; the flag states the rule rather than describing the
+  # current catalog.
+  #
+  # `requires: [httpToken]` is the whole consumer surface: the bearer the
+  # provider's own API checks, which the plugin's config file carries and nothing
+  # else does. The address arrives unasked, from the provider's published port.
+  memory:
+    required: false
+    multi: false
+    requires:
+      - httpToken
+    compatible:
+      # The memory server. Hindsight is not a wrapper around another app: it is a
+      # store the agent keeps facts in and reads back, so its API answers the
+      # question the tool namespaces cannot, which is what the agent knew last
+      # week.
+      - app: hindsight
 
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider

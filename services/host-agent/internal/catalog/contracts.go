@@ -333,6 +333,62 @@ var contracts = []Contract{
 		},
 	},
 
+	// A long-term memory server an agent harness keeps facts in: the endpoint
+	// its own API answers on, and the bearer that API authenticates with.
+	//
+	// This is a separate contract from `mcp` on purpose, and the difference is
+	// what the two make the harness do. `mcp` hands the harness a tool
+	// namespace: the model decides to call `retain` or `recall`, so a memory
+	// reached that way is remembered only when the model thinks to ask, and it
+	// is recalled only when the model thinks to look. This contract says the
+	// harness itself holds the memory: it captures each turn and injects what
+	// it has learned without a tool call in between. A provider satisfies one
+	// or the other, and a consumer that asked for memory would not be served by
+	// a tool namespace, nor the reverse. Invariant 15 makes that a new contract
+	// entry rather than a flag on `mcp`.
+	//
+	// The harness activates exactly one memory provider, so a consumer
+	// declares `multi: false`: two bindings would not mean "keep both", it
+	// would mean the harness picks one and the other's memory is written to a
+	// server nobody reads. That exclusivity is a Hermes rule (its plugin
+	// manifest marks a memory provider `kind: exclusive`), so the consumer
+	// states it rather than the contract.
+	//
+	// There is no `SatisfiedBy`. A memory server holds facts in its own store,
+	// and no other contract in the registry promises a store to write them to.
+	//
+	// `httpToken` is the bearer the provider's own API authenticates with. It
+	// is not the provider's admin credential and never the credential of an
+	// app behind it. A provider that already publishes such a token for `mcp`
+	// names the same secret here, because it is the same credential its API
+	// validates: one server, one key, two contracts that read it for two
+	// different purposes.
+	//
+	// The contract carries no `path` value. A memory client composes its own
+	// API paths from the origin it is given, so a path declared here would be
+	// a second source for a fact the client already owns.
+	//
+	// The three values are the harness's half of the integration, and they are
+	// values because only the provider knows them: the name its plugin answers
+	// to in the harness's plugin catalog, the commit to install it at, and where
+	// that plugin reads its own configuration. Declaring them keeps a second
+	// provider a metadata change rather than a code change in every harness,
+	// which is the property the contract exists to hold.
+	//
+	// `pluginCommit` is the pin. A harness that installs the plugin by catalog
+	// name follows the vendor's pin, which moves without this repository
+	// reviewing it, so the commit belongs in the metadata beside the container
+	// image digests for the same reason they do.
+	{
+		Name:    "memory",
+		Secrets: []string{"httpToken"},
+		Values: []ValueSpec{
+			{Key: "pluginName"},
+			{Key: "pluginCommit"},
+			{Key: "pluginConfigPath"},
+		},
+	},
+
 	// A credential into another app's own API, for a companion that is not a
 	// browser and cannot join the identity provider: an MCP wrapper, a bot, a
 	// bridge process. The provider publishes the account's username as a value

@@ -21,6 +21,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Build the .deb release package | [operations/packaging.md](operations/packaging.md) |
 | Back up, restore, and update an install | [operations/backup-restore.md](operations/backup-restore.md) |
 | How MCP servers work in Bloud (shipped: the catalog carries MCP providers) | [features/mcp.md](features/mcp.md) |
+| How the agent's long-term memory works (the `memory` contract, and why it is not an MCP namespace) | [features/memory.md](features/memory.md) |
 | Dashboard layout + widgets | [features/dashboard.md](features/dashboard.md) |
 | Agent API + multi-port apps (`extraPorts`, the `agentApi` contract) | [features/agent-api.md](features/agent-api.md) |
 | Speech-to-text: the instance's transcription endpoint and the `transcription` contract | [features/transcription.md](features/transcription.md) |
