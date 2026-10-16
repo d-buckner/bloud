@@ -16,31 +16,20 @@ import (
 // consumer reach, and therefore the one that can check what the install actually
 // became.
 type frontendConfigurator struct {
+	configurator.Base
 	logger *slog.Logger
 	api    *penpotAPI
 	mcp    *mcpPublisher
-
-	// baseURL is a test seam: when set, the API client resolves to it instead
-	// of localhost:defaultPort.
-	baseURL string
 }
 
 func newFrontendConfigurator(deps configurator.Deps) *frontendConfigurator {
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	logger = logger.With("app", appName)
+	logger := configurator.AppLogger(deps.Logger, appName)
 	c := &frontendConfigurator{
+		Base:   configurator.NewBase(0, defaultPort, frontendNode),
 		logger: logger,
 	}
 	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", defaultPort)
-		})
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
 	}
 	c.mcp = &mcpPublisher{
 		secrets: deps.Secrets,
@@ -51,13 +40,6 @@ func newFrontendConfigurator(deps configurator.Deps) *frontendConfigurator {
 	}
 	return c
 }
-
-func (c *frontendConfigurator) Name() string { return frontendNode }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *frontendConfigurator) Port() int { return defaultPort }
 
 // PreStart guarantees the shared env file exists before this node's container is
 // created, and reports a recreate when this node's container was created from

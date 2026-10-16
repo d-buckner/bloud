@@ -421,7 +421,7 @@ func apiConfigurator(t *testing.T, fake *fakeAffine, secrets *storeSecrets) *Con
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, Logger: quietLogger(), HTTP: appclient.Factory{}})
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	return c
 }
 

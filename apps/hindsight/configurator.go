@@ -114,13 +114,9 @@ type Configurator struct {
 
 // NewConfigurator builds the server node's configurator.
 func NewConfigurator(_ int, deps configurator.Deps) *Configurator {
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	return &Configurator{
 		secrets: deps.Secrets,
-		logger:  logger.With("app", appName, "node", nodeName),
+		logger:  configurator.AppLogger(deps.Logger, appName).With("node", nodeName),
 	}
 }
 
@@ -163,16 +159,15 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	// passes the values into the container's environment, so the file is never
 	// mounted and no container process ever needs it. The gate's nginx.conf is the
 	// opposite case and is world-readable for that reason.
-	changed, err := managedfile.Write(envPath, []byte(content), managedfile.ModeHostOnly)
+	result, err := configurator.WriteConfig(envPath, []byte(content), managedfile.ModeHostOnly, "hindsight config rewritten")
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("writing the %s config: %w", appName, err)
 	}
-	if !changed {
-		return configurator.NoRestart(), nil
+	if result.RestartNeeded {
+		c.logger.Info("wrote hindsight config", "path", envPath,
+			"mcp_bearer", bearer != "", "access_key", accessKey != "", "llm", llmProviderOf(hasInference))
 	}
-	c.logger.Info("wrote hindsight config", "path", envPath,
-		"mcp_bearer", bearer != "", "access_key", accessKey != "", "llm", llmProviderOf(hasInference))
-	return configurator.MustRestart("hindsight config rewritten"), nil
+	return result, nil
 }
 
 // llmProviderOf names the provider the renderer will write for a binding state, so

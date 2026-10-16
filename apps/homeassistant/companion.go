@@ -97,7 +97,7 @@ func (c *Configurator) ensureCompanionToken(ctx context.Context) (string, error)
 // mintLongLivedToken runs auth/long_lived_access_token over the WebSocket API
 // using accessToken as the connection credential.
 func (c *Configurator) mintLongLivedToken(ctx context.Context, accessToken string) (string, error) {
-	wsURL, err := wsURLFor(c.baseURL())
+	wsURL, err := wsURLFor(c.BaseURL())
 	if err != nil {
 		return "", err
 	}
@@ -140,7 +140,7 @@ func (c *Configurator) revokeCompanionToken(ctx context.Context) error {
 	if token == "" {
 		return nil
 	}
-	wsURL, err := wsURLFor(c.baseURL())
+	wsURL, err := wsURLFor(c.BaseURL())
 	if err != nil {
 		return err
 	}

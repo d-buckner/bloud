@@ -376,7 +376,7 @@ func TestEnsureCalendarsCreatesTheFamilyCalendarWhenItIsMissing(t *testing.T) {
 	defer server.Close()
 
 	c, _ := newTestConfigurator(t, nil)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	c.secrets = ownerSecrets()
 
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true, nil)))
@@ -391,7 +391,7 @@ func TestEnsureCalendarsIsANoOpWhenItAlreadyExists(t *testing.T) {
 	defer server.Close()
 
 	c, _ := newTestConfigurator(t, nil)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	c.secrets = ownerSecrets()
 
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true, nil)))
@@ -408,7 +408,7 @@ func TestEnsureCalendarsWithoutACredentialWarnsInsteadOfFailing(t *testing.T) {
 	defer server.Close()
 
 	c, _ := newTestConfigurator(t, nil)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	c.secrets = &fakeSecrets{values: map[string]string{}}
 
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true, nil)))
@@ -424,7 +424,7 @@ func TestEnsureCalendarsSurvivesAServerError(t *testing.T) {
 	defer server.Close()
 
 	c, _ := newTestConfigurator(t, nil)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	c.secrets = ownerSecrets()
 
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, nil, true, nil)),
@@ -476,7 +476,7 @@ func TestEnsureCalendarsCreatesEachFeedCollectionNamed(t *testing.T) {
 	defer server.Close()
 
 	c, _ := newTestConfigurator(t, nil)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	c.secrets = ownerSecrets()
 
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []bindings.ICSFeedBinding{
@@ -505,7 +505,7 @@ func TestEnsureCalendarsIsANoOpWhenTheFeedCollectionExists(t *testing.T) {
 	defer server.Close()
 
 	c, _ := newTestConfigurator(t, nil)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	c.secrets = ownerSecrets()
 
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []bindings.ICSFeedBinding{feedWith("radarr", "Movies")}, true, nil)))
@@ -524,7 +524,7 @@ func TestEnsureCalendarsSkipsAnIncompleteFeed(t *testing.T) {
 	defer server.Close()
 
 	c, _ := newTestConfigurator(t, nil)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	c.secrets = ownerSecrets()
 
 	noKey := feedWith("radarr", "Movies")
@@ -567,7 +567,7 @@ func TestEnsureCalendarsContinuesPastAServerError(t *testing.T) {
 	defer server.Close()
 
 	c, _ := newTestConfigurator(t, nil)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	c.secrets = ownerSecrets()
 
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []bindings.ICSFeedBinding{
@@ -586,7 +586,7 @@ func TestEnsureCalendarsWithoutACredentialMakesNoCalls(t *testing.T) {
 	defer server.Close()
 
 	c, _ := newTestConfigurator(t, nil)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	c.secrets = &fakeSecrets{values: map[string]string{}}
 
 	require.NoError(t, c.ensureCalendars(context.Background(), planCalendars(nil, []bindings.ICSFeedBinding{feedWith("radarr", "Movies")}, true, nil)))

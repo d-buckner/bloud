@@ -70,20 +70,13 @@ const (
 )
 
 type Configurator struct {
-	port   int
+	configurator.Base
 	logger *slog.Logger
 	// api is the shared Servarr client for the instance's own API.
 	api *servarr.Client
 	// clients builds the application-sync client, which needs the instance key
 	// read from config.xml and so is built per reconciliation.
 	clients configurator.HTTPFactory
-	// ownURL resolves the instance's own base URL (localhost:<port>, or the
-	// test seam).
-	ownURL func() string
-
-	// baseURL is a test seam: when set, the own-API clients resolve to it
-	// instead of localhost:port.
-	baseURL string
 }
 
 // pvrTarget is one PVR provider Bloud wires Prowlarr to: the resolved `pvr`
@@ -97,26 +90,13 @@ type pvrTarget struct {
 
 // NewConfigurator creates a new Prowlarr configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	c := &Configurator{
-		port:    port,
-		logger:  logger.With("app", appName),
+		Base:    configurator.NewBase(port, defaultPort, nodeName),
+		logger:  configurator.AppLogger(deps.Logger, appName),
 		clients: deps.HTTP,
 	}
-	c.ownURL = func() string {
-		if c.baseURL != "" {
-			return c.baseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", c.port)
-	}
 	if deps.HTTP != nil {
-		c.api = servarr.NewClient(deps.HTTP, appName, apiPath, c.ownURL)
+		c.api = servarr.NewClient(deps.HTTP, appName, apiPath, c.BaseURLFn())
 	}
 	return c
 }
@@ -150,15 +130,6 @@ func (c *Configurator) pvrTargets(state *configurator.AppState) []pvrTarget {
 	}
 	return targets
 }
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // configPath returns the host path of the instance's config.xml.
 func (c *Configurator) configPath(state *configurator.AppState) string {
@@ -244,7 +215,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // a provider that is not installed is skipped and the entry Bloud wrote for it
 // pruned, and the step is a read, a compare, and a write only on difference.
 func (c *Configurator) syncPvrApplications(ctx context.Context, state *configurator.AppState, apiKey string) error {
-	apps := newApplicationsAPI(c.clients, c.ownURL, apiKey)
+	apps := newApplicationsAPI(c.clients, c.BaseURLFn(), apiKey)
 	existing, err := apps.listApplications(ctx)
 	if err != nil {
 		return err
@@ -467,7 +438,7 @@ func (c *Configurator) desiredApplication(target pvrTarget, siblingAPIKey string
 		SyncLevel:      syncLevelFullSync,
 		Tags:           []int{},
 		Fields: []applicationField{
-			{Name: fieldProwlarrURL, Value: fmt.Sprintf("http://%s:%d", nodeName, c.port)},
+			{Name: fieldProwlarrURL, Value: fmt.Sprintf("http://%s:%d", nodeName, c.Port())},
 			{Name: fieldBaseURL, Value: target.binding.BaseURL},
 			{Name: fieldAPIKey, Value: siblingAPIKey},
 		},

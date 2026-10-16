@@ -85,7 +85,7 @@ const xffProbeAddr = "203.0.113.119"
 // through the typed client (api.go); asset install goes through appasset; the
 // managed config block goes through managedfile.
 type Configurator struct {
-	port    int
+	configurator.Base
 	secrets configurator.AppSecretsProvider
 	logger  *slog.Logger
 
@@ -93,9 +93,6 @@ type Configurator struct {
 	// fields (defaulting to the consts) so tests can serve a fixture zip.
 	componentURL string
 	componentSHA string
-
-	// baseURLOverride redirects API calls in tests (httptest servers).
-	baseURLOverride string
 
 	pollInterval time.Duration
 
@@ -132,17 +129,10 @@ func (c *Configurator) restartContainer(ctx context.Context) error {
 // Deps.Assets (shared content cache). A zero-value Deps is usable: the client
 // falls back to process defaults and the restart path degrades to a clear error.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	c := &Configurator{
-		port:               port,
+		Base:               configurator.NewBase(port, defaultPort, nodeName),
 		secrets:            deps.Secrets,
-		logger:             logger.With("app", appName),
+		logger:             configurator.AppLogger(deps.Logger, appName),
 		componentURL:       oidcComponentURL,
 		componentSHA:       oidcComponentSHA256,
 		pollInterval:       2 * time.Second,
@@ -150,12 +140,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		restartContainerFn: deps.Runtime.RestartContainer,
 	}
 	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURLOverride != "" {
-				return c.baseURLOverride
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
 	}
 	return c
 }
@@ -168,23 +153,6 @@ const nodeName = "apps-homeassistant"
 // defaultPort is the app's own web port, the value the constructor uses
 // when registration passes 0. It matches metadata.yaml's `port`.
 const defaultPort = 8123
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
-
-// baseURL returns the base URL for API calls.
-func (c *Configurator) baseURL() string {
-	if c.baseURLOverride != "" {
-		return c.baseURLOverride
-	}
-	return fmt.Sprintf("http://localhost:%d", c.port)
-}
 
 // PreStart creates the data directories, fetches the pinned hass-oidc-auth
 // release into custom_components/, and merges Bloud's auth_oidc block into
@@ -532,7 +500,7 @@ func (c *Configurator) waitForProxyTrust(ctx context.Context) error {
 // /auth/oidc/welcome until it answers 200.
 func (c *Configurator) waitForOIDCReady(ctx context.Context) error {
 	if err := c.api.waitOIDCReady(ctx, c.pollInterval); err != nil {
-		return fmt.Errorf("OIDC provider never became live at %s/auth/oidc/welcome (component missing or discovery failed): %w", c.baseURL(), err)
+		return fmt.Errorf("OIDC provider never became live at %s/auth/oidc/welcome (component missing or discovery failed): %w", c.BaseURL(), err)
 	}
 	return nil
 }

@@ -19,7 +19,7 @@ import (
 func newAppConfigurator(t *testing.T, secrets configurator.AppSecretsProvider, srv *httptest.Server) *Configurator {
 	t.Helper()
 	return &Configurator{
-		port:    defaultPort,
+		Base:    configurator.NewBase(0, defaultPort, nodeName),
 		secrets: secrets,
 		api:     newAPI(appclient.Factory{}, func() string { return srv.URL }),
 		logger:  quietLogger(),

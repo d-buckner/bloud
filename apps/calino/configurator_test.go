@@ -40,7 +40,7 @@ func newTestConfigurator(t *testing.T, app http.Handler) *Configurator {
 	if app != nil {
 		server := httptest.NewServer(app)
 		t.Cleanup(server.Close)
-		c.baseURL = server.URL
+		c.SetBaseURL(server.URL)
 	}
 	c.app.cl.WithSleeper(func(time.Duration) {})
 	return c

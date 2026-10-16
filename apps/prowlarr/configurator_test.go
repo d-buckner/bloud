@@ -534,7 +534,7 @@ func configuratorForServerWith(t *testing.T, fake *fakeProwlarr, retry appclient
 		HTTP:   appclient.Factory{Retry: retry},
 		Logger: quietLogger(),
 	})
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	return c
 }
 
@@ -605,11 +605,11 @@ func TestConfigurator_Name(t *testing.T) {
 }
 
 func TestNewConfigurator_Port(t *testing.T) {
-	if got := NewConfigurator(0, configurator.Deps{Logger: quietLogger()}).port; got != 9696 {
-		t.Errorf("NewConfigurator(0).port = %d, want 9696", got)
+	if got := NewConfigurator(0, configurator.Deps{Logger: quietLogger()}).Port(); got != 9696 {
+		t.Errorf("NewConfigurator(0).Port = %d, want 9696", got)
 	}
-	if got := NewConfigurator(9000, configurator.Deps{Logger: quietLogger()}).port; got != 9000 {
-		t.Errorf("NewConfigurator(9000).port = %d, want 9000", got)
+	if got := NewConfigurator(9000, configurator.Deps{Logger: quietLogger()}).Port(); got != 9000 {
+		t.Errorf("NewConfigurator(9000).Port = %d, want 9000", got)
 	}
 }
 

@@ -277,7 +277,7 @@ func TestPostStartToleratesStatelessServer(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	c.baseURL = srv.URL
+	c.SetBaseURL(srv.URL)
 
 	require.NoError(t, c.PostStart(t.Context(), state))
 }
@@ -318,7 +318,7 @@ func TestPostStartPassesWithNothingWired(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	c.baseURL = srv.URL
+	c.SetBaseURL(srv.URL)
 
 	require.NoError(t, c.PostStart(t.Context(), state))
 }

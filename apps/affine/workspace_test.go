@@ -108,7 +108,7 @@ func TestEnsureSharedWorkspace_NilSecretsSafe(t *testing.T) {
 func TestEnsureSharedWorkspace_SignInFailurePublishesNothing(t *testing.T) {
 	secrets := newStoreSecrets("owner-pass")
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, Logger: quietLogger(), HTTP: appclient.Factory{}})
-	c.baseURL = "http://127.0.0.1:1"
+	c.SetBaseURL("http://127.0.0.1:1")
 
 	assert.NotPanics(t, func() { c.ensureSharedWorkspace(context.Background()) })
 	assert.Empty(t, secrets.GetAppContractValue("affine", "appApi", "workspaceId"))

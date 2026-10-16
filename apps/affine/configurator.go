@@ -76,7 +76,7 @@ const csrfCookieName = "affine_csrf_token"
 // account carries the operator's SSO identity email, so the operator's OIDC
 // login links to it (AFFiNE links by email) and the wired workspace is theirs.
 type Configurator struct {
-	port       int
+	configurator.Base
 	secrets    configurator.AppSecretsProvider
 	adminEmail string // the operator's SSO identity email; first-user account + every sign-in use it
 	logger     *slog.Logger
@@ -86,43 +86,6 @@ type Configurator struct {
 	// runtime, forcing AFFiNE to re-read config.json. Nil in CLI/tests; PostStart
 	// treats nil as "cannot apply now".
 	restartContainerFn func(ctx context.Context, name string) error
-
-	// baseURL is a test seam: when set, the API client resolves to it
-	// instead of localhost:port. Never used to build request URLs by hand.
-	baseURL string
-}
-
-// NewConfigurator creates a new AFFiNE configurator from the host Deps.
-// deps.Address.PrimaryBaseURL supplies the current Bloud base URL (e.g.
-// "http://localhost:8080"); the app's public URL is derived from it the same
-// way routes and OIDC redirect URIs are (affine.<host>). It is a function so
-// host changes made in the UI take effect without re-registering.
-func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	adminEmail := deps.Identity.OperatorEmail
-	if adminEmail == "" {
-		adminEmail = fallbackAdminEmail
-	}
-	c := &Configurator{
-		port:               port,
-		secrets:            deps.Secrets,
-		adminEmail:         adminEmail,
-		logger:             logger.With("app", "affine"),
-		restartContainerFn: deps.Runtime.RestartContainer,
-	}
-	c.api = newAPI(deps.HTTP, func() string {
-		if c.baseURL != "" {
-			return c.baseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", c.port)
-	})
-	return c
 }
 
 // nodeName is this app's graph node and container name; see NodeLifecycle.Name.
@@ -132,14 +95,22 @@ const nodeName = "apps-affine"
 // when registration passes 0. It matches metadata.yaml's `port`.
 const defaultPort = 3010
 
-func (c *Configurator) Name() string {
-	return nodeName
+// NewConfigurator creates a new AFFiNE configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
+	adminEmail := deps.Identity.OperatorEmail
+	if adminEmail == "" {
+		adminEmail = fallbackAdminEmail
+	}
+	c := &Configurator{
+		Base:               configurator.NewBase(port, defaultPort, nodeName),
+		secrets:            deps.Secrets,
+		adminEmail:         adminEmail,
+		logger:             configurator.AppLogger(deps.Logger, appName),
+		restartContainerFn: deps.Runtime.RestartContainer,
+	}
+	c.api = newAPI(deps.HTTP, c.BaseURLFn())
+	return c
 }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // restartContainer stops and starts the server container through the host
 // runtime so AFFiNE re-reads config.json, which it loads once at process start.

@@ -93,51 +93,26 @@ const (
 // the server is serving MCP to an authenticated client with healthy services
 // behind it (PostStart).
 type Configurator struct {
-	port    int
+	configurator.Base
 	secrets configurator.AppSecretsProvider
 	clients configurator.HTTPFactory
 	logger  *slog.Logger
 	api     *mcpAPI
-
-	// baseURL is a test seam: when set, the MCP probe resolves to it instead
-	// of localhost:port.
-	baseURL string
 }
 
 // NewConfigurator creates a new arr-mcp configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	c := &Configurator{
-		port:    port,
+		Base:    configurator.NewBase(port, defaultPort, nodeName),
 		secrets: deps.Secrets,
 		clients: deps.HTTP,
-		logger:  logger.With("app", appName),
+		logger:  configurator.AppLogger(deps.Logger, appName),
 	}
 	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
 	}
 	return c
 }
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart writes the config.yaml the container reads. It carries the auth
 // block (the bearer hash, the claimed UI account and its password hash) and
@@ -183,17 +158,16 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	// ModeSharedConfig, not ModeHostOnly: the container reads this file, so it
 	// must be world-readable. The two live credentials it carries are hashes,
 	// never the plaintext values Bloud publishes to consumers.
-	changed, err := managedfile.Write(path, content, managedfile.ModeSharedConfig)
+	result, err := configurator.WriteConfig(path, content, managedfile.ModeSharedConfig, "arr-mcp config rewritten")
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("writing %s config: %w", appName, err)
 	}
-	if !changed {
-		return configurator.NoRestart(), nil
+	if result.RestartNeeded {
+		c.logger.Info("wrote arr-mcp config", "path", path,
+			"seerr", cfg.Services.Seerr != nil, "jellyfin", cfg.Services.Jellyfin != nil,
+			"pvr", len(pvrBindings(state)))
 	}
-	c.logger.Info("wrote arr-mcp config", "path", path,
-		"seerr", cfg.Services.Seerr != nil, "jellyfin", cfg.Services.Jellyfin != nil,
-		"pvr", len(pvrBindings(state)))
-	return configurator.MustRestart("arr-mcp config rewritten"), nil
+	return result, nil
 }
 
 // buildConfig assembles the config.yaml content from the resolved bindings
@@ -338,12 +312,9 @@ func requestManagerBinding(state *configurator.AppState) (bindings.RequestManage
 	if state == nil {
 		return bindings.RequestManagerBinding{}, false
 	}
-	for _, b := range state.Integrations.RequestManagers {
-		if b.App == seerrAppName && b.Installed && b.Password.Published() {
-			return b, true
-		}
-	}
-	return bindings.RequestManagerBinding{}, false
+	return bindings.First(state.Integrations.RequestManagers, func(b bindings.RequestManagerBinding) bool {
+		return b.App == seerrAppName && b.Installed && b.Password.Published()
+	})
 }
 
 // pvrBindings returns every installed Servarr that has published its key.
@@ -366,12 +337,9 @@ func mediaServerBinding(state *configurator.AppState) (bindings.MediaServerBindi
 	if state == nil {
 		return bindings.MediaServerBinding{}, false
 	}
-	for _, b := range state.Integrations.MediaServers {
-		if b.App == jellyfinAppName && b.Installed && b.AdminPassword.Published() {
-			return b, true
-		}
-	}
-	return bindings.MediaServerBinding{}, false
+	return bindings.First(state.Integrations.MediaServers, func(b bindings.MediaServerBinding) bool {
+		return b.App == jellyfinAppName && b.Installed && b.AdminPassword.Published()
+	})
 }
 
 // configFile is the subset of arr-mcp's config.yaml Bloud owns. The schema is

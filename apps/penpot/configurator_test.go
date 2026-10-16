@@ -355,7 +355,7 @@ func TestPostStartWaitsForTheBackendToServe(t *testing.T) {
 	defer server.Close()
 
 	c := newFrontendConfigurator(configurator.Deps{HTTP: appclient.Factory{}})
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	// Bounded so the test proves the gate rejects without sitting out the wait
 	// budget; the deadline expiring is the same code path as the budget doing so.
@@ -374,7 +374,7 @@ func TestPostStartVerifiesServedFlags(t *testing.T) {
 		defer server.Close()
 
 		c := newFrontendConfigurator(configurator.Deps{HTTP: appclient.Factory{}})
-		c.baseURL = server.URL
+		c.SetBaseURL(server.URL)
 		require.NoError(t, c.PostStart(context.Background(), oidcState()))
 	})
 
@@ -385,7 +385,7 @@ func TestPostStartVerifiesServedFlags(t *testing.T) {
 		defer server.Close()
 
 		c := newFrontendConfigurator(configurator.Deps{HTTP: appclient.Factory{}})
-		c.baseURL = server.URL
+		c.SetBaseURL(server.URL)
 		err := c.PostStart(context.Background(), oidcState())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "enable-mcp")
@@ -396,7 +396,7 @@ func TestPostStartVerifiesServedFlags(t *testing.T) {
 		defer server.Close()
 
 		c := newFrontendConfigurator(configurator.Deps{HTTP: appclient.Factory{}})
-		c.baseURL = server.URL
+		c.SetBaseURL(server.URL)
 		require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{}))
 	})
 }

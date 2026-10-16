@@ -37,8 +37,8 @@ func TestName(t *testing.T) {
 
 func TestDefaultPort(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
-	if c.port != 9119 {
-		t.Fatalf("default port = %d, want 9119", c.port)
+	if c.Port() != 9119 {
+		t.Fatalf("default port = %d, want 9119", c.Port())
 	}
 }
 
@@ -248,7 +248,7 @@ func TestPostStartSucceedsWhenServing(t *testing.T) {
 	defer srv.Close()
 
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
-	c.baseURL = srv.URL
+	c.SetBaseURL(srv.URL)
 	err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: true,
 		OIDC: &configurator.OIDCOutput{ClientID: "c", IssuerURL: "http://i"}})
 	if err != nil {
@@ -273,7 +273,7 @@ func TestPostStartFailsWhenProviderNotSelfHosted(t *testing.T) {
 	defer srv.Close()
 
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
-	c.baseURL = srv.URL
+	c.SetBaseURL(srv.URL)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := c.PostStart(ctx, &configurator.AppState{SSOEnabled: true,
@@ -297,7 +297,7 @@ func TestPostStartSkipsSSOCheckWhenSSOOff(t *testing.T) {
 	defer srv.Close()
 
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
-	c.baseURL = srv.URL
+	c.SetBaseURL(srv.URL)
 	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
 		t.Fatalf("PostStart (SSO off): %v", err)
 	}

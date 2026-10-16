@@ -89,7 +89,7 @@ const signingKeyBytes = 32
 const clientPasswordBytes = 24
 
 type Configurator struct {
-	port    int
+	configurator.Base
 	secrets configurator.AppSecretsProvider
 	api     *podlyAPI
 	logger  *slog.Logger
@@ -97,32 +97,16 @@ type Configurator struct {
 
 // NewConfigurator builds the configurator from host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	c := &Configurator{
-		port:    port,
+		Base:    configurator.NewBase(port, defaultPort, nodeName),
 		secrets: deps.Secrets,
-		logger:  logger.With("app", appName),
+		logger:  configurator.AppLogger(deps.Logger, appName),
 	}
 	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string { return fmt.Sprintf("http://localhost:%d", port) })
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
 	}
 	return c
 }
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart writes the env file the container is created from.
 //

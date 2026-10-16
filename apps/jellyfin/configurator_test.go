@@ -75,8 +75,8 @@ func TestNewConfigurator(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := NewConfigurator(tt.port, configurator.Deps{Secrets: fakeJellyfinSecrets()})
-			if c.port != tt.wantPort {
-				t.Errorf("NewConfigurator(%d).Port = %d, want %d", tt.port, c.port, tt.wantPort)
+			if c.Port() != tt.wantPort {
+				t.Errorf("NewConfigurator(%d).Port = %d, want %d", tt.port, c.Port(), tt.wantPort)
 			}
 		})
 	}
@@ -371,7 +371,7 @@ func TestConfigurator_GetSystemInfo(t *testing.T) {
 			defer server.Close()
 
 			c := newTestConfigurator(t, 8096)
-			c.baseURL = server.URL
+			c.SetBaseURL(server.URL)
 
 			got, err := c.api.getSystemInfo(context.Background())
 
@@ -440,7 +440,7 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	err := c.completeStartupWizard(context.Background())
 	if err != nil {
@@ -495,7 +495,7 @@ func TestConfigurator_Authenticate(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	adminPassword, err := c.resolveAdminPassword()
 	if err != nil {
@@ -538,7 +538,7 @@ func TestConfigurator_GetPluginConfiguration(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	configBytes, err := c.api.getPluginConfiguration(context.Background(), "test-token", ldapPluginID)
 	if err != nil {
@@ -569,7 +569,7 @@ func TestConfigurator_SetPluginConfiguration(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	config := LDAPConfig{
 		LdapServer:          "new-server",
@@ -605,7 +605,7 @@ func TestConfigurator_GetUsers(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	users, err := c.api.getUsers(context.Background(), "test-token")
 	if err != nil {
@@ -638,7 +638,7 @@ func TestConfigurator_DeleteUser(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	err := c.api.deleteUser(context.Background(), "test-token", "user-123")
 	if err != nil {
@@ -678,7 +678,7 @@ func TestConfigurator_DeleteBootstrapAdmin(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	err := c.api.deleteBootstrapAdmin(context.Background(), "test-token")
 	if err != nil {
@@ -702,7 +702,7 @@ func TestConfigurator_DeleteBootstrapAdmin_NotFound(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	// Should not error even if bootstrap admin is not found
 	err := c.api.deleteBootstrapAdmin(context.Background(), "test-token")
@@ -742,7 +742,7 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	state := &configurator.AppState{
 		SSOEnabled: false,
@@ -789,7 +789,7 @@ func TestConfigurator_PostStart_ToleratesTransient503(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
 		t.Fatalf("PostStart() should tolerate transient 503, got error = %v", err)
@@ -842,7 +842,7 @@ func TestConfigurator_PostStart_Tolerates503InWizardCheck(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
 		t.Fatalf("PostStart() should tolerate 503 in wizard check, got error = %v", err)
@@ -914,7 +914,7 @@ func TestConfigurator_PostStart_WizardCheckNeverFailsPostStartOn503(t *testing.T
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
 		t.Fatalf("PostStart() must fall through to the wizard on persistent 503, got error = %v", err)
@@ -954,7 +954,7 @@ func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	state := &configurator.AppState{
 		SSOEnabled: true,
@@ -985,7 +985,7 @@ func TestConfigurator_ConfigureLDAP_PluginNotInstalled(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	state := &configurator.AppState{
 		SSOEnabled: true,
@@ -1031,7 +1031,7 @@ func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	state := &configurator.AppState{
 		SSOEnabled: true,
@@ -1100,7 +1100,7 @@ func TestConfigurator_ConfigureLDAP_UpdatesRotatedPassword(t *testing.T) {
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	err := c.configureLDAP(context.Background(), &configurator.AppState{
 		SSOEnabled: true,
@@ -1146,7 +1146,7 @@ func TestConfigurator_PostStart_SkipsLDAPWhenNilDespiteSSOEnabled(t *testing.T) 
 	defer server.Close()
 
 	c := newTestConfigurator(t, 8096)
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	state := &configurator.AppState{
 		SSOEnabled: true,

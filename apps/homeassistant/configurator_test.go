@@ -445,7 +445,7 @@ func (s *apiServer) restartContainer() func(context.Context, string) error {
 func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 	srv := newAPIServer(t, false)
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = srv.srv.URL
+	c.SetBaseURL(srv.srv.URL)
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 3*time.Second)
 	defer cancel()
@@ -485,7 +485,7 @@ func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 	writeOnboardedFile(t, filepath.Join(data, "config"))
 
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = srv.srv.URL
+	c.SetBaseURL(srv.srv.URL)
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 2*time.Second)
 	defer cancel()
@@ -519,7 +519,7 @@ func TestPostStartSkipsWhenOnboardedWithNoOwnerUser(t *testing.T) {
 			`{"id":"2","is_owner":false,"system_generated":false}]}}`), 0o600))
 
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = srv.srv.URL
+	c.SetBaseURL(srv.srv.URL)
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 2*time.Second)
 	defer cancel()
@@ -562,7 +562,7 @@ func writeOnboardedFile(t *testing.T, cfgDir string) {
 func TestPostStartFailsWhenProviderNeverLives(t *testing.T) {
 	srv := newAPIServer(t, false)
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = srv.srv.URL
+	c.SetBaseURL(srv.srv.URL)
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 200*time.Millisecond)
 	defer cancel()
@@ -578,7 +578,7 @@ func TestPostStartNoSSOSkipsOIDCProbe(t *testing.T) {
 	srv.onboarded = true
 	srv.mu.Unlock()
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = srv.srv.URL
+	c.SetBaseURL(srv.srv.URL)
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 300*time.Millisecond)
 	defer cancel()
@@ -699,7 +699,7 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 	storedPath := writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
 	cfg := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}, HTTP: appclient.Factory{}})
-	cfg.baseURLOverride = fakeSrv.srv.URL
+	cfg.SetBaseURL(fakeSrv.srv.URL)
 	cfg.restartContainerFn = fakeSrv.restartContainer()
 	cfg.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 3*time.Second)
@@ -732,7 +732,7 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
 	srv := newAPIServer(t, false)
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = srv.srv.URL
+	c.SetBaseURL(srv.srv.URL)
 	c.pollInterval = 10 * time.Millisecond
 
 	token, err := c.ensureOnboarded(context.Background(), t.TempDir())
@@ -760,7 +760,7 @@ func TestPostStartAlreadyOnboardedAppliesTrustViaContainerRestart(t *testing.T) 
 	storedPath := writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
 	cfg := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}, HTTP: appclient.Factory{}})
-	cfg.baseURLOverride = srv.srv.URL
+	cfg.SetBaseURL(srv.srv.URL)
 	cfg.restartContainerFn = srv.restartContainer()
 	cfg.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 2*time.Second)
@@ -818,7 +818,7 @@ func TestPostStartWaitsForTrustReloadAfterRestart(t *testing.T) {
 	writeConfig(t, filepath.Join(data, "config"), storageJSON) // untrusted on disk
 
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = srv.srv.URL
+	c.SetBaseURL(srv.srv.URL)
 	c.restartContainerFn = srv.restartContainer()
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 5*time.Second)
@@ -846,7 +846,7 @@ func TestPostStartFailsWhenRestartNeverAppliesTrust(t *testing.T) {
 	writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = srv.srv.URL
+	c.SetBaseURL(srv.srv.URL)
 	c.restartContainerFn = srv.restartContainer()
 	c.pollInterval = 10 * time.Millisecond
 	ctx, cancel := testCtx(t, 300*time.Millisecond)
@@ -879,7 +879,7 @@ func TestPreStartForcesRecreateWhenRunningProcessStale(t *testing.T) {
 	storedPath := writeConfig(t, filepath.Join(data, "config"), trustedStorageJSON)
 
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = srv.srv.URL
+	c.SetBaseURL(srv.srv.URL)
 	c.pollInterval = 10 * time.Millisecond
 
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
@@ -910,7 +910,7 @@ func TestPreStartDoesNotForceWhenProcessUnreachable(t *testing.T) {
 	writeConfig(t, filepath.Join(data, "config"), trustedStorageJSON)
 
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = url
+	c.SetBaseURL(url)
 	c.pollInterval = 10 * time.Millisecond
 
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
@@ -927,7 +927,7 @@ func TestProbeProxyTrustStates(t *testing.T) {
 	}))
 	defer live.Close()
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}, HTTP: appclient.Factory{}})
-	c.baseURLOverride = live.URL
+	c.SetBaseURL(live.URL)
 	ok, reachable, status, perr := c.probeProxyTrust(context.Background())
 	assert.True(t, ok)
 	assert.True(t, reachable)
@@ -938,7 +938,7 @@ func TestProbeProxyTrustStates(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer stale.Close()
-	c.baseURLOverride = stale.URL
+	c.SetBaseURL(stale.URL)
 	ok, reachable, status, perr = c.probeProxyTrust(context.Background())
 	assert.False(t, ok)
 	assert.True(t, reachable)
@@ -948,7 +948,7 @@ func TestProbeProxyTrustStates(t *testing.T) {
 	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	downURL := down.URL
 	down.Close()
-	c.baseURLOverride = downURL
+	c.SetBaseURL(downURL)
 	ok, reachable, status, perr = c.probeProxyTrust(context.Background())
 	assert.False(t, ok)
 	assert.False(t, reachable)
