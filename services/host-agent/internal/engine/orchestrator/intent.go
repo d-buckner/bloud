@@ -166,6 +166,34 @@ type SetTranscriptionIntent struct {
 
 func (SetTranscriptionIntent) intentMarker() {}
 
+// SetEmbeddingsIntent requests changing the instance's text-embedding endpoint:
+// the address, the model to request from it, and optionally its credential. An
+// empty BaseURL means the operator removed the provider.
+//
+// It is a separate intent from SetTranscriptionIntent rather than one intent with
+// a contract field, because the pipeline dispatches on the intent's type and a
+// field-selected branch would let a new single-endpoint contract be added without
+// anything noticing that it has no arm.
+type SetEmbeddingsIntent struct {
+	intentBase
+	BaseURL string
+	Name    string
+	Model   string
+	APIKey  *string
+}
+
+func (SetEmbeddingsIntent) intentMarker() {}
+
+func NewSetEmbeddingsIntent(baseURL, name, model string, apiKey *string) SetEmbeddingsIntent {
+	return SetEmbeddingsIntent{
+		intentBase: newIntentBase(),
+		BaseURL:    baseURL,
+		Name:       name,
+		Model:      model,
+		APIKey:     apiKey,
+	}
+}
+
 func NewSetTranscriptionIntent(baseURL, name, model string, apiKey *string) SetTranscriptionIntent {
 	return SetTranscriptionIntent{
 		intentBase: newIntentBase(),
@@ -274,6 +302,7 @@ var (
 	_ Intent = SetPublicURLIntent{}
 	_ Intent = SetInferenceIntent{}
 	_ Intent = SetTranscriptionIntent{}
+	_ Intent = SetEmbeddingsIntent{}
 	_ Intent = ReconcileIntent{}
 	_ Intent = AddExternalAppIntent{}
 	_ Intent = UpdateExternalAppIntent{}

@@ -2,7 +2,10 @@
 
 package catalog
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // InstallPlan describes what will happen when installing an app
 type InstallPlan struct {
@@ -68,6 +71,14 @@ func (g *AppGraph) PlanInstall(appName string) (*InstallPlan, error) {
 					Source:      provider,
 					Integration: intName,
 				})
+				continue
+			}
+			// No default app to install means the provider is a Settings row. There
+			// is nothing to install alongside the app, so the only question is
+			// whether the operator has filled the row.
+			if blockers := settingRequirementBlockers(intName, integration, g.IsConfiguredContract); len(blockers) > 0 {
+				plan.CanInstall = false
+				plan.Blockers = append(plan.Blockers, blockers...)
 			}
 			continue
 		}
@@ -87,6 +98,60 @@ func (g *AppGraph) PlanInstall(appName string) (*InstallPlan, error) {
 	plan.Dependents = g.FindDependents(appName)
 
 	return plan, nil
+}
+
+// SettingRequirementBlockers reports why an app cannot be installed yet because
+// a contract it requires is filled by a Settings row that is still empty. It is
+// exported so the catalog read that feeds the dashboard and the planner that
+// gates the install answer with one rule rather than two that can drift.
+//
+// `isConfigured` is supplied rather than read so the caller decides where truth
+// comes from: the graph's refreshed set for a plan, the external registry for a
+// catalog read.
+func SettingRequirementBlockers(app *App, isConfigured func(contract string) bool) []string {
+	if app == nil || isConfigured == nil {
+		return nil
+	}
+	var out []string
+	for name, integration := range app.Integrations {
+		if !integration.Required {
+			continue
+		}
+		// A required integration with a default app provider installs that provider
+		// along with itself, so an empty Settings row is not what stops it.
+		if defaultProvider(integration) != "" {
+			continue
+		}
+		out = append(out, settingRequirementBlockers(name, integration, isConfigured)...)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// settingRequirementBlockers is the one-arm form the planner calls, where the
+// integration has already been found required and unresolvable by an app.
+func settingRequirementBlockers(
+	name string,
+	integration Integration,
+	isConfigured func(contract string) bool,
+) []string {
+	if !declaresSettingProvider(integration) || isConfigured(name) {
+		return nil
+	}
+	return []string{fmt.Sprintf("requires a %s endpoint; configure one under Settings", name)}
+}
+
+// declaresSettingProvider reports whether an integration names the instance as a
+// provider. A `source: setting` entry has no catalog app behind it, so
+// defaultProvider comes back empty for it and the plan needs a different answer
+// about what would satisfy the requirement.
+func declaresSettingProvider(integration Integration) bool {
+	for _, compat := range integration.Compatible {
+		if compat.Source == SettingProviderSource {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultProvider returns the provider an integration resolves to by default:

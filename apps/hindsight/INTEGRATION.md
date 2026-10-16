@@ -2,9 +2,9 @@
 
 ## Status: Working (live-verified against the real image)
 
-Every claim below was measured on `ghcr.io/vectorize-io/hindsight:1.0.0` on this
-machine, not read out of upstream's documentation and trusted. Where the docs and
-the image disagree, the image is what this app is built against, and the
+Every claim below was measured on `ghcr.io/vectorize-io/hindsight:1.0.0-slim` on
+this machine, not read out of upstream's documentation and trusted. Where the docs
+and the image disagree, the image is what this app is built against, and the
 disagreement is recorded.
 
 | Fact | How it was checked |
@@ -16,6 +16,11 @@ disagreement is recorded.
 | `HINDSIGHT_CP_DATAPLANE_API_KEY` is required once the API is protected | the UI 401s on every panel without it, and returns 200 with it |
 | `HINDSIGHT_CP_ACCESS_KEY` gates the UI | `POST /api/auth/login` returns 200 for the key and 401 for anything else |
 | `HINDSIGHT_API_LLM_PROVIDER=none` is a supported boot, not a degraded one | the server reaches `healthy` with it and no endpoint configured |
+| The slim image has no local reranker, and the provider default is `local` | with only an embedding endpoint set the API logs "Local ML provider configured for reranker, but 'sentence-transformers' is not installed. The API will fail at startup." and then fails at startup |
+| `HINDSIGHT_API_ENABLE_RERANKING=false` does not avoid that | the flag governs recall time; the provider is still constructed at boot and still imports the missing module |
+| `HINDSIGHT_API_RERANKER_PROVIDER=rrf` is the way to have no reranker | logs "RRF passthrough provider initialized (neural reranking disabled)" and the server reaches `healthy` |
+| The embedding endpoint is dialed during startup, not on first use | a stub `/v1/embeddings` server logged the probe, and the API logged "OpenAI provider initialized (model: bge-m3, dim: 384)" from its answer |
+| An unreachable embedding endpoint fails startup | the same container pointed at an address nothing answers exits with `openai.APIConnectionError: Connection error.` |
 | The gate's two routes split correctly | nginx in the same podman network, both paths plus `/mcpsomething` |
 | The resolver address is only knowable inside the container | host `/etc/resolv.conf` named `10.0.0.1`, the container's named `10.89.0.1` |
 
@@ -141,9 +146,22 @@ HINDSIGHT_API_LLM_PROVIDER=openai
 HINDSIGHT_API_LLM_BASE_URL=http://apps-gateway:4000/v1
 HINDSIGHT_API_LLM_API_KEY=<the instance's key>
 HINDSIGHT_API_LLM_MODEL=gpt-4o-mini
+HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai
+HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL=http://apps-gateway:4000/v1
+HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=<the instance's key>
+HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=bge-m3
 ```
 
 Two rules in the renderer are load-bearing and both came from a measurement.
+
+**The embedding block is written only when an endpoint resolved.** The image's own
+default for that provider is the local one, and the slim image cannot satisfy it, so
+there is no value safe to write in the binding's absence. Omitting it leaves the
+app's own startup message about a missing embedding endpoint, which names the cause;
+a placeholder would replace it with a module import error. The block is rendered
+after the LLM arms return rather than inside one of them, because an embedding
+endpoint resolved while chat stayed unset is a real state: the operator filled one
+Settings row and not the other.
 
 **The LLM block is always written.** The image's own default provider is OpenAI
 with a hosted key. An install whose operator configured nothing must say so in its
@@ -186,24 +204,43 @@ stale backend and lets the API proceed on its next pass.
 
 ## Trade-offs
 
-**The full image, not `-slim`.** The slim build is 488 MB against 928 MB and has no
-local embedding or reranking model, so it needs an embedding endpoint. The
-`inference` contract promises completions from an OpenAI-compatible endpoint and
-says nothing about embeddings, and an install that silently required a second
-capability the contract does not carry would fail in a way the operator cannot fix
-from Settings. The extra 440 MB buys an app that comes up with no endpoint
-configured at all.
+**The slim image, not the full one.** The full build is 928 MB against 488 MB and
+bundles a local embedding model and a local cross-encoder reranker. The slim build
+calls out for both. Bloud ships the smaller of the two: the operator already points
+the instance at an embedding endpoint in Settings, and 440 MB of weights downloaded
+onto every home server to avoid one line in a settings form is the worse trade.
+
+The cost is real and it is a hard dependency, so it is handled as one. The slim
+image has no `sentence-transformers` module at all, so an unconfigured install does
+not degrade, it fails at startup. The catalog declares `embeddings` as a required
+integration, and the planner refuses the install with a reason until the Settings
+row exists, rather than creating a container that cannot come up.
+
+Two consequences of the slim build are encoded in `metadata.yaml`:
+
+- `HINDSIGHT_API_RERANKER_PROVIDER=rrf`. The reranker default is `local`, and
+  `local` needs the module the slim image does not contain. `rrf` is the image's
+  own passthrough provider. Recall is then ordered by reciprocal-rank fusion
+  rather than by a cross-encoder, which is a genuine quality difference and the
+  price of the smaller image. The remote rerank providers (TEI, Cohere, Jina) are
+  not OpenAI-compatible, so Bloud has nothing to point them at.
+- The embedding block is written only when a binding resolved. The image's default
+  for that provider is the local one, so there is no safe value to write in its
+  absence, and the app's own startup message about a missing endpoint is clearer
+  than any placeholder Bloud could invent.
 
 **The MCP endpoint is the only machine surface.** Hindsight also has a REST API,
 and the gate does not route it. The catalog declares the `mcp` contract, so that is
 the surface Bloud promises and can test. Publishing a second, differently
 authenticated API on the same subdomain would be reach the app did not declare.
 
-**`inference` is optional.** Only the operator can fill in an AI endpoint, and an
-install that sat in ERROR waiting on a credential only they can supply would blame
-them for a thing they have not been asked about yet. The app comes up useful and
-gets better when the setting is filled in, and the reset on save requeues this
-consumer, so filling it in reaches the running container.
+**`inference` is optional and `embeddings` is not.** The distinction is what each
+one degrades to. With no chat endpoint the server still comes up: `none` is a
+supported provider, retain stores the text as a chunk, and semantic recall works.
+With no embedding endpoint there is nothing to store, because a memory in this app
+*is* a vector. Only the operator can fill either row, and an install that sat in
+ERROR waiting on one would blame them for a thing they have not been asked about
+yet; refusing the install with a sentence is the honest form of the same news.
 
 **The gate is a third container and 55 MB.** The alternative, `extraPorts`, would
 publish the memory API on the host so Traefik could dial it. That is a second

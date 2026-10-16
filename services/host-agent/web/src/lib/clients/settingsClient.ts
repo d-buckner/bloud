@@ -80,15 +80,24 @@ export function testAIEndpoint(baseUrl: string, apiKey?: string): Promise<TestAI
 }
 
 /**
- * The instance's speech-to-text endpoint: one OpenAI-compatible
- * `/v1/audio/transcriptions` the operator declares, plus the apps that consume
- * it.
+ * One single-endpoint AI capability: `transcription` or `embeddings`.
+ *
+ * Both are one OpenAI-compatible endpoint the operator declares, one bearer, and
+ * one optional model id, and the API serves them from the same module with the
+ * same payload. They stay separate contracts because a server that answers one
+ * route is not known to answer the other, so the operator states each.
+ */
+export type EndpointContract = 'transcription' | 'embeddings';
+
+/**
+ * The instance's provider for one capability, plus the apps that consume it.
  *
  * It is a separate surface from `AISettings` because it is a separate contract.
- * A server that answers completions is not known to answer audio uploads, so
- * the two are configured independently even when one box serves both.
+ * A server that answers completions is not known to answer audio uploads or
+ * return vectors, so the two are configured independently even when one box
+ * serves both.
  */
-export interface TranscriptionSettings {
+export interface EndpointSettings {
 	configured: boolean;
 	name: string;
 	baseUrl: string;
@@ -97,7 +106,7 @@ export interface TranscriptionSettings {
 	servedTo: string[];
 }
 
-export interface SetTranscriptionRequest {
+export interface SetEndpointRequest {
 	/** Empty removes the provider. */
 	baseUrl: string;
 	name?: string;
@@ -117,32 +126,34 @@ export interface SetTranscriptionRequest {
  * for the stored value without reimplementing the parser, same as the address
  * setting's response.
  */
-export interface SetTranscriptionResponse {
+export interface SetEndpointResponse {
 	status: string;
 	baseUrl: string;
 	model: string;
 	configured: boolean;
 }
 
-export function fetchTranscriptionSettings(): Promise<TranscriptionSettings> {
-	return get<TranscriptionSettings>('/api/settings/transcription');
+export function fetchEndpointSettings(contract: EndpointContract): Promise<EndpointSettings> {
+	return get<EndpointSettings>(`/api/settings/${contract}`);
 }
 
-export function setTranscriptionSettings(
-	data: SetTranscriptionRequest
-): Promise<SetTranscriptionResponse> {
-	return put<SetTranscriptionResponse>('/api/settings/transcription', data);
+export function setEndpointSettings(
+	contract: EndpointContract,
+	data: SetEndpointRequest
+): Promise<SetEndpointResponse> {
+	return put<SetEndpointResponse>(`/api/settings/${contract}`, data);
 }
 
 /**
- * List the models a candidate transcription endpoint offers, so the picker
- * shows that server's real models rather than a list Bloud maintains.
+ * List the models a candidate endpoint offers, so the picker shows that server's
+ * real models rather than a list Bloud maintains.
  */
-export function discoverTranscriptionModels(
+export function discoverEndpointModels(
+	contract: EndpointContract,
 	baseUrl: string,
 	apiKey?: string
 ): Promise<TestAIResponse> {
-	return post<TestAIResponse>('/api/settings/transcription/models', { baseUrl, apiKey });
+	return post<TestAIResponse>(`/api/settings/${contract}/models`, { baseUrl, apiKey });
 }
 
 // External apps. A launcher is a tile that opens a URL; a provider stands in

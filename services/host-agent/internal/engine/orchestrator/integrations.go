@@ -5,6 +5,7 @@ package orchestrator
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"codeberg.org/d-buckner/bloud/pkg/bindings"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
@@ -118,6 +119,28 @@ type externalRegistry struct {
 // enabled, which is the same rule the AI Settings already used.
 func (r externalRegistry) externalForContract(contract string) []*store.ExternalApp {
 	return r.byContract[contract]
+}
+
+// configuredContracts names every contract a Settings row fills right now: a
+// record exists for that contract and carries an address.
+//
+// The address check is what makes this an answer rather than a tautology. A
+// record with no URL is a row the operator cleared, and treating it as a
+// configured provider would let a plan say an app can install when the thing it
+// requires is exactly what was just removed.
+func (o *Orchestrator) configuredContracts() []string {
+	reg := o.loadExternalRegistry()
+	out := []string{}
+	for contract, records := range reg.byContract {
+		for _, rec := range records {
+			if strings.TrimSpace(rec.URL) != "" {
+				out = append(out, contract)
+				break
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 func (o *Orchestrator) loadExternalRegistry() externalRegistry {
@@ -353,7 +376,15 @@ var contractBinders = map[string]contractBinder{
 		out.AgentAPIs = append(out.AgentAPIs, o.agentAPIBinding(ref, "agentApi", offer, src, requires))
 	},
 	"transcription": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
-		out.Transcription = append(out.Transcription, o.transcriptionBinding(ref, "transcription", offer, src, requires))
+		out.Transcription = append(out.Transcription, o.endpointBinding(ref, "transcription", offer, src, requires))
+	},
+	"embeddings": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
+		out.Embeddings = append(out.Embeddings, bindings.EmbeddingsBinding{
+			ProviderRef: ref,
+			Endpoint:    ref.BaseURL,
+			APIKey:      o.publishedSecret(src, "embeddings", offer, requires),
+			Model:       o.contractValue(src, "embeddings", offer, "model"),
+		})
 	},
 	"caldav": func(o *Orchestrator, out *bindings.Integrations, ref bindings.ProviderRef, offer catalog.ContractProvides, src providerSource, requires []string) {
 		// No secret arm: the `caldav` contract publishes none, because the
@@ -463,16 +494,16 @@ func (o *Orchestrator) agentAPIBinding(
 	}
 }
 
-// transcriptionBinding builds the one binding shape the transcription contract
-// has: an endpoint, the bearer for it, and an optional model id.
+// endpointBinding builds the binding shape the two single-endpoint contracts
+// share: an endpoint, the bearer for it, and an optional model id.
 //
-// Only a setting provides this contract today, so `ref.BaseURL` is already the
-// endpoint the operator typed, path included. A catalog app that ever provides
-// it would compose a declared `path` value onto its container address the way
+// Only a setting provides these contracts today, so `ref.BaseURL` is already the
+// endpoint the operator typed, path included. A catalog app that ever provided
+// one would compose a declared `path` value onto its container address the way
 // the modelSource arm does; nothing guesses that today because nothing offers
 // one, and guessing an address is how a consumer ends up dialing a port that
 // speaks something else.
-func (o *Orchestrator) transcriptionBinding(
+func (o *Orchestrator) endpointBinding(
 	ref bindings.ProviderRef,
 	contract string,
 	offer catalog.ContractProvides,

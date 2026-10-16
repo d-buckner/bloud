@@ -30,6 +30,11 @@
 	let installed = $derived(status === 'running' || status === 'error' || status === 'failed');
 	let installing = $derived(status === 'installing' || status === 'starting');
 	let isUninstalling = $derived(status === 'uninstalling');
+	// Why this app cannot be installed yet, straight from the API. The same rule
+	// the orchestrator applies to the install, so the modal cannot offer a button
+	// the backend would refuse.
+	let blockers = $derived(app?.installBlockers ?? []);
+	let blocked = $derived(!installed && !installing && blockers.length > 0);
 
 	let uninstallInProgress = $state(false);
 	let uninstallError = $state<string | null>(null);
@@ -122,6 +127,16 @@
 				</div>
 			{/if}
 
+			{#if blocked}
+				<div class="alert alert-error">
+					<ul class="brief-list">
+						{#each blockers as reason (reason)}
+							<li>{reason}</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
+
 			{#if installed}
 				{#if uninstallError}
 					<div class="alert alert-error">
@@ -150,7 +165,15 @@
 			{:else}
 				<button class="btn btn-secondary" onclick={handleClose}>Cancel</button>
 				{#if admin.current}
-					<button class="btn btn-primary" onclick={doInstall} disabled={installing}>
+					<!-- Disabled rather than hidden: the requirement is stated next to
+					     the control it blocks, so the operator is not left hunting for
+					     why an Install button is missing. -->
+					<button
+						class="btn btn-primary"
+						onclick={doInstall}
+						disabled={installing || blocked}
+						title={blocked ? (app.installBlockers?.[0] ?? '') : ''}
+					>
 						{#if installing}Installing...{:else}Install{/if}
 					</button>
 				{/if}

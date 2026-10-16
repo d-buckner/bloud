@@ -240,6 +240,34 @@ var contracts = []Contract{
 		Values:  []ValueSpec{{Key: "model", Optional: true}},
 	},
 
+	// An endpoint that turns text into vectors: an OpenAI-compatible
+	// `/v1/embeddings`. The consumer is anything that stores or searches an
+	// embedding index; the provider is an endpoint the operator declares.
+	//
+	// This is a third contract rather than a flag on `inference` for the reason
+	// that made `transcription` its own: the promise is different, and the same
+	// box does not always keep all three. A local runtime that answers chat and
+	// transcribes can still have no embedding route, and a gateway that serves
+	// embeddings for one model family serves them for a fixed set of dimensions.
+	//
+	// The cost of getting this wrong is not a degraded feature. An embedding
+	// consumer builds a vector index against the model it is given, and the
+	// index's dimensions are fixed by that model. Handing a consumer a chat
+	// endpoint it mistakes for an embedding endpoint fails at the first write,
+	// and a model changed after the fact does not match the vectors already
+	// stored. So the operator states this one explicitly, and nothing promotes
+	// another contract into this slot.
+	//
+	// `apiKey` is the bearer for the endpoint, held by the instance rather than
+	// by any app, because it is the operator's own credential. `model` is
+	// optional: an endpoint has its own default, and a consumer that omits the
+	// model asks for that default rather than inventing one.
+	{
+		Name:    "embeddings",
+		Secrets: []string{"apiKey"},
+		Values:  []ValueSpec{{Key: "model", Optional: true}},
+	},
+
 	// A CalDAV/CardDAV server: the endpoint a calendar or contacts client
 	// speaks DAV to. Provided by the DAV server itself (Radicale), consumed
 	// by anything that wants to show the user the calendars Bloud already

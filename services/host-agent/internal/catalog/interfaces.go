@@ -36,6 +36,11 @@ type AppGraphInterface interface {
 	// SetInstalled updates which apps are installed
 	SetInstalled(installed []string)
 
+	// SetConfiguredContracts updates which contracts a Settings row satisfies,
+	// so a plan can tell a requirement an app can install from one the operator
+	// has not filled in yet.
+	SetConfiguredContracts(contracts []string)
+
 	// IsInstalled checks if an app is installed
 	IsInstalled(appName string) bool
 

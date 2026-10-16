@@ -214,10 +214,13 @@ type routerModules struct {
 	events   *eventsModule
 	settings *settingsModule
 	ai       *aiSettingsModule
-	// transcription owns the speech-to-text endpoint the instance declares. It
-	// is a separate module from `ai` because it is a separate contract: the
-	// credential, the shape, and the apps that consume it are all different.
-	transcription *transcriptionSettingsModule
+	// transcription and embeddings each own one single-endpoint AI surface the
+	// instance declares. They are separate modules from `ai` because each is a
+	// separate contract: the credential, the shape, and the apps that consume it
+	// are all different. They share one module type because the three surfaces
+	// differ only in which contract they read.
+	transcription *endpointSettingsModule
+	embeddings    *endpointSettingsModule
 	external      *externalAppsModule
 	system        *systemModule
 	// clientCreds serves the reveal surface for credentials a provider
@@ -232,12 +235,26 @@ type routerModules struct {
 	realOrch       *orchestrator.Orchestrator
 }
 
+// imageSizer adapts the podman client to the catalog's size lookup. An error is
+// reported as "not found" rather than propagated: the estimate is a convenience,
+// and a container runtime that cannot answer must not fail a catalog read.
+func imageSizer(c *podman.Client) func(ctx context.Context, image string) (int64, bool) {
+	return func(ctx context.Context, image string) (int64, bool) {
+		size, found, err := c.ImageSize(ctx, image)
+		if err != nil {
+			return 0, false
+		}
+		return size, found
+	}
+}
+
 // buildRouterModules constructs every domain module from the resolved
 // dependencies.
 func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps *routerDeps) *routerModules {
 	appsMod := NewAppsModule(deps.catalogCache, deps.appStore, deps.orchCaller, logger)
 	appsMod.SetAppsDir(cfg.AppsDir)
 	appsMod.SetDataDir(cfg.DataDir)
+	appsMod.SetExternalAppStore(deps.externalApps)
 	// The pre-flight plans read the dependency graph the orchestrator owns,
 	// so the API answers against the same installed set the next install
 	// will be planned against rather than a second graph that can fall
@@ -249,13 +266,7 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 	}
 	// Catalog size fallback: resolve undeclared estimates from local images.
 	if sizeClient, err := podman.NewClient(); err == nil {
-		appsMod.SetImageSizeResolver(func(ctx context.Context, image string) (int64, bool) {
-			size, found, err := sizeClient.ImageSize(ctx, image)
-			if err != nil {
-				return 0, false
-			}
-			return size, found
-		})
+		appsMod.SetImageSizeResolver(imageSizer(sizeClient))
 	}
 
 	homeMod := NewHomeModule(deps.positionStore, deps.appStore, catalogLaunchPaths(deps.catalogCache), logger)
@@ -314,6 +325,7 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 		external:      newExternalAppsModule(deps, logger),
 		system:        systemMod,
 		transcription: newTranscriptionSettingsModule(deps, logger),
+		embeddings:    newEmbeddingsSettingsModule(deps, logger),
 		clientCreds: NewClientCredentialsModule(deps.catalogCache, deps.secrets,
 			cfg.Settings, cfg.Hosts, deps.orchCaller, logger),
 		realOrch:       deps.realOrch,
@@ -440,6 +452,7 @@ func (m *routerModules) registerRoutes(r chi.Router) {
 		NewSettingsRouter(m.settings, admin)
 		RegisterAIRoutes(m.ai, admin)
 		RegisterTranscriptionRoutes(m.transcription, admin)
+		RegisterEmbeddingsRoutes(m.embeddings, admin)
 		m.external.Register(admin)
 
 		// Client credentials: reveal and rotate for credentials a provider

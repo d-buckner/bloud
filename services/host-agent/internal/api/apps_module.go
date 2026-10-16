@@ -72,6 +72,12 @@ type appsModule struct {
 	// report as 503 rather than as an empty plan: "nothing to install" and
 	// "nothing was able to tell me" must not look the same.
 	plans planSource
+	// externalApps answers which contracts a Settings row fills, which is the
+	// other half of "can this app be installed" once a requirement is served by
+	// a setting rather than by an app. Nil means the surface cannot answer, and
+	// reports no blockers rather than a refusal: an unavailable lookup must not
+	// look like an unmet requirement.
+	externalApps store.ExternalAppStoreInterface
 }
 
 func NewAppsModule(
@@ -205,6 +211,12 @@ func (m *appsModule) Install(name string) (*IntentRef, *installedAppResponse, er
 	if m.orch == nil {
 		return nil, nil, fmt.Errorf("orchestrator not available")
 	}
+	// Refuse here rather than accepting and letting the orchestrator drop it. A
+	// 202 for an install that cannot happen is a lie the dashboard then spends
+	// its polling budget on, and the reason only ever reaches the log.
+	if blockers := catalog.SettingRequirementBlockers(def, m.isConfiguredContract); len(blockers) > 0 {
+		return nil, nil, &installBlockedError{app: name, blockers: blockers}
+	}
 	intent := orchestrator.NewInstallAppIntent(name)
 	m.orch.Submit(intent)
 	m.logger.Info("install intent submitted", "app", name, "intentId", intent.IntentID())
@@ -218,6 +230,9 @@ func (m *appsModule) Install(name string) (*IntentRef, *installedAppResponse, er
 	}
 	return &IntentRef{ID: intent.IntentID()}, app, nil
 }
+
+// isConfiguredContract and installBlockedError live in apps_blockers.go, next to
+// the other half of the same question.
 
 func (m *appsModule) Uninstall(name string, clearData bool) (*IntentRef, error) {
 	if m.orch == nil {
@@ -445,7 +460,14 @@ func (m *appsModule) GetCatalogHandler() http.HandlerFunc {
 			respondError(w, http.StatusInternalServerError, "failed to get apps")
 			return
 		}
-		respondJSON(w, http.StatusOK, map[string]any{"apps": apps})
+		resp := map[string]any{"apps": apps}
+		// Additive: a client that reads only `apps` is unaffected. The dashboard
+		// uses this to render an install button that explains itself instead of
+		// one that accepts an install the orchestrator will refuse.
+		if blockers := m.installBlockers(apps); blockers != nil {
+			resp["installBlockers"] = blockers
+		}
+		respondJSON(w, http.StatusOK, resp)
 	}
 }
 
@@ -485,6 +507,14 @@ func (m *appsModule) InstallHandler() http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, errAppNotFound) {
 				respondError(w, http.StatusNotFound, "app not found in catalog")
+				return
+			}
+			var blocked *installBlockedError
+			if errors.As(err, &blocked) {
+				respondJSON(w, http.StatusConflict, map[string]any{
+					"error":    blocked.Error(),
+					"blockers": blocked.Blockers(),
+				})
 				return
 			}
 			respondError(w, http.StatusServiceUnavailable, err.Error())

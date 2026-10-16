@@ -313,3 +313,118 @@ func TestPickInferenceIgnoresAnUnresolvedBinding(t *testing.T) {
 		t.Fatal("no state is no endpoint")
 	}
 }
+
+// embeddingsState is an AppState whose `embeddings` contract resolved to the
+// instance's Settings row.
+func embeddingsState(dataDir string) *configurator.AppState {
+	return &configurator.AppState{
+		DataPath: dataDir,
+		Integrations: bindings.Integrations{
+			Embeddings: []bindings.EmbeddingsBinding{{
+				ProviderRef: bindings.ProviderRef{App: "instance", Installed: true},
+				Endpoint:    "http://apps-gateway:4000/v1",
+				APIKey:      "sk-embed",
+				Model:       "bge-m3",
+			}},
+		},
+	}
+}
+
+// TestEmbeddingsBindingReachesTheApp is the wiring the slim image depends on: it
+// has no embedding model of its own, so the Settings row is the only thing that
+// can make a memory storable.
+func TestEmbeddingsBindingReachesTheApp(t *testing.T) {
+	c := NewConfigurator(0, configurator.Deps{Secrets: newFakeSecrets()})
+	state := embeddingsState(t.TempDir())
+
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	content := readEnvFile(t, state)
+
+	require.Equal(t, llmProviderOpenAI, mustEnv(t, content, envEmbeddingsProvider))
+	require.Equal(t, "http://apps-gateway:4000/v1", mustEnv(t, content, envEmbeddingsBaseURL))
+	require.Equal(t, "sk-embed", mustEnv(t, content, envEmbeddingsAPIKey))
+	require.Equal(t, "bge-m3", mustEnv(t, content, envEmbeddingsModel))
+}
+
+// TestNoEmbeddingsWritesNoEmbeddingBlock records why the block is omitted rather
+// than defaulted. The image's own default is a local provider, and the slim build
+// has no sentence-transformers module to satisfy it: writing that value would
+// take a clear startup failure about a missing endpoint and replace it with a
+// module import error.
+func TestNoEmbeddingsWritesNoEmbeddingBlock(t *testing.T) {
+	c := NewConfigurator(0, configurator.Deps{Secrets: newFakeSecrets()})
+	state := &configurator.AppState{DataPath: t.TempDir()}
+
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	content := readEnvFile(t, state)
+
+	for _, key := range []string{envEmbeddingsProvider, envEmbeddingsBaseURL, envEmbeddingsAPIKey, envEmbeddingsModel} {
+		_, present := envValue(t, content, key)
+		require.False(t, present, "%s must be absent rather than defaulted", key)
+	}
+}
+
+// TestEmbeddingsBlockLandsInBothInferenceShapes is the reason the block is
+// rendered after the LLM arms return: the no-inference shape returns early, and
+// an embedding endpoint resolved while chat stayed unset is a real state (the
+// operator filled one Settings row and not the other).
+func TestEmbeddingsBlockLandsInBothInferenceShapes(t *testing.T) {
+	for name, state := range map[string]*configurator.AppState{
+		"no inference":   embeddingsState(t.TempDir()),
+		"with inference": bothState(t.TempDir()),
+	} {
+		c := NewConfigurator(0, configurator.Deps{Secrets: newFakeSecrets()})
+
+		_, err := c.PreStart(context.Background(), state)
+		require.NoError(t, err)
+		content := readEnvFile(t, state)
+
+		require.Equal(t, "bge-m3", mustEnv(t, content, envEmbeddingsModel), name)
+	}
+}
+
+// TestAnEmbeddingsLineIsNeverEmpty is the same rule the inference block carries,
+// for the same reason: the image builds an OpenAI SDK client for embeddings too,
+// and that client refuses to construct with an empty key.
+func TestAnEmbeddingsLineIsNeverEmpty(t *testing.T) {
+	state := embeddingsState(t.TempDir())
+	state.Integrations.Embeddings[0].APIKey = ""
+	state.Integrations.Embeddings[0].Model = ""
+
+	c := NewConfigurator(0, configurator.Deps{Secrets: newFakeSecrets()})
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	content := readEnvFile(t, state)
+
+	require.Equal(t, noCredentialKey, mustEnv(t, content, envEmbeddingsAPIKey))
+	_, hasModel := envValue(t, content, envEmbeddingsModel)
+	require.False(t, hasModel, "an endpoint with no default model must not be given one")
+}
+
+func TestPickEmbeddingsIgnoresAnUnresolvedBinding(t *testing.T) {
+	state := embeddingsState(t.TempDir())
+	state.Integrations.Embeddings[0].Installed = false
+	if _, ok := pickEmbeddings(state); ok {
+		t.Fatal("a provider that is not installed is not an endpoint")
+	}
+
+	state = embeddingsState(t.TempDir())
+	state.Integrations.Embeddings[0].Endpoint = "  "
+	if _, ok := pickEmbeddings(state); ok {
+		t.Fatal("a provider with no endpoint is not an endpoint")
+	}
+
+	if _, ok := pickEmbeddings(nil); ok {
+		t.Fatal("no state is no endpoint")
+	}
+}
+
+// bothState carries both endpoint contracts resolved to the same gateway, which
+// is the common single-server case the Settings section offers as one click.
+func bothState(dataDir string) *configurator.AppState {
+	s := embeddingsState(dataDir)
+	s.Integrations.Inference = inferenceState(dataDir).Integrations.Inference
+	return s
+}

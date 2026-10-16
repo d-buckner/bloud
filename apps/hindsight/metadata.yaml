@@ -5,15 +5,17 @@ description: Agent memory server that lets an AI agent retain facts, recall them
 category: infrastructure
 port: 9999
 # Measured by summing the amd64 manifest layer sizes of the three images after
-# pulling: Hindsight 928 MB, pgvector/pgvector:pg16 159 MB, nginx:1.29-alpine
+# pulling: Hindsight 488 MB, pgvector/pgvector:pg16 159 MB, nginx:1.29-alpine
 # 55 MB. A registry publishes no uncompressed layer sizes, so this is a sum of
 # compressed bytes, the same basis every other app's estimate uses.
 #
-# The 928 MB is the full image, not the `-slim` one (488 MB). Bloud ships the
-# larger of the two because the slim build has no local embedding model, and an
-# embedding endpoint is one the `inference` contract does not promise. See
-# INTEGRATION.md.
-estimatedSizeMB: 1150
+# The `-slim` build, not the full one (928 MB). The full image bundles a local
+# embedding model and a local cross-encoder reranker; the slim build calls out
+# for both. Bloud ships the smaller of the two because the operator already
+# points the instance at an embedding endpoint in Settings, and 440 MB of model
+# weights downloaded onto every home server to avoid one line in Settings is the
+# worse trade. The cost is a hard dependency: see the `embeddings` integration.
+estimatedSizeMB: 702
 
 docs:
   homepage: https://hindsight.vectorize.io/
@@ -45,6 +47,24 @@ integrations:
   # not dial a transcription route, run an agent, or need tools.
   inference:
     required: false
+    multi: false
+    requires:
+      - apiKey
+    compatible:
+      - source: setting
+        default: true
+  # The slim image stores a memory by embedding it, and it ships no embedding
+  # model: the image has no `sentence-transformers` at all. So this is not an
+  # optional enhancement the way `inference` is. With no endpoint the server
+  # fails at startup rather than degrading, and the only honest answer is to
+  # require one.
+  #
+  # `required: true` is what the catalog can say, and it says it: the install is
+  # blocked with a reason until the operator fills in the Settings row, rather
+  # than installing a container that cannot come up. See INTEGRATION.md for the
+  # measurement of what an unconfigured slim boot does.
+  embeddings:
+    required: true
     multi: false
     requires:
       - apiKey
@@ -133,7 +153,7 @@ containers:
   - name: apps-hindsight
     # 1.0.0. The registry tag carries no `v` prefix: upstream's git tag is
     # `v1.0.0` and the image tag is `1.0.0`.
-    image: ghcr.io/vectorize-io/hindsight:1.0.0
+    image: ghcr.io/vectorize-io/hindsight:1.0.0-slim
     # `hindsight-internal` for the database, `apps-net` so the gate can reach
     # both of its ports by container name.
     networks: [hindsight-internal, apps-net]
@@ -170,12 +190,29 @@ containers:
       # a future upstream that changed the default would otherwise take the tool
       # namespace down quietly.
       HINDSIGHT_API_MCP_ENABLED: "true"
+      # The slim image has no local reranker either, and the provider default is
+      # `local`, which needs the `sentence-transformers` module the slim build
+      # does not contain. Measured: with only the embedding endpoint configured
+      # the API logs "Local ML provider configured for reranker, but
+      # 'sentence-transformers' is not installed. The API will fail at startup."
+      # and then fails at startup. Setting `HINDSIGHT_API_ENABLE_RERANKING=false`
+      # is not enough, because that flag turns the reranker off at recall time
+      # while the provider is still constructed at boot.
+      #
+      # `rrf` is the provider that answers with the fusion order it already has,
+      # and it is listed in the image's own provider set. Measured: it logs
+      # "RRF passthrough provider initialized (neural reranking disabled)" and the
+      # server reaches healthy. Recall is then ordered by reciprocal-rank fusion
+      # rather than by a cross-encoder, which is a real quality difference and the
+      # price of the slim image. The remote rerank providers (TEI, Cohere, Jina)
+      # are not OpenAI-compatible, so Bloud has nothing to point them at.
+      HINDSIGHT_API_RERANKER_PROVIDER: rrf
       # The image's own supervisor kills the container when the API has not
       # answered `/health` within this window, and it follows
       # HINDSIGHT_API_MODEL_INIT_TIMEOUT when that is longer. First boot runs
-      # Alembic migrations against an empty database and loads two local models.
-      # 300s is the default, and the health-check retries below are budgeted
-      # against exactly this number.
+      # Alembic migrations against an empty database and probes the embedding
+      # endpoint once to learn its dimensions. 300s is the default, and the
+      # health-check retries below are budgeted against exactly this number.
       HINDSIGHT_API_STARTUP_WAIT_SECONDS: "300"
     # Written by the configurator on every pass, and never mounted: the runtime
     # reads it on the host when it creates the container, so these values stay out
@@ -184,9 +221,10 @@ containers:
     # configuration through process environment and nothing else.
     #
     # It carries the two credentials this app mints (the MCP bearer and the
-    # Control Plane access key) and the LLM endpoint the inference binding
-    # resolved to. The database password is not here: `{{postgresPassword}}` is
-    # static metadata the renderer can substitute, so it stays in `environment:`.
+    # Control Plane access key), the LLM endpoint the inference binding resolved
+    # to, and the embedding endpoint the embeddings binding resolved to. The
+    # database password is not here: `{{postgresPassword}}` is static metadata the
+    # renderer can substitute, so it stays in `environment:`.
     envFile: "{{appDataDir}}/config/env"
     healthCheck:
       # The readiness endpoint: it takes a database connection, so a pass means

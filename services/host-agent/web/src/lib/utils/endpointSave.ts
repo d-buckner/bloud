@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * The two rules a transcription save turns on, kept apart from the form.
+ * The two rules an endpoint-capability save turns on, kept apart from the form.
  *
  * Both are the parts that were only observable through a browser: what leaves the
  * page for a given form state, and when the stored state counts as having caught
  * up with the save. A settings save is an intent, so "saved" is a claim about the
  * future, and a claim that needs a definition a test can check without waiting on
  * an orchestrator to apply something.
+ *
+ * The two single-endpoint capabilities (transcription and embeddings) share these
+ * rules, so they share this file: a fix to the remove race or the poll condition
+ * has to land for both at once.
  */
 
 import type { PollWindow } from '$lib/store/effects/convergence';
 import type {
-	SetTranscriptionRequest,
-	SetTranscriptionResponse,
-	TranscriptionSettings
+	EndpointSettings,
+	SetEndpointRequest,
+	SetEndpointResponse
 } from '$lib/clients/settingsClient';
 
 /**
@@ -27,11 +31,13 @@ import type {
 export const SAVE_WINDOW: PollWindow = { intervalMs: 500, timeoutMs: 20_000 };
 
 /** The form fields a save is built from, as the operator left them. */
-export interface TranscriptionForm {
+export interface EndpointForm {
 	name: string;
 	baseUrl: string;
 	model: string;
 	apiKey: string;
+	/** The label the API stores when the operator left the name blank. */
+	defaultName: string;
 }
 
 /**
@@ -42,13 +48,10 @@ export interface TranscriptionForm {
  * delete. A blank key field is omitted rather than sent blank, because omitting
  * means "keep the stored key" and an empty string means "clear it".
  */
-export function buildSaveRequest(
-	form: TranscriptionForm,
-	remove: boolean
-): SetTranscriptionRequest {
-	const body: SetTranscriptionRequest = {
+export function buildSaveRequest(form: EndpointForm, remove: boolean): SetEndpointRequest {
+	const body: SetEndpointRequest = {
 		baseUrl: remove ? '' : form.baseUrl.trim(),
-		name: form.name.trim() || 'Transcription',
+		name: form.name.trim() || form.defaultName,
 		model: form.model.trim()
 	};
 	if (!remove && form.apiKey !== '') {
@@ -65,9 +68,9 @@ export function buildSaveRequest(
  * wait for, and waiting on it would stall every save that did not type one.
  */
 export function appliedTo(
-	accepted: SetTranscriptionResponse,
+	accepted: SetEndpointResponse,
 	sentKey: string | undefined
-): (live: TranscriptionSettings) => boolean {
+): (live: EndpointSettings) => boolean {
 	return (live) =>
 		live.baseUrl === accepted.baseUrl &&
 		live.model === accepted.model &&

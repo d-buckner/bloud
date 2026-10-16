@@ -30,6 +30,8 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applySetInferenceIntent(i)
 		case SetTranscriptionIntent:
 			o.applySetTranscriptionIntent(i)
+		case SetEmbeddingsIntent:
+			o.applySetEmbeddingsIntent(i)
 		case RevokeClientSessionsIntent:
 			o.applyRevokeClientSessionsIntent(i)
 		case AddExternalAppIntent:
@@ -75,6 +77,16 @@ func (o *Orchestrator) applyInstallIntent(intent InstallAppIntent) {
 	if o.catalogGraph == nil {
 		return
 	}
+
+	// Refresh the two sets a plan reads before planning. A convergence pass sets
+	// them too, but an install intent can arrive before the first pass has run, or
+	// in the same drain as the settings save that filled the requirement, and a
+	// plan built from a stale view would refuse an install the operator just made
+	// possible.
+	if installed, err := o.appStore.GetInstalledCatalogIDs(); err == nil {
+		o.catalogGraph.SetInstalled(installed)
+	}
+	o.catalogGraph.SetConfiguredContracts(o.configuredContracts())
 
 	plan, err := o.catalogGraph.PlanInstall(appName)
 	if err != nil {
@@ -263,6 +275,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	if o.catalogGraph != nil {
 		installed, _ := o.appStore.GetInstalledCatalogIDs()
 		o.catalogGraph.SetInstalled(installed)
+		o.catalogGraph.SetConfiguredContracts(o.configuredContracts())
 	}
 
 	// Step 5: Run reconcile pass, which drives per-app lifecycle phases and regenerates routes.

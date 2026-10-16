@@ -230,6 +230,7 @@ flowchart TD
     app_hermes -->|mcp| app_penpot
     app_hermes -->|inference| ai_model
     app_hermes_webui -->|agentApi| app_hermes
+    app_hindsight -->|embeddings| ai_model
     app_hindsight -->|inference| ai_model
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
