@@ -534,7 +534,7 @@ for _, pvr := range state.Integrations.PVRs {
 | Slice | Payload beyond the address |
 |---|---|
 | `PVRs` (`pvr`) | `APIKey`, the key the provider's API authenticates with |
-| `MediaServers` (`mediaServer`) | `AdminPassword`, the provider's bootstrap admin password |
+| `MediaServers` (`mediaServer`) | `AdminPassword`, the provider's bootstrap admin password. A consumer may trade it for an API key of its own, or sign every call with it: the Subsonic protocol has no key to mint |
 | `DownloadClients` (`downloadClient`) | nothing: the consumer stores the address |
 | `SSO` (`sso`) | `APIToken`, to read the provider's users |
 | `ModelSources` (`modelSource`) | `Endpoint`, `APIKey`, `Models` |
@@ -894,11 +894,12 @@ top to bottom.
 | `apps/authentik` | Multi-container, LDAP infrastructure, API token management |
 | `apps/immich` | Database integration, OIDC SSO |
 | `apps/affine` | Own postgres+redis, OIDC config file, first-run owner bootstrap (see `INTEGRATION.md`) |
-| `apps/navidrome` | Forward-auth SSO with bypass paths, simple single-container app |
+| `apps/navidrome` | Forward-auth SSO with bypass paths, simple single-container app, and the `mediaServer` provider a Subsonic consumer signs in against |
 | `apps/homeassistant` | native-oidc via a pinned custom component: `pkg/appasset` remote install + sha256 provenance, marker-based YAML config merge, `Deps.RestartContainer`-driven reload |
 | `apps/paperless-ngx` | Own postgres+redis plus gotenberg/tika sidecars, dotenv config file generated for django-allauth OIDC, internal admin account |
 | `apps/vaultwarden` | Single container, dotenv config file for built-in OIDC, extra OIDC scopes and token lifetime via `sso.scopes`/`sso.accessTokenMinutes`, `SSO_ONLY`, a container command wrapper behind an opt-in dev switch |
 | `apps/arr-mcp` | Multi-contract MCP wrapper: consumes `requestManager` + `pvr` + `mediaServer`, writes the image's `config.yaml`, claims its config UI via `clientPassword`, reuses `apps/jellyfin`'s `EnsureAPIKey` |
+| `apps/navidrome-mcp` | Wrapper whose target may live off-host: consumes `mediaServer` from an installed Navidrome or from an operator-registered external app, writes an env file, and ships no gate container because the image checks the published bearer itself |
 
 Stuck or unsure? The best place to start is `INTEGRATION.md` in whichever
 reference app shares your SSO strategy; each one documents its own

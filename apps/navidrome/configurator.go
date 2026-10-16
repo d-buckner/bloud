@@ -95,15 +95,29 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	return configurator.NoRestart(), nil
 }
 
-// PostStart syncs Authentik users into Navidrome so that forward-auth logins work.
+// PostStart ensures the bootstrap admin account, then syncs Authentik users into
+// Navidrome so that forward-auth logins work.
+//
+// The admin comes first, and it runs whether or not an identity provider is
+// installed, because that account is also the credential this app publishes under
+// its `mediaServer` offer. A consumer of that contract can only read the
+// credential or its absence, so an absence Bloud caused by skipping the bootstrap
+// would look to it exactly like a Navidrome that has no admin.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	if !state.SSOEnabled {
-		return nil
-	}
-
 	token, err := c.ensureAdminAndLogin(ctx)
 	if err != nil {
+		if !state.SSOEnabled {
+			// With no identity provider nothing installed here needs the account, and
+			// a working Navidrome must not be driven to ERROR over a credential
+			// nobody has asked for. The next pass tries again.
+			c.logger.Warn("cannot verify the bootstrap admin account", "error", err)
+			return nil
+		}
 		return fmt.Errorf("navidrome: admin bootstrap: %w", err)
+	}
+
+	if !state.SSOEnabled {
+		return nil
 	}
 
 	// The Authentik API token comes from the binding Authentik publishes it

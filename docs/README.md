@@ -34,6 +34,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Making installs show what they will do | [plans/install-experience.md](plans/install-experience.md) |
 | One frontend store, its state machines, and hot reload | [plans/frontend-fsm.md](plans/frontend-fsm.md) |
 | HTTPS with publicly trusted certificates | [plans/tls.md](plans/tls.md) |
+| Giving the instance a domain and a certificate, and why not Nginx Proxy Manager | [plans/domain-automation.md](plans/domain-automation.md) |
 | Putting the media library on a NAS: storage roots, and how an unprivileged host agent mounts one | [plans/storage-roots.md](plans/storage-roots.md) |
 | One inference endpoint for the whole instance, filled in under Settings | [plans/inference-provider-settings.md](plans/inference-provider-settings.md) |
 | Tools an agent asks Bloud itself, and where wrappers stop | [plans/native-mcp-endpoint.md](plans/native-mcp-endpoint.md) |

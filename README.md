@@ -140,6 +140,10 @@ flowchart TD
         c_navidrome["navidrome"]
     end
 
+    subgraph app_navidrome_mcp["Navidrome MCP"]
+        c_navidrome_mcp["navidrome-mcp"]
+    end
+
     subgraph app_paperless_ngx["Paperless-ngx"]
         c_paperless_ngx_postgres["postgres"]
         c_paperless_ngx_redis["redis"]
@@ -227,6 +231,7 @@ flowchart TD
     app_hermes -->|mcp| app_dav_mcp
     app_hermes -->|mcp| app_ha_mcp
     app_hermes -->|mcp| app_hindsight
+    app_hermes -->|mcp| app_navidrome_mcp
     app_hermes -->|mcp| app_penpot
     app_hermes -->|inference| ai_model
     app_hermes_webui -->|agentApi| app_hermes
@@ -236,6 +241,7 @@ flowchart TD
     app_immich -->|native-oidc| app_authentik
     app_jellyfin -->|ldap| app_authentik
     app_navidrome -->|forward-auth| app_authentik
+    app_navidrome_mcp -->|mediaServer| app_navidrome
     app_paperless_ngx -->|native-oidc| app_authentik
     app_penpot -->|native-oidc| app_authentik
     app_podly -->|inference| ai_model
@@ -268,6 +274,7 @@ flowchart TD
     app_traefik -->|proxy| app_immich
     app_traefik -->|proxy| app_jellyfin
     app_traefik -->|proxy| app_navidrome
+    app_traefik -->|proxy| app_navidrome_mcp
     app_traefik -->|proxy| app_paperless_ngx
     app_traefik -->|proxy| app_penpot
     app_traefik -->|proxy| app_podly
@@ -304,6 +311,7 @@ removal.
 - **Immich**: Self-hosted photo and video management
 - **Jellyfin**: Free software media system for streaming movies, TV, and music
 - **Navidrome**: Modern music server and streamer compatible with Subsonic/Airsonic clients
+- **Navidrome MCP**: MCP tool server over a Navidrome library, so an agent can search music, build playlists, and report what you actually listen to
 - **Paperless-ngx**: Document management system that turns scans and PDFs into a searchable archive
 - **Penpot**: Open-source design platform for interfaces, design systems, and prototypes
 - **Podly**: Removes ads from podcasts and serves the ad-free versions as RSS feeds
@@ -337,7 +345,7 @@ It's built for things you have the right to use.
 | **LDAP** | Jellyfin, Radicale, Seerr |
 | **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
 | **Native OIDC** | AFFiNE, Hermes, Hermes Web UI, Home Assistant, Immich, Paperless-ngx, Penpot, Vaultwarden |
-| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Hindsight, Home Assistant MCP, Podly |
+| **App-local accounts** | AFFiNE MCP, Arr MCP, DAV MCP, Hindsight, Home Assistant MCP, Navidrome MCP, Podly |
 <!-- END GENERATED LOGIN TABLE -->
 
 Clients that speak a native protocol, a Subsonic player or a TV app talking to Jellyfin, keep

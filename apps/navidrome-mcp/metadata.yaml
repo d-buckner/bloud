@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: navidrome-mcp
+displayName: Navidrome MCP
+description: MCP tool server over a Navidrome library, so an agent can search music, build playlists, and report what you actually listen to
+category: productivity
+port: 4534
+estimatedSizeMB: 220
+
+# No browser UI: the wrapper serves an MCP endpoint and nothing to click, so the
+# dashboard draws no tile for it. It is otherwise an ordinary app: installed,
+# reconciled, and routed like every other.
+headless: true
+
+# A wrapper, not Navidrome itself. It ships no music server of its own and exists
+# only to put a tool surface in front of one, using the same Navidrome account a
+# Subsonic client would use.
+#
+# The target may be the Navidrome Bloud runs or one the operator registered as an
+# external app. The resolver hands the same binding for both, so this app has no
+# branch on it: for a local install the address is the container name and the
+# account is the bootstrap admin Navidrome made; for a remote one the address is
+# the operator's origin and the account is the one they typed.
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # Required, and for a reason the graph enforces: with no music server the
+  # wrapper has nothing to dial, and the image does not bind its port until it has
+  # signed in. The credential is required too, because the Subsonic protocol signs
+  # every request with the password itself and an anonymous call answers nothing.
+  mediaServer:
+    required: true
+    multi: false
+    requires:
+      - adminPassword
+    compatible:
+      - app: navidrome
+        default: true
+
+# The `mcp` contract a harness (Hermes) consumes, under a `navidrome-mcp`
+# namespace. `httpToken` is the bearer this app's own listener requires: the
+# image compares it in constant time and answers 401 to anything else, so the
+# credential a harness presents is checked by the thing it was given and no
+# second gate container is needed.
+provides:
+  mcp:
+    secrets: [httpToken]
+    values:
+      serverName: navidrome-mcp
+      path: /mcp
+
+containers:
+  - name: apps-navidrome-mcp
+    # Navidrome MCP 2.6.0. Pinned by digest as well as by tag: the tag carries the
+    # intent and the digest carries the evidence. Multi-arch (amd64 and arm64).
+    image: ghcr.io/blakeem/navidrome-mcp:2.6.0@sha256:c1b7bc97e1c12cd6888ce66a01682d0958df8ee48624941448f9e4ea0ddc0f8b
+    network: apps-net
+    restartPolicy: always
+    environment:
+      # The image's stdio default expects a client on stdin. A detached container
+      # has none, so it would connect to Navidrome, see EOF, and exit 0 in about a
+      # second: a clean-looking restart loop with no port bound. The HTTP
+      # transport is the only container-shaped one.
+      MCP_TRANSPORT: http
+      # Bound explicitly rather than left to the image's `MCP_HTTP_EXPOSE`
+      # fallback, because an explicit host overrides that fallback and there is
+      # then one place that says what the listener binds. The published port only
+      # works from a container that does not bind loopback.
+      MCP_HTTP_HOST: "0.0.0.0"
+      MCP_HTTP_PORT: "4534"
+      # The MPV Remote is a control panel for local audio, and this image ships no
+      # mpv: the player never starts and the 20 playback tools are absent from
+      # tools/list. Disabling it removes the routes rather than leaving a page
+      # that cannot do anything. See INTEGRATION.md.
+      WEBUI_ENABLED: "false"
+      # Two of the optional feature groups need a user-agent string and no
+      # credential, so Bloud turns them on. Last.fm discovery is left off: it
+      # needs an API key of the operator's, and there is no instance setting that
+      # holds one.
+      LYRICS_PROVIDER: lrclib
+      LRCLIB_USER_AGENT: "Bloud (https://github.com/d-buckner/bloud)"
+      RADIO_BROWSER_USER_AGENT: "Bloud (https://github.com/d-buckner/bloud)"
+    # Written by the configurator on every pass: the resolved Navidrome address and
+    # account, and the MCP bearer. These are the values `environment:` cannot carry
+    # because they are resolved bindings and published secrets. The image reads
+    # its config from this env and from a mounted settings.json, never from a file
+    # it watches, so a change is a recreate rather than a reload.
+    envFile: "{{appDataDir}}/config/env"
+    ports:
+      - host: 4534
+        container: 4534
+    volumes:
+      # The image declares /config as a volume and points NAVIDROME_CONFIG_PATH at
+      # /config/settings.json. Bloud writes no settings.json, so the env config
+      # above stays the whole configuration, which is the shape upstream documents
+      # for a container. The mount is here so the directory the image expects is
+      # Bloud-managed and goes away with the app instead of leaving an anonymous
+      # volume behind. It is world-writable for the same reason apps/arr-mcp's is:
+      # the image runs as a uid Bloud cannot set.
+      - source: "{{appDataDir}}/config"
+        destination: /config
+    healthCheck:
+      # The image's own HEALTHCHECK, restated with this port. It is liveness only:
+      # /healthz answers 200 without touching Navidrome, which is what makes it
+      # safe as a probe and useless as a readiness one. The functional gate is
+      # PostStart, where the MCP handshake fails against a broken config.
+      #
+      # The image is a Node slim image with no shell, wget, or curl, so the probe
+      # runs on the interpreter that runs the server. Exec form, because CMD-SHELL
+      # has no shell to run.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('node:http').get('http://127.0.0.1:4534/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 5
+      timeout: 10
+      # The socket binds only after the server has signed in to Navidrome and
+      # primed its library caches, so a slow first pass is a healthy one. The
+      # retries are the startup slack a startupProbe would give.
+      retries: 60

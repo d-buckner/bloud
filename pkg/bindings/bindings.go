@@ -242,6 +242,11 @@ type RequestManagerBinding struct {
 // MediaServerBinding is an app that serves media and owns the accounts a
 // consumer onboards against: the consumer needs the bootstrap admin password to
 // log in.
+//
+// How the consumer spends that login is its own business. Most trade it for a
+// long-lived API key of their own and cache that. A consumer that reaches the
+// provider over the Subsonic protocol has no key to mint, so it signs every
+// request with this account and holds nothing it could revoke.
 type MediaServerBinding struct {
 	ProviderRef
 	// AdminUsername is the account the paired AdminPassword belongs to. A
@@ -250,7 +255,9 @@ type MediaServerBinding struct {
 	// typed in, because that is the only way anyone downstream can learn it.
 	AdminUsername string
 	// AdminPassword is the bootstrap admin password the host generated for the
-	// provider, published under its `mediaServer` contract.
+	// provider, published under its `mediaServer` contract. Empty means the
+	// provider has not published one yet, which a consumer reads as "not ready",
+	// never as "no password".
 	AdminPassword Secret
 }
 

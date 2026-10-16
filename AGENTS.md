@@ -196,6 +196,7 @@ Every other row is a debug port, and the table is generated from `apps/*/metadat
 | 3010 | AFFiNE | debugging |
 | 3389 | Authentik (ldap) | debugging |
 | 4533 | Navidrome | debugging |
+| 4534 | Navidrome MCP | debugging |
 | 5001 | Podly | debugging |
 | 5055 | Seerr | debugging |
 | 5232 | Radicale | debugging |
@@ -1146,7 +1147,12 @@ combined with instance/SSH-target env vars). Instance overrides:
    and publishes its own MCP bearer, writes the image's saved config file; see
    its `INTEGRATION.md`), `apps/arr-mcp` (multi-contract MCP wrapper:
    `requestManager` + `pvr` + `mediaServer`, writes the image's `config.yaml`,
-   claims its config UI via `clientPassword`; see its `INTEGRATION.md`).
+   claims its config UI via `clientPassword`; see its `INTEGRATION.md`),
+   `apps/navidrome-mcp` (the wrapper whose target may live off-host: consumes the
+   `mediaServer` credential an installed Navidrome publishes or the one an
+   operator registered with an external app, writes an env file, and needs no
+   gate container because the image checks the published bearer itself; see its
+   `INTEGRATION.md`).
 
 ## Integration validation runs the real dependency-graph path
 

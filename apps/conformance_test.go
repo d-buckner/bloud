@@ -43,6 +43,10 @@ type appSpec struct {
 	// credential plus the address it belongs to, so without a binding the
 	// harness would only ever exercise the "not ready" shape.
 	WithAppAPI bool
+	// WithMediaServer hands the configurator a wired mediaServer provider: an
+	// installed music server publishing an account and its password. Same reason
+	// as WithAppAPI: that pair is the wrapper's whole configuration.
+	WithMediaServer bool
 	// Preseed runs against a fresh data dir before each pass.
 	Preseed func(dataDir string) error
 }
@@ -71,6 +75,7 @@ var conformanceTable = []appSpec{
 	{Dir: "immich", Node: "apps-immich-server", WithSSO: true},
 	{Dir: "jellyfin", Node: "apps-jellyfin"},
 	{Dir: "navidrome", Node: "apps-navidrome"},
+	{Dir: "navidrome-mcp", Node: "apps-navidrome-mcp", WithMediaServer: true},
 	{Dir: "paperless-ngx", Node: "apps-paperless-ngx", WithSSO: true},
 	// The env file is written by the backend node and read by the frontend node,
 	// so both are held to the same idempotency rule. The frontend publishes the
@@ -188,6 +193,19 @@ func stateForSpec(spec appSpec) func(dataDir, bloudDataDir string) *configurator
 					},
 					Username: "conformance-owner",
 					Password: "conformance-long-lived-token",
+				},
+			}
+		}
+		if spec.WithMediaServer {
+			st.Integrations.MediaServers = []bindings.MediaServerBinding{
+				{
+					ProviderRef: bindings.ProviderRef{
+						App:       "navidrome",
+						Installed: true,
+						BaseURL:   "http://apps-navidrome:4533",
+					},
+					AdminUsername: "conformance-admin",
+					AdminPassword: "conformance-music-password",
 				},
 			}
 		}

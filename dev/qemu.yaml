@@ -35,6 +35,7 @@ portForwards:
   - guestPort: 3010 # AFFiNE
   - guestPort: 3389 # Authentik (ldap)
   - guestPort: 4533 # Navidrome
+  - guestPort: 4534 # Navidrome MCP
   - guestPort: 5001 # Podly
   - guestPort: 5055 # Seerr
   - guestPort: 5232 # Radicale
