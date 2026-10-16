@@ -227,7 +227,6 @@ func TestGatePreStartIsIdempotent(t *testing.T) {
 // fail a phase it cannot perform.
 func TestGatePostStartWithoutAProbeClientIsNotAnError(t *testing.T) {
 	c := NewGateConfigurator(0, configurator.Deps{})
-	require.Nil(t, c.api)
 	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{}))
 }
 
@@ -237,7 +236,6 @@ func TestGatePostStartWithoutAProbeClientIsNotAnError(t *testing.T) {
 // would turn a first boot into an ERROR node.
 func TestGatePostStartWithNoBearerIsNotAnError(t *testing.T) {
 	c := NewGateConfigurator(0, configurator.Deps{HTTP: fakeHTTP{}})
-	require.NotNil(t, c.api)
 	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{}))
 }
 

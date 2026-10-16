@@ -6,12 +6,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
+	"time"
 
+	"codeberg.org/d-buckner/bloud/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/pkg/mcp"
+	"codeberg.org/d-buckner/bloud/pkg/mcpwrapper"
 )
 
 // The gate is the app's front door, in the literal sense: it is the container
@@ -26,94 +27,29 @@ import (
 // smallest thing that keeps it.
 const nginxFileName = "nginx.conf"
 
-// GateConfigurator owns the apps-ha-mcp-gate node: write the nginx config, then
-// prove the endpoint a consumer actually calls.
-type GateConfigurator struct {
-	port    int
-	secrets configurator.AppSecretsProvider
-	logger  *slog.Logger
-	api     *mcpAPI
-}
-
-// NewGateConfigurator builds the gate node's configurator.
-func NewGateConfigurator(port int, deps configurator.Deps) *GateConfigurator {
+// NewGateConfigurator builds the gate node's configurator. The shared half
+// (write the config, report the recreate, probe the endpoint) lives in
+// pkg/mcpwrapper.Gate; what is here is the app-specific half: the nginx
+// rendering that compares the bearer and routes to the server's internal path.
+func NewGateConfigurator(port int, deps configurator.Deps) *mcpwrapper.Gate {
 	if port == 0 {
 		port = defaultPort
 	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	c := &GateConfigurator{
-		port:    port,
-		secrets: deps.Secrets,
-		logger:  logger.With("app", appName, "node", gateNodeName),
-	}
-	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
-	}
-	return c
-}
-
-// Name returns the graph node this configurator owns.
-func (c *GateConfigurator) Name() string { return gateNodeName }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *GateConfigurator) Port() int { return c.port }
-
-// PreStart writes the nginx config the gate container mounts. It is rewritten
-// whenever the bearer or the internal endpoint path changes, which is also the
-// only time the gate needs a recreate: nginx reads its config at start.
-func (c *GateConfigurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
-	bearer, endpointPath, err := ensureCredentials(c.secrets, c.logger)
-	if err != nil {
-		return configurator.NoRestart(), err
-	}
-	content, err := renderNginxConfig(bearer, endpointPath)
-	if err != nil {
-		return configurator.NoRestart(), err
-	}
-
-	confPath := filepath.Join(state.DataPath, configDir, nginxFileName)
-	if err := os.MkdirAll(filepath.Dir(confPath), 0o755); err != nil {
-		return configurator.NoRestart(), fmt.Errorf("creating the %s config directory: %w", appName, err)
-	}
-	changed, err := managedfile.Write(confPath, []byte(content), managedfile.ModeSharedConfig)
-	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("writing the %s gate config: %w", appName, err)
-	}
-	if !changed {
-		return configurator.NoRestart(), nil
-	}
-	c.logger.Info("wrote ha-mcp gate config", "path", confPath,
-		"bearer", bearer != "", "endpoint_path", endpointPath != "")
-	return configurator.MustRestart("ha-mcp gate config rewritten"), nil
-}
-
-// PostStart proves the endpoint a consumer calls: a real MCP `initialize` at the
-// published path, through the gate, carrying the published bearer.
-//
-// Every weaker probe lies in a different direction. The gate's own health route
-// says nginx is up and says nothing about the server behind it. The server's
-// health route is unreachable from here (it publishes no port) and says nothing
-// about the gate. Only the composed path can answer the question a consumer is
-// about to ask, and presenting the bearer is part of what the probe proves: an
-// unauthenticated probe would report a healthy node that every real consumer is
-// about to be refused by.
-//
-// Because PostStart also runs on every resync pass, a path that breaks later,
-// including one that breaks because a container moved, is surfaced rather than
-// left silently up.
-func (c *GateConfigurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
-	if err := c.api.waitServing(ctx, currentBearer(c.secrets)); err != nil {
-		return fmt.Errorf("waiting for the ha-mcp endpoint: %w", err)
-	}
-	c.logger.Info("ha-mcp is serving MCP through the gate")
-	return nil
+	return mcpwrapper.NewGate(port, deps, mcpwrapper.GateConfig{
+		App:      appName,
+		Node:     gateNodeName,
+		TokenKey: httpTokenKey,
+		Render: func(secrets configurator.AppSecretsProvider, logger *slog.Logger) (string, error) {
+			bearer, endpointPath, err := ensureCredentials(secrets, logger)
+			if err != nil {
+				return "", err
+			}
+			return renderNginxConfig(bearer, endpointPath)
+		},
+		Probe: func(ctx context.Context, cl *appclient.Client, bearer string) error {
+			return mcp.Probe(ctx, cl, mcpPublicPath, bearer, 45*time.Second)
+		},
+	})
 }
 
 // --- nginx config rendering ---

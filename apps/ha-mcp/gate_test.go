@@ -106,8 +106,8 @@ func TestGatePostStartRequiresTheHandshake(t *testing.T) {
 
 	secrets := newFakeSecrets()
 	secrets.values[httpTokenKey] = bearer
-	c := NewGateConfigurator(0, configurator.Deps{Secrets: secrets})
-	c.api = newAPI(appclient.Factory{}, func() string { return srv.URL })
+	c := NewGateConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: appclient.Factory{}})
+	c.SetBaseURL(srv.URL)
 
 	require.NoError(t, c.PostStart(context.Background(), nil))
 	require.Contains(t, got, "POST "+mcpPublicPath)
@@ -122,8 +122,10 @@ func TestGatePostStartFailsOnAGateThatCannotReachTheServer(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewGateConfigurator(0, configurator.Deps{})
-	c.api = newAPI(appclient.Factory{}, func() string { return srv.URL })
+	secrets := newFakeSecrets()
+	secrets.values[httpTokenKey] = "gate-bearer"
+	c := NewGateConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: appclient.Factory{}})
+	c.SetBaseURL(srv.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

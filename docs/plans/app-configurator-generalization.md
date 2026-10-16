@@ -242,7 +242,14 @@ hand-written. Each has a second gate node that shares the credentials and writes
 its own nginx config, which is not the single-container shape `mcpwrapper` owns.
 They still got P1 and P2.
 
-P5 and P6 did not ship. They are the optional, low-value tails of the plan.
+The gate node itself then shipped as an optional `mcpwrapper.Gate` (the
+`GateConfig` plus `NewGate`): it owns the write, recreate, and probe skeleton of
+a bearer gate, and the two gates in ha-mcp and hindsight now supply only their
+nginx rendering and their credential resolution. This was not in the original
+proposal; it is the "optional gate" the review asked for.
+
+P5 (the binding-picker helper) and P6 (the configurator base struct) did not
+ship. They are the optional, low-value tails of the plan.
 
 ## What NOT to do
 
