@@ -7,13 +7,13 @@ drives its first-run wizard through its own API, and wires the PVRs (Sonarr,
 Radarr) that fulfil the requests, so users land on a usable request UI rather
 than a setup form.
 
-- Image: `ghcr.io/seerr-team/seerr:v3.4.1` (pinned; digest `sha256:f4768de5f616248d723e05891f3345a1402123775d03bf0890dbfedc0831bda1`).
-  Seerr 3.5.0 is **not** taken yet: it removes the `sync` and `enable` query
-  parameters from `GET /settings/jellyfin/library`, which is the call
-  `syncJellyfinLibraries` in `api.go` makes. The bump needs that client moved to
-  `POST /settings/jellyfin/library/sync` and `PUT /settings/jellyfin/library/{id}`
-  first. See the 3.5.0 release note, *Breaking change: Plex and Jellyfin library
-  API endpoints*.
+- Image: `ghcr.io/seerr-team/seerr:v3.5.0` (pinned; digest `sha256:27602401178d54f1964442287b9f23f67a3fa2252645ee8065839ea1c3f69e45`).
+  3.5.0 is a breaking release for this configurator and the client moved with
+  it: it removes the `sync` and `enable` query parameters from
+  `GET /settings/jellyfin/library` and replaces them with
+  `POST /settings/jellyfin/library/sync` and
+  `PUT /settings/jellyfin/library/{id}`. See the 3.5.0 release note, *Breaking
+  change: Plex and Jellyfin library API endpoints*.
 - Container: `apps-seerr` on `apps-net`, port `5055` → `5055`
 - Volume: `{{appDataDir}}/config` → `/app/config` (settings.json, SQLite
   database, logs, cache; SQLite is Seerr's default, so no database container)
@@ -92,7 +92,7 @@ requests (all paths are described once, in `api.go`):
 | 1 | `GET /api/v1/settings/public` | none | Read `initialized`. `true` → the wizard is done: the Jellyfin connection is re-checked (see "The Jellyfin connection after onboarding"), then jump to step 6. |
 | 2 | the resolved `mediaServer` binding (`state.Integrations.MediaServers`, one `configurator.MediaServerBinding` per declared provider) | n/a | Guard: is a media server installed and has it published its bootstrap admin password? Not installed (`binding.Installed` false), or an empty `binding.AdminPassword`, defers onboarding. |
 | 3 | `POST /api/v1/auth/jellyfin` | none | Verify the Jellyfin admin credentials **and** create admin user id 1 |
-| 4 | `GET /api/v1/settings/jellyfin/library?sync=true`, then `GET /api/v1/settings/jellyfin/library?enable=<ids>`, then `POST /api/v1/settings/jellyfin/sync` | `X-API-Key` | Enable every library and start the scan (best-effort) |
+| 4 | `POST /api/v1/settings/jellyfin/library/sync`, then `GET /api/v1/settings/jellyfin/library`, then one `PUT /api/v1/settings/jellyfin/library/<id>` per library that is off, then `POST /api/v1/settings/jellyfin/sync` | `X-API-Key` | Re-read the library list from Jellyfin, enable every library, and start the scan (best-effort) |
 | 5 | `POST /api/v1/settings/initialize`, then `GET /api/v1/settings/public` | `X-API-Key` | Mark setup complete and confirm the flag flipped |
 | 6 | PVR reconcile, see below | `X-API-Key` | Give Seerr a DVR entry per installed PVR so requests can be fulfilled |
 
@@ -155,7 +155,7 @@ Details that matter:
   server id, so no separate media-server configuration step is needed.
   **Re-runs are handled explicitly:** once Jellyfin is configured, Seerr
   rejects a hostname with `500 {"error":"Jellyfin hostname already
-  configured"}` (`server/routes/auth.ts:263-266`). That response is declared as
+  configured"}` (`server/routes/auth.ts:274-277`). That response is declared as
   *already done* rather than an error, because it is exactly the state a
   reconciliation finds after a crash between this call and step 5: the admin
   already exists, so onboarding continues to the admin steps instead of failing
@@ -163,16 +163,22 @@ Details that matter:
 - **Step 4 is best-effort**: a Jellyfin with no libraries yet must not fail the
   node, because Seerr is still perfectly usable (an admin can toggle libraries
   in Settings → Jellyfin). A failure is logged as a warning. Note the
-  version-specific shape: in **v3.4.1** the library list is synced *and*
-  enabled through query flags on `GET /api/v1/settings/jellyfin/library`
-  (`server/routes/settings/index.ts:333-393`; the wizard's own UI does the same
-  at `src/components/Settings/SettingsJellyfin.tsx:161-175`). A sync without
-  `?enable` means "no library enabled", hence the second call that enables all
-  discovered ids. The newer `POST /jellyfin/library/sync` +
-  `PUT /jellyfin/library/{id}` pair only exists on the `develop` branch, which
-  is in no release; do not port it here until the pinned tag has it.
+  version-specific shape: **v3.5.0** gave each half its own route.
+  `POST /api/v1/settings/jellyfin/library/sync` re-reads the list from Jellyfin
+  and stores it; `PUT /api/v1/settings/jellyfin/library/{id}` with
+  `{"enabled": true}` enables one library per call
+  (`server/routes/settings/index.ts:365-456`; the wizard's own UI makes the same
+  calls at `src/components/Settings/SettingsJellyfin.tsx:162-241`).
+  `GET /api/v1/settings/jellyfin/library` is now a plain read, and Bloud reads
+  it *after* the sync, because the sync is what makes Jellyfin's current
+  libraries the stored list. Before 3.5.0 both halves were query flags on that
+  GET (`?sync=true`, then `?enable=a,b,c`), so a client that still sends them
+  gets a 200 that enables nothing. The sync answers 404
+  (`SYNC_ERROR_NO_LIBRARIES`) when Jellyfin serves no library, and it throws
+  before it replaces the stored list, so `syncJellyfinLibraries` stops there
+  instead of enabling a list a refused sync left behind.
 - **Step 5 must be verified.** `settings/initialize` is what flips
-  `settings.public.initialized` (`server/routes/settings/index.ts:808-817`);
+  `settings.public.initialized` (`server/routes/settings/index.ts:871-882`);
   without it every visit lands on the setup wizard. PostStart re-reads
   `/settings/public` and returns an error naming the observed value if it is
   still `false`.
@@ -369,7 +375,7 @@ relevant for correct client IPs behind a proxy).
 | File | Purpose |
 |------|---------|
 | `apps/seerr/metadata.yaml` | Container, port 5055, volume, healthcheck, `sso.strategy: none`, the optional `mediaServer` and `pvr` integrations |
-| `apps/seerr/api.go` | Typed client for the onboarding and DVR endpoints (paths/payloads, with v3.4.1 source citations) |
+| `apps/seerr/api.go` | Typed client for the onboarding and DVR endpoints (paths/payloads, with v3.5.0 source citations) |
 | `apps/seerr/configurator.go` | PreStart (config dir only) and PostStart (onboarding + PVR wiring from the resolved `mediaServer`/`pvr` bindings) |
 | `apps/seerr/jellyfin.go` | The Jellyfin coupling: verify the stored key by use, mint a new one with the binding's bootstrap password, push it into Seerr |
 | `apps/seerr/configurator_test.go` | Fake Seerr, fake Jellyfin and fake PVRs; flow, guard, PVR payload/idempotency/drift/prune tests |

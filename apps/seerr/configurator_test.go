@@ -101,6 +101,9 @@ type fakeSeerr struct {
 	// wizard's hostname (500 "Jellyfin hostname already configured").
 	jellyfinAlreadyConfigured bool
 	libraryIDs                []string
+	// enabledLibraries is settings.jellyfin.libraries[].enabled, keyed by the
+	// Jellyfin item key. Only PUT /settings/jellyfin/library/{id} writes it.
+	enabledLibraries map[string]bool
 
 	// dvrs holds the stored DVR entries per route segment ("radarr"/"sonarr"),
 	// as maps so a test can seed any shape and the handler can echo bodies
@@ -111,6 +114,26 @@ type fakeSeerr struct {
 
 	// jellyfinSettings is what POST /api/v1/settings/jellyfin last stored.
 	jellyfinSettings map[string]any
+}
+
+// setLibraries replaces the list Jellyfin serves, which is what
+// POST /settings/jellyfin/library/sync reads.
+func (f *fakeSeerr) setLibraries(ids ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.libraryIDs = append([]string(nil), ids...)
+}
+
+// libraryUpdateCalls returns every PUT /settings/jellyfin/library/{id}: the
+// per-library enable calls, whatever the library keys happen to be.
+func (f *fakeSeerr) libraryUpdateCalls() []recordedRequest {
+	var out []recordedRequest
+	for _, r := range f.all() {
+		if r.Method == http.MethodPut && strings.HasPrefix(r.Path, libraryBasePath) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // storedJellyfinSettings returns the settings.jellyfin the fake last stored.
@@ -249,6 +272,12 @@ func (f *fakeSeerr) serveJellyfinRoutes(w http.ResponseWriter, r *http.Request, 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/settings/jellyfin/library":
 		writeJSON(w, f.libraryList())
 
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/settings/jellyfin/library/sync":
+		f.serveLibrarySync(w)
+
+	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, libraryBasePath):
+		f.serveLibraryUpdate(w, strings.TrimPrefix(r.URL.Path, libraryBasePath), body)
+
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/settings/jellyfin/sync":
 		writeJSON(w, map[string]any{"running": true})
 
@@ -258,13 +287,71 @@ func (f *fakeSeerr) serveJellyfinRoutes(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
+// libraryBasePath is the prefix of the per-library route
+// (PUT /settings/jellyfin/library/{id} in server/routes/settings/index.ts).
+const libraryBasePath = "/api/v1/settings/jellyfin/library/"
+
+// serveLibrarySync answers POST /settings/jellyfin/library/sync: it re-reads
+// the list from Jellyfin and stores it. With nothing to read, the route throws
+// before it stores, so the stored list keeps whatever it held (the
+// SYNC_ERROR_NO_LIBRARIES branch).
+func (f *fakeSeerr) serveLibrarySync(w http.ResponseWriter) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.libraryIDs) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		writeJSON(w, map[string]any{"message": "SYNC_ERROR_NO_LIBRARIES"})
+		return
+	}
+	writeJSON(w, f.libraryListLocked())
+}
+
+// serveLibraryUpdate answers PUT /settings/jellyfin/library/{id}. The route
+// validates the body (libraryUpdateSchema: one required boolean) and answers
+// 404 for a key the stored list does not hold.
+func (f *fakeSeerr) serveLibraryUpdate(w http.ResponseWriter, id string, body []byte) {
+	var payload struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.Enabled == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"message": "Invalid request body."})
+		return
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	known := false
+	for _, libraryID := range f.libraryIDs {
+		if libraryID == id {
+			known = true
+			break
+		}
+	}
+	if !known {
+		w.WriteHeader(http.StatusNotFound)
+		writeJSON(w, map[string]any{"message": "Library does not exist."})
+		return
+	}
+	if f.enabledLibraries == nil {
+		f.enabledLibraries = map[string]bool{}
+	}
+	f.enabledLibraries[id] = *payload.Enabled
+	writeJSON(w, map[string]any{"id": id, "name": id, "enabled": *payload.Enabled})
+}
+
 func (f *fakeSeerr) libraryList() []map[string]any {
 	f.mu.Lock()
-	ids := append([]string(nil), f.libraryIDs...)
-	f.mu.Unlock()
-	libraries := make([]map[string]any, 0, len(ids))
-	for _, id := range ids {
-		libraries = append(libraries, map[string]any{"id": id, "name": id, "enabled": false})
+	defer f.mu.Unlock()
+	return f.libraryListLocked()
+}
+
+// libraryListLocked builds the stored list. A sync keeps the enabled flag of an
+// entry it recognises, so a re-sync does not switch off what was enabled.
+func (f *fakeSeerr) libraryListLocked() []map[string]any {
+	libraries := make([]map[string]any, 0, len(f.libraryIDs))
+	for _, id := range f.libraryIDs {
+		libraries = append(libraries, map[string]any{"id": id, "name": id, "enabled": f.enabledLibraries[id]})
 	}
 	return libraries
 }
@@ -932,6 +1019,44 @@ func TestPostStart_OnboardsThroughJellyfinAndInitializes(t *testing.T) {
 	}
 }
 
+// TestPostStart_LibrarySyncWithNothingToReadIsNotAFailure pins the one library
+// outcome that is a state rather than a fault: Seerr answers 404
+// SYNC_ERROR_NO_LIBRARIES when the media server serves no library, and it
+// throws before it replaces the stored list. The node still has to come up
+// initialized, with no enable call and no full scan behind it.
+func TestPostStart_LibrarySyncWithNothingToReadIsNotAFailure(t *testing.T) {
+	ctx := context.Background()
+	const jellyfinPassword = "jellyfin-admin-pw"
+
+	fake := newFakeSeerr()
+	fake.setLibraries()
+	jellyfin := newFakeJellyfin(t)
+	secrets := &fakeSecrets{password: jellyfinPassword}
+	c := newConfigurator(t, fake, secrets)
+
+	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, jellyfinPassword))
+	if _, err := c.PreStart(ctx, state); err != nil {
+		t.Fatalf("PreStart() error = %v", err)
+	}
+	writeAppSettings(t, state)
+	if err := c.PostStart(ctx, state); err != nil {
+		t.Fatalf("PostStart() error = %v", err)
+	}
+
+	if updates := fake.libraryUpdateCalls(); len(updates) != 0 {
+		t.Errorf("library enable calls = %d, want 0 (there is nothing to enable)", len(updates))
+	}
+	if reads := fake.requestsFor(http.MethodGet, "/api/v1/settings/jellyfin/library"); len(reads) != 0 {
+		t.Errorf("library reads = %d, want 0 (a refused sync leaves the stored list stale)", len(reads))
+	}
+	if scans := fake.requestsFor(http.MethodPost, "/api/v1/settings/jellyfin/sync"); len(scans) != 0 {
+		t.Errorf("full scan calls = %d, want 0 (no library to populate)", len(scans))
+	}
+	if !fake.isInitialized() {
+		t.Error("initialized = false, want true (an empty media server is not a broken install)")
+	}
+}
+
 // assertJellyfinLoginPayload asserts the admin account was created from the
 // Jellyfin bootstrap admin, at the media server's address, with exactly the
 // payload Seerr's own wizard sends.
@@ -964,15 +1089,35 @@ func assertJellyfinLoginPayload(t *testing.T, fake *fakeSeerr, hostname string, 
 // Jellyfin, enables every one of them, and starts the scan.
 func assertLibrarySync(t *testing.T, fake *fakeSeerr) {
 	t.Helper()
-	calls := fake.requestsFor(http.MethodGet, "/api/v1/settings/jellyfin/library")
-	if len(calls) != 2 {
-		t.Fatalf("library calls = %d, want 2 (sync, then enable)", len(calls))
+	if syncs := fake.requestsFor(http.MethodPost, "/api/v1/settings/jellyfin/library/sync"); len(syncs) != 1 {
+		t.Fatalf("library sync calls = %d, want 1", len(syncs))
 	}
-	if got := calls[0].Query.Get("sync"); got != "true" {
-		t.Errorf("first library call sync = %q, want \"true\"", got)
+	// The read comes after the sync: the sync is what makes Jellyfin's current
+	// libraries the stored list, so a read before it would enable a stale set.
+	reads := fake.requestsFor(http.MethodGet, "/api/v1/settings/jellyfin/library")
+	if len(reads) != 1 {
+		t.Fatalf("library reads = %d, want 1", len(reads))
 	}
-	if got := calls[1].Query.Get("enable"); got != "shows-key,movies-key" {
-		t.Errorf("second library call enable = %q, want %q", got, "shows-key,movies-key")
+	if first, last := fake.indexOf(http.MethodPost, "/api/v1/settings/jellyfin/library/sync"),
+		fake.indexOf(http.MethodGet, "/api/v1/settings/jellyfin/library"); first > last {
+		t.Errorf("library read is request %d, before the sync at %d; want the read after", last, first)
+	}
+
+	// One PUT per library: the route takes one id and one boolean, so enabling
+	// two libraries is two writes (v3.4.1 did all of them in one request).
+	updates := fake.libraryUpdateCalls()
+	if len(updates) != 2 {
+		t.Fatalf("library enable calls = %d, want 2 (one per library)", len(updates))
+	}
+	for _, call := range updates {
+		if string(call.Body) != `{"enabled":true}` {
+			t.Errorf("%s body = %s, want {\"enabled\":true}", call.Path, call.Body)
+		}
+	}
+	for _, id := range []string{"shows-key", "movies-key"} {
+		if calls := fake.requestsFor(http.MethodPut, libraryBasePath+id); len(calls) != 1 {
+			t.Errorf("enable calls for %s = %d, want 1", id, len(calls))
+		}
 	}
 
 	scans := fake.requestsFor(http.MethodPost, "/api/v1/settings/jellyfin/sync")
@@ -984,16 +1129,29 @@ func assertLibrarySync(t *testing.T, fake *fakeSeerr) {
 	}
 }
 
+// indexOf returns the position of the first call to method+path in the
+// recorded sequence, or -1 when there is none.
+func (f *fakeSeerr) indexOf(method, path string) int {
+	for i, r := range f.all() {
+		if r.Method == method && r.Path == path {
+			return i
+		}
+	}
+	return -1
+}
+
 // assertAdminCallsCarryKey asserts every ADMIN-only call was authenticated with
-// the API key Seerr stores, and that there are exactly the expected four.
+// the API key Seerr stores, and that there are exactly the expected six.
 func assertAdminCallsCarryKey(t *testing.T, fake *fakeSeerr, key string) {
 	t.Helper()
 	var admin []recordedRequest
+	admin = append(admin, fake.requestsFor(http.MethodPost, "/api/v1/settings/jellyfin/library/sync")...)
 	admin = append(admin, fake.requestsFor(http.MethodGet, "/api/v1/settings/jellyfin/library")...)
+	admin = append(admin, fake.libraryUpdateCalls()...)
 	admin = append(admin, fake.requestsFor(http.MethodPost, "/api/v1/settings/jellyfin/sync")...)
 	admin = append(admin, fake.requestsFor(http.MethodPost, "/api/v1/settings/initialize")...)
-	if len(admin) != 4 {
-		t.Fatalf("admin calls = %d, want 4 (sync, enable, scan, initialize)", len(admin))
+	if len(admin) != 6 {
+		t.Fatalf("admin calls = %d, want 6 (library sync, library read, two enables, scan, initialize)", len(admin))
 	}
 	for _, call := range admin {
 		if got := call.Header.Get(apiKeyHeader); got != key {

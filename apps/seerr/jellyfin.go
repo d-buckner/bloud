@@ -20,7 +20,7 @@ import (
 // The paths and payloads are taken from the pinned images and verified live
 // against them, so a version bump can re-check each claim:
 //
-//	seerr v3.4.1  server/routes/auth.ts            the login mints the key
+//	seerr v3.5.0  server/routes/auth.ts            the login mints the key
 //	              server/routes/settings/index.ts  POST /settings/jellyfin tests
 //	                                               the key it is handed
 //	jellyfin      Auth/AuthKeysController.cs       POST/GET/DELETE /Auth/Keys
