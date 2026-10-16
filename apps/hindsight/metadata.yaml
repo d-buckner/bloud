@@ -259,6 +259,32 @@ containers:
       # products (gpt-4o, gpt-4.1, gpt-3.5), so a cloud endpoint is unaffected.
       HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT: "low"
       HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT: "low"
+      # --- Fewer calls, not just fewer at once -------------------------------
+      #
+      # The caps above bound parallelism. They do not bound the number of calls.
+      # The values below remove calls. Every one is a background path, and each
+      # replaces an image default that is tuned for a hosted provider.
+      #
+      # The image runs a focused 1-by-1 LLM "merge or keep" pass for every new
+      # observation whose cosine similarity to an existing one reaches this
+      # threshold (consolidator.py: consolidation_dedup_threshold). 1.0 turns
+      # that pass off. Only automatic near-duplicate merging is lost.
+      HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD: "1.0"
+      # The maintenance loop enqueues a consolidation and a mental-model refresh
+      # for every eligible bank on these timers, with no user activity
+      # (maintenance.py). Both defaults are 300s. An hour keeps the timer real
+      # and stops it from being a steady background draw.
+      HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS: "3600"
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS: "3600"
+      # The default of 0 refreshes a mental model on every automatic trigger.
+      # This floor covers automatic refreshes only: an explicit refresh from the
+      # API or MCP ignores it (memory_engine.py: min_refresh_interval_seconds).
+      HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS: "3600"
+      # A small local model invents data when every fact field must be a string.
+      # The image's own comment recommends this setting for exactly that case.
+      # A valid answer means fewer JSON-repair re-prompts, which are extra calls
+      # the caller never sees.
+      HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS: "true"
       # Observations and auto-consolidation stay on: they are the product, not
       # overhead. The caps above bound them instead of removing them. The image
       # defaults both to true, and Bloud writes the values down so a future

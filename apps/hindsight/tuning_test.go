@@ -27,6 +27,14 @@ const (
 	envConsolidationReasoningEffort  = "HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT"
 	envEnableObservations            = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
 	envEnableAutoConsolidation       = "HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION"
+
+	// The call-volume levers. These remove calls instead of bounding how many
+	// run at once.
+	envConsolidationDedupThreshold    = "HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD"
+	envConsolidationReconcileInterval = "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS"
+	envMentalModelRefreshTick         = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS"
+	envMentalModelMinRefreshInterval  = "HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS"
+	envRetainOptionalFactDimensions   = "HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS"
 )
 
 // imageLLMMaxConcurrentDefault is the pinned image's own default for the global
@@ -147,6 +155,30 @@ func TestReasoningEffortIsLowOnBackgroundWork(t *testing.T) {
 
 	_, reflectSet := env["HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT"]
 	require.False(t, reflectSet, "interactive reflect must keep the model's own reasoning level")
+}
+
+// TestBackgroundCallVolumeIsReduced covers the levers that remove calls rather
+// than bound parallelism. The concurrency caps cannot lower the number of LLM
+// calls, so these are the only values that make the app less inference heavy.
+func TestBackgroundCallVolumeIsReduced(t *testing.T) {
+	env := serverEnv(t)
+
+	// 1.0 is the value that turns the per-duplicate merge pass off.
+	// consolidator.py skips the pass when the threshold reaches 1.0.
+	require.Equal(t, "1.0", env[envConsolidationDedupThreshold])
+
+	// The image's maintenance timers default to 300s and run with no user
+	// activity. Both are raised well past that.
+	require.Greater(t, envInt(t, env, envConsolidationReconcileInterval), 300)
+	require.Greater(t, envInt(t, env, envMentalModelRefreshTick), 300)
+
+	// The image's default of 0 refreshes a mental model on every automatic
+	// trigger. Any positive floor reduces that.
+	require.Greater(t, envInt(t, env, envMentalModelMinRefreshInterval), 0)
+
+	// The image recommends this for a small model under strict structured
+	// output. It removes the JSON-repair re-prompt, a hidden extra call.
+	require.Equal(t, "true", env[envRetainOptionalFactDimensions])
 }
 
 // TestBackgroundFeaturesStayEnabled records the choice the tuning makes: the

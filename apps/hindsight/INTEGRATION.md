@@ -227,6 +227,37 @@ Bloud leaves `HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE` and
 size of a batch rather than the number of concurrent calls, so an operator tunes
 them against the model's own context limit.
 
+### Fewer calls
+
+The values above bound how many calls run at once. They do not bound how many
+calls the app makes. These five remove calls.
+
+| Variable | Bloud | Image default | Why |
+| --- | --- | --- | --- |
+| `HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD` | 1.0 | 0.97 | Turns off the 1-by-1 merge pass for each near-duplicate observation. |
+| `HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS` | 3600 | 300 | Slows the timer that enqueues consolidation with no user activity. |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS` | 3600 | 300 | Slows the same timer for mental-model refreshes. |
+| `HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS` | 3600 | 0 | A floor on automatic refreshes. An explicit refresh ignores it. |
+| `HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS` | true | false | Fewer JSON-repair re-prompts on a small model. |
+
+The dedup pass is one LLM call for every new observation whose cosine similarity
+to an existing one reaches the threshold (`consolidator.py`). A threshold of 1.0
+turns the pass off, and only automatic near-duplicate merging is lost.
+
+The two maintenance intervals enqueue work for every eligible bank even when
+nobody uses the app (`maintenance.py`). An hour keeps the timer real without a
+steady background draw.
+
+The refresh floor changes the image default of 0 into an hour. The default
+refreshes a mental model on every automatic trigger. An explicit refresh from the
+API or the MCP server still runs at once.
+
+`HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS` lets the four fact fields be
+null. The image's own comment recommends it for a small local model under strict
+structured output, because a forced string is what makes a weak model invent
+data. A valid answer avoids the JSON-repair re-prompt, which is an extra call the
+caller never sees.
+
 Observations and auto-consolidation stay on. They are the product, not overhead.
 The caps bound them instead of removing them. Bloud writes both values as `true`
 rather than inheriting the default, so a later upstream change cannot turn them
