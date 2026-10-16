@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	FALLBACK_ZONES,
 	browserZone,
+	filterZones,
 	offsetLabel,
 	supportedZones,
 	zoneOptions
@@ -39,6 +40,34 @@ describe('zoneOptions', () => {
 	it('drops duplicates and empty names', () => {
 		const options = zoneOptions(['Europe/Berlin'], ['Europe/Berlin', '', 'Asia/Tokyo']);
 		expect(options).toEqual(['Europe/Berlin', 'Asia/Tokyo']);
+	});
+});
+
+describe('filterZones', () => {
+	const zones = ['America/New_York', 'America/Los_Angeles', 'Europe/London', 'Asia/Tokyo', 'Etc/UTC'];
+
+	it('returns the head of the list for an empty query, capped', () => {
+		expect(filterZones('', zones, 3)).toEqual(zones.slice(0, 3));
+		expect(filterZones('   ', zones, 3)).toEqual(zones.slice(0, 3));
+	});
+
+	it('matches a city inside a zone name, case-insensitively', () => {
+		expect(filterZones('york', zones)).toEqual(['America/New_York']);
+		expect(filterZones('TOKYO', zones)).toEqual(['Asia/Tokyo']);
+	});
+
+	// An operator types a city, not an IANA name, so a space has to stand in for
+	// the `/` and the `_` in the middle of the name.
+	it('treats a space as the segment break', () => {
+		expect(filterZones('new york', zones)).toEqual(['America/New_York']);
+	});
+
+	it('ranks a prefix match above a substring match', () => {
+		expect(filterZones('bar', ['Foo/Bar', 'Bar/Foo'])).toEqual(['Bar/Foo', 'Foo/Bar']);
+	});
+
+	it('caps the result', () => {
+		expect(filterZones('a', zones, 2)).toHaveLength(2);
 	});
 });
 
