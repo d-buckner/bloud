@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -18,7 +19,9 @@ import (
 // devVitePort is the port the dashboard's dev server listens on. It matches
 // `vite dev --port 5173` in the web workspace's package.json. The two are
 // kept in step here rather than discovered, because the host-agent has to be
-// told where to proxy before vite has told anyone anything.
+// told where to proxy before vite has told anyone anything, and the dev
+// Traefik route names the same port. TestDevViteRouteAgreesWithTheViteConfig
+// fails the build when they drift apart.
 const devVitePort = 5173
 
 // devViteHost is the address the host-agent proxies the dashboard to. It is a
@@ -47,6 +50,48 @@ const (
 	maxCrashes   = 2
 )
 
+// dashboardDev is the dev loop's handle on the dashboard's vite process and
+// the Traefik route that reaches it. See dev_vite_route.go.
+type dashboardDev struct {
+	cmd  *restartableCmd
+	done <-chan struct{}
+	stop func()
+}
+
+// startDashboardDevServer brings up vite and the route that sends the
+// dashboard's HMR socket to it. See dev_vite_route.go for why that socket does
+// not ride the host-agent proxy this loop restarts.
+//
+// stop takes both back down, and it is safe to call more than once.
+func startDashboardDevServer(opts hotReloadOptions, c *devConsole) (dashboardDev, error) {
+	dashTee := c.DashboardStream()
+	vite := newRestartableCmd("vite", func() (*exec.Cmd, error) {
+		return viteCommand(opts.root, dashTee, dashTee)
+	})
+	done, err := vite.Start()
+	if err != nil {
+		c.StepFailed("dashboard dev server", "", 0, err)
+		return dashboardDev{}, err
+	}
+	c.Step("dashboard dev server", fmt.Sprintf("http://localhost:%d", devVitePort), 0)
+
+	// The route has to exist before the browser can ask for the socket, so the
+	// loop writes it here rather than leaving it to the first upgrade request.
+	if err := writeDevViteRoute(opts.traefikDynamicDir, devVitePort); err != nil {
+		c.StepFailed("dashboard HMR route", opts.traefikDynamicDir, 0, err)
+		vite.Stop(gracefulStopTimeout)
+		return dashboardDev{}, err
+	}
+	c.Step("dashboard HMR route", devViteHMRPath+" -> "+devViteHost+":"+strconv.Itoa(devVitePort), 0)
+
+	return dashboardDev{cmd: vite, done: done, stop: func() {
+		if err := removeDevViteRoute(opts.traefikDynamicDir); err != nil {
+			c.Note("the dev HMR route is still in place: " + err.Error())
+		}
+		vite.Stop(gracefulStopTimeout)
+	}}, nil
+}
+
 // hotReloadOptions are the paths and environment the watch loop needs.
 type hotReloadOptions struct {
 	root       string
@@ -54,6 +99,9 @@ type hotReloadOptions struct {
 	runDir     string
 	env        map[string]string
 	console    *devConsole
+	// traefikDynamicDir is where the loop writes the dev-only route for the
+	// dashboard's HMR socket. See dev_vite_route.go.
+	traefikDynamicDir string
 }
 
 // runHotReload keeps a freshly built host-agent running on top of a stack that
@@ -82,16 +130,11 @@ func runHotReload(ctx context.Context, opts hotReloadOptions) int {
 
 	// The dashboard's dev server owns its own stream filter: its banner and
 	// HMR chatter are noise, a Svelte compile error is not.
-	dashTee := c.DashboardStream()
-	vite := newRestartableCmd("vite", func() (*exec.Cmd, error) {
-		return viteCommand(opts.root, dashTee, dashTee)
-	})
-	viteDone, err := vite.Start()
+	dash, err := startDashboardDevServer(opts, c)
 	if err != nil {
-		c.StepFailed("dashboard dev server", "", 0, err)
 		return 1
 	}
-	c.Step("dashboard dev server", fmt.Sprintf("http://localhost:%d", devVitePort), 0)
+	defer dash.stop()
 
 	agentTee := c.HostAgentStream()
 	child := newRestartableCmd("host-agent", func() (*exec.Cmd, error) {
@@ -100,7 +143,7 @@ func runHotReload(ctx context.Context, opts hotReloadOptions) int {
 	childDone, err := child.Start()
 	if err != nil {
 		c.StepFailed("host-agent", "", 0, err)
-		vite.Stop(gracefulStopTimeout)
+		dash.stop()
 		return 1
 	}
 	c.Step("host-agent", "API http://localhost:3000", 0)
@@ -120,11 +163,11 @@ func runHotReload(ctx context.Context, opts hotReloadOptions) int {
 		console: c,
 		opts:    opts,
 		child:   child,
-		vite:    vite,
+		vite:    dash.cmd,
 		changes: changes,
 		signals: signals,
 	}
-	return loop.run(ctx, childDone, viteDone)
+	return loop.run(ctx, childDone, dash.done)
 }
 
 // reloadLoop is the watch loop's event handling, split out from bring-up so

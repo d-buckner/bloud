@@ -27,9 +27,11 @@ import (
 const DevViteURLEnv = "BLOUD_DEV_VITE_URL"
 
 // viteDevProxy builds the handler that forwards frontend requests to the vite
-// dev server. The reverse proxy upgrades WebSocket connections on its own, so
-// the HMR channel rides the same path as the module requests and needs no
-// second listener exposed to the browser.
+// dev server. It upgrades WebSocket connections on its own, but the dashboard's
+// HMR socket is not one of them: `./bloud dev` routes that socket at Traefik
+// straight to vite, because this process restarts on every backend change and
+// the vite client reloads the page when its socket drops. See
+// cli/dev_vite_route.go for the route and the reason.
 func viteDevProxy(rawURL string, logger *slog.Logger) (http.Handler, error) {
 	target, err := url.Parse(rawURL)
 	if err != nil {

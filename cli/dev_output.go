@@ -424,6 +424,10 @@ func slogFields(rec map[string]any) string {
 // surfaceDashboardLog keeps the dashboard dev server's failures and drops its
 // banner. Vite has no machine-readable output, so this is a keyword filter,
 // and it errs toward showing anything that mentions a problem.
+//
+// A full page reload is on the list on purpose. It is the failure a developer
+// feels as "my dashboard state is gone", and vite prints the trigger on a
+// line of its own. Without it the console shows a reload with no cause.
 func surfaceDashboardLog(line string) (string, string, bool) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
@@ -438,7 +442,33 @@ func surfaceDashboardLog(line string) (string, string, bool) {
 		strings.Contains(lower, "internal server error"):
 		return "ERROR", "dashboard: " + clip(trimmed, 300), true
 	}
+	if msg, ok := dashboardReloadCause(lower, trimmed); ok {
+		return "WARN", "dashboard: " + msg, true
+	}
 	return "", "", false
+}
+
+// dashboardReloadCause turns the three vite lines that end in a browser
+// reload into one short reason. Only the client environment reloads the page:
+// vite logs a matching `(ssr) page reload` for the server module graph, and
+// that one is noise.
+func dashboardReloadCause(lower, raw string) (string, bool) {
+	if i := strings.Index(lower, "(client) page reload"); i >= 0 {
+		rest := strings.TrimSpace(raw[i+len("(client) page reload"):])
+		if rest == "" {
+			return "full page reload", true
+		}
+		return "full page reload: " + rest, true
+	}
+	switch {
+	case strings.Contains(lower, "changed tsconfig file detected"):
+		return "full page reload: a tsconfig file changed", true
+	case strings.Contains(lower, "optimized dependencies changed"):
+		return "full page reload: the dependency optimizer re-bundled", true
+	case strings.Contains(lower, "restarting server"):
+		return clip(raw, 300), true
+	}
+	return "", false
 }
 
 // streamTee mirrors raw subprocess output to the dev log and decides what the
