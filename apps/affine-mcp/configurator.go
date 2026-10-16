@@ -117,13 +117,9 @@ func affineBinding(state *configurator.AppState) (bindings.AppAPIBinding, bool) 
 	if state == nil {
 		return bindings.AppAPIBinding{}, false
 	}
-	for _, b := range state.Integrations.AppAPIs {
-		if !b.Installed || b.BaseURL == "" || b.Username == "" || !b.Password.Published() {
-			continue
-		}
-		return b, true
-	}
-	return bindings.AppAPIBinding{}, false
+	return bindings.First(state.Integrations.AppAPIs, func(b bindings.AppAPIBinding) bool {
+		return b.Installed && b.BaseURL != "" && b.Username != "" && b.Password.Published()
+	})
 }
 
 // renderConfig renders the image's key=value saved config. Order is fixed so an

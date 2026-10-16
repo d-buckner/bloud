@@ -52,11 +52,7 @@ type envWriter struct {
 
 // newEnvWriter builds the backend node's configurator.
 func newEnvWriter(deps configurator.Deps) *envWriter {
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &envWriter{logger: logger.With("app", appName)}
+	return &envWriter{logger: configurator.AppLogger(deps.Logger, appName)}
 }
 
 func (c *envWriter) Name() string { return backendNode }

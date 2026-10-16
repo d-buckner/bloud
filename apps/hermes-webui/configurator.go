@@ -76,7 +76,7 @@ const sharedInboxRel = "shared-trees/hermes/inbox"
 const sharedInboxMode = os.FileMode(0o777) | os.ModeSticky
 
 type Configurator struct {
-	port    int
+	configurator.Base
 	secrets configurator.AppSecretsProvider
 	exec    configurator.ExecFunc
 	logger  *slog.Logger
@@ -84,29 +84,13 @@ type Configurator struct {
 
 // NewConfigurator builds the configurator from host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	return &Configurator{
-		port:    port,
+		Base:    configurator.NewBase(port, defaultPort, nodeName),
 		secrets: deps.Secrets,
 		exec:    deps.Runtime.Exec,
-		logger:  logger.With("app", appName),
+		logger:  configurator.AppLogger(deps.Logger, appName),
 	}
 }
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart writes the app's per-install config: the minted client password,
 // the agent gateway connection, and the OIDC client.
@@ -143,22 +127,20 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	content := c.renderEnv(agent, state, password)
 	path := filepath.Join(state.DataPath, "config", envFileName)
 
-	// managedfile.Write reports changed=false when the bytes already match, so
-	// the steady-state resync writes nothing and asks for nothing.
-	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeHostOnly)
+	// WriteConfig reports a recreate only when the bytes changed, so the
+	// steady-state resync writes nothing and asks for nothing.
+	result, err := configurator.WriteConfig(path, []byte(content), managedfile.ModeHostOnly,
+		"app config changed; the values are sourced at container start")
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("%s: write %s: %w", appName, envFileName, err)
 	}
-	if !changed {
-		return configurator.NoRestart(), nil
+	if result.RestartNeeded {
+		c.logger.Info("wrote app config, recreate required to pick it up",
+			"path", path,
+			"oidc", state.OIDC != nil,
+			"gateway", agent.Endpoint != "")
 	}
-
-	c.logger.Info("wrote app config, recreate required to pick it up",
-		"path", path,
-		"oidc", state.OIDC != nil,
-		"gateway", agent.Endpoint != "")
-
-	return configurator.MustRestart("app config changed; the values are sourced at container start"), nil
+	return result, nil
 }
 
 // PostStart confirms the app came up with auth actually engaged.

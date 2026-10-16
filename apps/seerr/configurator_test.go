@@ -604,7 +604,7 @@ func newConfigurator(t *testing.T, fake *fakeSeerr, secrets configurator.AppSecr
 	t.Cleanup(server.Close)
 
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Secrets: secrets, HTTP: appclient.Factory{}})
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	return c
 }
 
@@ -818,8 +818,8 @@ func settingsPath(state *configurator.AppState) string {
 
 func TestNewConfigurator_DefaultsPort(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{})
-	if c.port != 5055 {
-		t.Errorf("NewConfigurator(0).port = %d, want 5055", c.port)
+	if c.Port() != 5055 {
+		t.Errorf("NewConfigurator(0).port = %d, want 5055", c.Port())
 	}
 	if got := c.Name(); got != "apps-seerr" {
 		t.Errorf("Name() = %q, want %q", got, "apps-seerr")

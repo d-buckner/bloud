@@ -39,39 +39,10 @@ var mountFolders = []string{"thumbs", "upload", "backups", "library", "profile",
 // before the server starts (PreStart) and bootstraps the server admin after
 // it starts (PostStart) so SSO login is possible from the first boot.
 type Configurator struct {
-	port    int
+	configurator.Base
 	secrets configurator.AppSecretsProvider
 	logger  *slog.Logger
 	api     *immichAPI
-
-	// baseURL is a test seam: when set, the API client resolves to it
-	// instead of localhost:port. Never used to build request URLs by hand.
-	baseURL string
-}
-
-// NewConfigurator creates a new Immich configurator from the host Deps.
-func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	c := &Configurator{
-		port:    port,
-		secrets: deps.Secrets,
-		logger:  logger.With("app", "immich"),
-	}
-	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
-	}
-	return c
 }
 
 // nodeName is this app's graph node and container name; see NodeLifecycle.Name.
@@ -81,14 +52,18 @@ const nodeName = "apps-immich-server"
 // when registration passes 0. It matches metadata.yaml's `port`.
 const defaultPort = 2283
 
-func (c *Configurator) Name() string {
-	return nodeName
+// NewConfigurator creates a new Immich configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
+	c := &Configurator{
+		Base:    configurator.NewBase(port, defaultPort, nodeName),
+		secrets: deps.Secrets,
+		logger:  configurator.AppLogger(deps.Logger, appName),
+	}
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
+	}
+	return c
 }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart writes the Immich config file with the native-oidc OAuth settings
 // so OAuth is enabled from the very first boot. Returns configChanged=true

@@ -84,59 +84,34 @@ var managedPreferences = map[string]string{
 }
 
 type Configurator struct {
-	port int
-	api  *appclient.Client
+	configurator.Base
+	api *appclient.Client
 
 	logger *slog.Logger
-
-	// baseURL is a test seam: when set, the WebUI client resolves to it
-	// instead of localhost:port.
-	baseURL string
 
 	// pollInterval is the cadence of PostStart's verification wait: 2s in
 	// production, a few milliseconds in tests.
 	pollInterval time.Duration
 }
 
+// nodeName is this app's graph node and container name; see NodeLifecycle.Name.
+const nodeName = "apps-qbittorrent"
+
 // NewConfigurator creates a new qBittorrent configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = webUIPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	c := &Configurator{
-		port:         port,
-		logger:       logger.With("app", appName),
+		Base:         configurator.NewBase(port, webUIPort, nodeName),
+		logger:       configurator.AppLogger(deps.Logger, appName),
 		pollInterval: 2 * time.Second,
 	}
 	if deps.HTTP != nil {
 		c.api = deps.HTTP.New(appclient.Spec{
-			Name: appName,
-			BaseURLFn: func() string {
-				if c.baseURL != "" {
-					return c.baseURL
-				}
-				return fmt.Sprintf("http://localhost:%d", c.port)
-			},
+			Name:      appName,
+			BaseURLFn: c.BaseURLFn(),
 		})
 	}
 	return c
 }
-
-// nodeName is this app's graph node and container name; see NodeLifecycle.Name.
-const nodeName = "apps-qbittorrent"
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart creates the directories the container mounts and merges Bloud's keys
 // into qBittorrent's conf file before the container reads it at boot.

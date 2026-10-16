@@ -161,7 +161,7 @@ func pvrTargets(state *configurator.AppState) ([]pvrTarget, []bindings.PVRBindin
 // a usable request UI instead of a setup form. Every method is idempotent and
 // runs on every reconciliation.
 type Configurator struct {
-	port    int
+	configurator.Base
 	secrets configurator.AppSecretsProvider
 	logger  *slog.Logger
 	api     *seerrAPI
@@ -169,34 +169,18 @@ type Configurator struct {
 	// provider's address is only known once its binding is resolved, so they
 	// are built per reconciliation rather than in the constructor.
 	clients configurator.HTTPFactory
-
-	// baseURL is a test seam: when set, the API client resolves to it instead
-	// of localhost:port. Never used to build request URLs by hand.
-	baseURL string
 }
 
 // NewConfigurator creates a new Seerr configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	c := &Configurator{
-		port:    port,
+		Base:    configurator.NewBase(port, defaultPort, nodeName),
 		secrets: deps.Secrets,
-		logger:  logger.With("app", appName),
+		logger:  configurator.AppLogger(deps.Logger, appName),
 		clients: deps.HTTP,
 	}
 	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
 	}
 	return c
 }
@@ -214,15 +198,11 @@ func (c *Configurator) providerClient(ref bindings.ProviderRef) *appclient.Clien
 // the catalog declares none or it is not installed yet, which is the state that
 // defers onboarding.
 func mediaServerBinding(state *configurator.AppState) (bindings.MediaServerBinding, bool) {
-	for _, binding := range state.Integrations.MediaServers {
-		if binding.App == jellyfinAppName && binding.Installed {
-			return binding, true
-		}
-	}
-	return bindings.MediaServerBinding{}, false
+	return bindings.First(state.Integrations.MediaServers, func(b bindings.MediaServerBinding) bool {
+		return b.App == jellyfinAppName && b.Installed
+	})
 }
 
-// Name returns the node name this configurator manages.
 // nodeName is the graph node and container name the host-agent reconciles
 // this configurator under. Registration and Name() both read it, so the two
 // cannot drift apart.
@@ -231,15 +211,6 @@ const nodeName = "apps-seerr"
 // defaultPort is the app's own web port, the value the constructor uses
 // when registration passes 0. It matches metadata.yaml's `port`.
 const defaultPort = 5055
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart prepares the mounted config directory so the non-root container can
 // boot. It deliberately writes nothing into it: Seerr owns settings.json and

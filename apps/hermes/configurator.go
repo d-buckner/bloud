@@ -98,7 +98,7 @@ const (
 // are available there), so they are delivered through the config file rather
 // than container env.
 type Configurator struct {
-	port   int
+	configurator.Base
 	logger *slog.Logger
 	api    *hermesAPI
 
@@ -119,54 +119,25 @@ type Configurator struct {
 	// contexts, where there is no host store to publish into and the publish
 	// step is skipped rather than failed.
 	secrets configurator.AppSecretsProvider
-
-	// baseURL is a test seam: when set, the API client resolves to it
-	// instead of localhost:port.
-	baseURL string
-}
-
-// NewConfigurator creates a new Hermes configurator from the host Deps.
-// deps.Address.PrimaryBaseURL supplies the current Bloud base URL (e.g.
-// "http://localhost:8080"); the dashboard's public URL is derived from it
-// the same way routes and OIDC redirect URIs are (hermes.<host>). It is a
-// function so host changes made in the UI take effect on the next pass.
-func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	c := &Configurator{
-		port:             port,
-		logger:           logger.With("app", "hermes"),
-		exec:             deps.Runtime.Exec,
-		containerRunning: deps.Runtime.ContainerRunning,
-		secrets:          deps.Secrets,
-	}
-	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
-	}
-	return c
 }
 
 // nodeName is this app's graph node and container name; see NodeLifecycle.Name.
 const nodeName = "apps-hermes"
 
-func (c *Configurator) Name() string {
-	return nodeName
+// NewConfigurator creates a new Hermes configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
+	c := &Configurator{
+		Base:             configurator.NewBase(port, defaultPort, nodeName),
+		logger:           configurator.AppLogger(deps.Logger, appName),
+		exec:             deps.Runtime.Exec,
+		containerRunning: deps.Runtime.ContainerRunning,
+		secrets:          deps.Secrets,
+	}
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
+	}
+	return c
 }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // readConfig reads Hermes' config file, falling back to the container when
 // the host-side read is refused.

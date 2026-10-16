@@ -231,7 +231,7 @@ func (s *companionSecrets) DeleteAppSecrets(string) error               { return
 // newCompanionConfigurator wires a configurator at the fake instance.
 func newCompanionConfigurator(t *testing.T, fake *fakeCompanionHA, secrets *companionSecrets) *Configurator {
 	c := NewConfigurator(0, configurator.Deps{Secrets: secrets, HTTP: appclient.Factory{}})
-	c.baseURLOverride = fake.server().URL
+	c.SetBaseURL(fake.server().URL)
 	return c
 }
 
@@ -350,7 +350,7 @@ func TestRevokeCompanionTokenOnlyDeletesItsOwn(t *testing.T) {
 // one has nothing to undo, and must not reach the network to find out.
 func TestRevokeCompanionTokenWithoutATokenIsSilent(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: newCompanionSecrets()})
-	c.baseURLOverride = "http://127.0.0.1:1"
+	c.SetBaseURL("http://127.0.0.1:1")
 	require.NoError(t, c.revokeCompanionToken(context.Background()))
 }
 

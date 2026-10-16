@@ -78,34 +78,19 @@ const (
 // from, and nothing else. Readiness is the gate's to prove, because the server
 // publishes no port this process can dial.
 type Configurator struct {
-	port    int
+	configurator.Base
 	secrets configurator.AppSecretsProvider
 	logger  *slog.Logger
 }
 
 // NewConfigurator builds the server node's configurator.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	return &Configurator{
-		port:    port,
+		Base:    configurator.NewBase(port, defaultPort, nodeName),
 		secrets: deps.Secrets,
-		logger:  logger.With("app", appName, "node", nodeName),
+		logger:  configurator.AppLogger(deps.Logger, appName).With("node", nodeName),
 	}
 }
-
-// Name returns the graph node this configurator owns.
-func (c *Configurator) Name() string { return nodeName }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart writes the env file the container spec declares as its envFile. It
 // carries the three values `environment:` cannot render: the Home Assistant
@@ -135,16 +120,15 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	if err := os.MkdirAll(filepath.Dir(envPath), 0o755); err != nil {
 		return configurator.NoRestart(), fmt.Errorf("creating the %s config directory: %w", appName, err)
 	}
-	changed, err := managedfile.Write(envPath, []byte(content), managedfile.ModeSharedConfig)
+	result, err := configurator.WriteConfig(envPath, []byte(content), managedfile.ModeSharedConfig, "ha-mcp config rewritten")
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("writing %s config: %w", appName, err)
 	}
-	if !changed {
-		return configurator.NoRestart(), nil
+	if result.RestartNeeded {
+		c.logger.Info("wrote ha-mcp config", "path", envPath,
+			"home_assistant", hasURL, "token", hasToken, "endpoint_path", endpointPath != "")
 	}
-	c.logger.Info("wrote ha-mcp config", "path", envPath,
-		"home_assistant", hasURL, "token", hasToken, "endpoint_path", endpointPath != "")
-	return configurator.MustRestart("ha-mcp config rewritten"), nil
+	return result, nil
 }
 
 // PostStart does nothing on this node. The server publishes no port, so there is

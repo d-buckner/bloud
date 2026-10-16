@@ -92,43 +92,10 @@ const confFileName = "paperless.conf"
 const oidcApps = "allauth.socialaccount.providers.openid_connect"
 
 type Configurator struct {
-	port    int
+	configurator.Base
 	secrets configurator.AppSecretsProvider
 	logger  *slog.Logger
 	api     *paperlessNgxAPI
-
-	// baseURL is a test seam: when set, the API client resolves to it instead
-	// of localhost:port. Never used to build request URLs by hand.
-	baseURL string
-}
-
-// NewConfigurator creates a Paperless-ngx configurator from the host Deps.
-// deps.Address.PrimaryBaseURL supplies the current Bloud base URL (e.g.
-// "http://localhost:8080"); the app's public URL is derived from it the same
-// way routes and OIDC redirect URIs are (paperless-ngx.<host>). It is a function
-// so host changes made in the UI take effect without re-registering.
-func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	c := &Configurator{
-		port:    port,
-		secrets: deps.Secrets,
-		logger:  logger.With("app", appName),
-	}
-	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
-	}
-	return c
 }
 
 // nodeName is this app's graph node and container name; see NodeLifecycle.Name.
@@ -138,14 +105,18 @@ const nodeName = "apps-paperless-ngx"
 // when registration passes 0. It matches metadata.yaml's `port`.
 const defaultPort = 8000
 
-func (c *Configurator) Name() string {
-	return nodeName
+// NewConfigurator creates a Paperless-ngx configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
+	c := &Configurator{
+		Base:    configurator.NewBase(port, defaultPort, nodeName),
+		secrets: deps.Secrets,
+		logger:  configurator.AppLogger(deps.Logger, appName),
+	}
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
+	}
+	return c
 }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart writes the Paperless-ngx configuration file so the container comes
 // up with the right public URL, secret key, admin account, and OIDC provider

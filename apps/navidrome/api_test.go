@@ -41,7 +41,7 @@ func TestNavidromeLoginAndCreateUser(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
-	c.baseURL = srv.URL
+	c.SetBaseURL(srv.URL)
 
 	tok, err := c.navi.login(context.Background(), "bloud-admin", "pw")
 	require.NoError(t, err)

@@ -31,47 +31,16 @@ const (
 // the typed API client (api.go) and the static asset installer; all raw HTTP
 // lives in appclient behind the client.
 type Configurator struct {
-	port    int
+	configurator.Base
 	secrets configurator.AppSecretsProvider
 	logger  *slog.Logger
 	api     *jellyfinAPI
 	assets  configurator.AssetInstaller
 
-	// baseURL is a test seam: when set, the API client resolves to it instead
-	// of localhost:Port. (The asset installer takes its URL from pluginURL.)
-	baseURL string
 	// pluginURL / pluginSHA256 are the LDAP plugin source + digest; overridable
 	// in tests so the download path is exercised without the real CDN.
 	pluginURL    string
 	pluginSHA256 string
-}
-
-// NewConfigurator creates a new Jellyfin configurator from the host Deps.
-func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	c := &Configurator{
-		port:         port,
-		secrets:      deps.Secrets,
-		logger:       logger.With("app", "jellyfin"),
-		assets:       deps.Assets,
-		pluginURL:    ldapPluginURL,
-		pluginSHA256: ldapPluginSHA256,
-	}
-	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
-	}
-	return c
 }
 
 // nodeName is this app's graph node and container name; see NodeLifecycle.Name.
@@ -81,14 +50,21 @@ const nodeName = "apps-jellyfin"
 // when registration passes 0. It matches metadata.yaml's `port`.
 const defaultPort = 8096
 
-func (c *Configurator) Name() string {
-	return nodeName
+// NewConfigurator creates a new Jellyfin configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
+	c := &Configurator{
+		Base:         configurator.NewBase(port, defaultPort, nodeName),
+		secrets:      deps.Secrets,
+		logger:       configurator.AppLogger(deps.Logger, appName),
+		assets:       deps.Assets,
+		pluginURL:    ldapPluginURL,
+		pluginSHA256: ldapPluginSHA256,
+	}
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
+	}
+	return c
 }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // resolveAdminPassword returns the durable, per-deployment bootstrap admin
 // password from the secrets manager (generated on first call, then stable across

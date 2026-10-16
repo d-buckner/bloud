@@ -61,7 +61,7 @@ func configuratorForServer(t *testing.T, handler http.Handler, secrets configura
 	_, err = fmt.Sscanf(portStr, "%d", &port)
 	require.NoError(t, err)
 	c := NewConfigurator(port, configurator.Deps{Secrets: secrets, Logger: quietLogger(), HTTP: appclient.Factory{}})
-	c.baseURL = fmt.Sprintf("http://localhost:%d", port)
+	c.SetBaseURL(fmt.Sprintf("http://localhost:%d", port))
 	return c
 }
 
@@ -351,7 +351,7 @@ func TestEnsureBootstrapAdmin_UsesOperatorEmail(t *testing.T) {
 			OperatorEmail: "admin@localhost.local",
 		},
 	})
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 
 	require.NoError(t, c.ensureBootstrapAdmin(context.Background()))
 	assert.Equal(t, "/api/setup/create-admin-user", gotPath)

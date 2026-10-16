@@ -57,7 +57,7 @@ func newTestConfigurator(t *testing.T, handler http.Handler) *Configurator {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
-	c.baseURL = srv.URL
+	c.SetBaseURL(srv.URL)
 	c.pollInterval = 10 * time.Millisecond
 	return c
 }
@@ -78,7 +78,7 @@ func readSection(t *testing.T, path, section string) *configurator.INISection {
 func TestConfigurator_Name(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
 	assert.Equal(t, "apps-qbittorrent", c.Name())
-	assert.Equal(t, webUIPort, c.port, "port 0 must select the published WebUI port")
+	assert.Equal(t, webUIPort, c.Port(), "port 0 must select the published WebUI port")
 }
 
 func TestPreStartFreshConfWritesManagedKeys(t *testing.T) {

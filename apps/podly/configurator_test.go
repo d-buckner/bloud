@@ -90,7 +90,7 @@ func testState(t *testing.T) *configurator.AppState {
 // harness hand a configurator.
 func newConfigurator(secrets configurator.AppSecretsProvider) *Configurator {
 	return &Configurator{
-		port:    defaultPort,
+		Base:    configurator.NewBase(0, defaultPort, nodeName),
 		secrets: secrets,
 		logger:  quietLogger(),
 	}

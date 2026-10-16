@@ -316,7 +316,7 @@ func testConfigurator(t *testing.T, app http.Handler) (*Configurator, string) {
 	if app != nil {
 		server := httptest.NewServer(app)
 		t.Cleanup(server.Close)
-		c.baseURL = server.URL
+		c.SetBaseURL(server.URL)
 	}
 	c.api.cl.WithSleeper(func(time.Duration) {})
 	c.api.forms.WithSleeper(func(time.Duration) {})

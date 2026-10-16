@@ -44,45 +44,12 @@ const devSwitchEnv = "BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP"
 const devSwitchKey = "BLOUD_DEV_ALLOW_HTTP"
 
 type Configurator struct {
-	port   int
+	configurator.Base
 	logger *slog.Logger
 	api    *vaultwardenAPI
 
-	// baseURL is a test seam: when set, the API client resolves to it instead
-	// of localhost:port. Never used to build request URLs by hand.
-	baseURL string
-
 	// getenv reads the host-agent's environment (os.Getenv in production).
 	getenv func(string) string
-}
-
-// NewConfigurator creates a Vaultwarden configurator from the host Deps.
-// deps.Address.PrimaryBaseURL supplies the current Bloud base URL (e.g.
-// "http://localhost:8080"); the app's public URL is derived from it the same
-// way routes and OIDC redirect URIs are (vaultwarden.<host>). It is a function
-// so host changes made in the UI take effect without re-registering.
-func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	c := &Configurator{
-		port:   port,
-		logger: logger.With("app", appName),
-		getenv: os.Getenv,
-	}
-	if deps.HTTP != nil {
-		c.api = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
-	}
-	return c
 }
 
 // nodeName is this app's graph node and container name; see NodeLifecycle.Name.
@@ -92,14 +59,18 @@ const nodeName = "apps-vaultwarden"
 // when registration passes 0. It matches metadata.yaml's `port`.
 const defaultPort = 8222
 
-func (c *Configurator) Name() string {
-	return nodeName
+// NewConfigurator creates a Vaultwarden configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
+	c := &Configurator{
+		Base:   configurator.NewBase(port, defaultPort, nodeName),
+		logger: configurator.AppLogger(deps.Logger, appName),
+		getenv: os.Getenv,
+	}
+	if deps.HTTP != nil {
+		c.api = newAPI(deps.HTTP, c.BaseURLFn())
+	}
+	return c
 }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // devAllowHTTP reports whether this install has opted into the plain-HTTP dev
 // switch: BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP is set on the host-agent AND the app's
@@ -149,18 +120,17 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	// Mode 0600: the file carries the OIDC client secret. Vaultwarden runs as
 	// root inside the container, which under rootless podman is the same host
 	// user that writes this file, so it can read it.
-	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeHostOnly)
+	result, err := configurator.WriteConfig(path, []byte(content), managedfile.ModeHostOnly, "Vaultwarden env file rewritten")
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("writing env file: %w", err)
 	}
-	if !changed {
-		return configurator.NoRestart(), nil
+	if result.RestartNeeded {
+		c.logger.Info("wrote Vaultwarden env file", "path", path, "sso", state.OIDC != nil)
+		if allowHTTP {
+			c.logger.Warn("Vaultwarden web vault HTTPS enforcement is DISABLED by "+devSwitchEnv+" (development only)", "publicURL", publicURL)
+		}
 	}
-	c.logger.Info("wrote Vaultwarden env file", "path", path, "sso", state.OIDC != nil)
-	if allowHTTP {
-		c.logger.Warn("Vaultwarden web vault HTTPS enforcement is DISABLED by "+devSwitchEnv+" (development only)", "publicURL", publicURL)
-	}
-	return configurator.MustRestart("Vaultwarden env file rewritten"), nil
+	return result, nil
 }
 
 // PostStart verifies against the running app that the configuration took

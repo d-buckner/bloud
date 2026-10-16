@@ -24,43 +24,12 @@ const authentikAppName = "authentik"
 const bootstrapAdminUsername = "bloud-admin"
 
 type Configurator struct {
-	port         int
+	configurator.Base
 	authentikURL string
 	secrets      configurator.AppSecretsProvider
 	logger       *slog.Logger
 	navi         *navidromeAPI
 	ak           *authentikAPI
-
-	// baseURL is a test seam: when set, the own-API client resolves to it
-	// instead of localhost:port.
-	baseURL string
-}
-
-// NewConfigurator creates a new Navidrome configurator from the host Deps.
-func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	c := &Configurator{
-		port:         port,
-		authentikURL: deps.LocalTraefikURL(),
-		secrets:      deps.Secrets,
-		logger:       logger.With("app", "navidrome"),
-	}
-	if deps.HTTP != nil {
-		c.navi = newNavidromeAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
-		c.ak = newAuthentikAPI(deps.HTTP, func() string { return c.authentikURL })
-	}
-	return c
 }
 
 // nodeName is this app's graph node and container name; see NodeLifecycle.Name.
@@ -70,14 +39,20 @@ const nodeName = "apps-navidrome"
 // when registration passes 0. It matches metadata.yaml's `port`.
 const defaultPort = 4533
 
-func (c *Configurator) Name() string {
-	return nodeName
+// NewConfigurator creates a new Navidrome configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
+	c := &Configurator{
+		Base:         configurator.NewBase(port, defaultPort, nodeName),
+		authentikURL: deps.LocalTraefikURL(),
+		secrets:      deps.Secrets,
+		logger:       configurator.AppLogger(deps.Logger, appName),
+	}
+	if deps.HTTP != nil {
+		c.navi = newNavidromeAPI(deps.HTTP, c.BaseURLFn())
+		c.ak = newAuthentikAPI(deps.HTTP, func() string { return c.authentikURL })
+	}
+	return c
 }
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart creates the required data and music directories before the container starts.
 func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {

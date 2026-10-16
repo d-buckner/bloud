@@ -34,47 +34,22 @@ const nodeName = "apps-calino"
 const defaultPort = 8180
 
 type Configurator struct {
-	port   int
+	configurator.Base
 	logger *slog.Logger
 	app    *calinoAPI
-
-	// baseURL is a test seam: when set, the client resolves to it instead of
-	// localhost:port. Never used to build request URLs by hand.
-	baseURL string
 }
 
 // NewConfigurator creates a Calino configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
-	if port == 0 {
-		port = defaultPort
-	}
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	c := &Configurator{
-		port:   port,
-		logger: logger.With("app", appName),
+		Base:   configurator.NewBase(port, defaultPort, nodeName),
+		logger: configurator.AppLogger(deps.Logger, appName),
 	}
 	if deps.HTTP != nil {
-		c.app = newAPI(deps.HTTP, func() string {
-			if c.baseURL != "" {
-				return c.baseURL
-			}
-			return fmt.Sprintf("http://localhost:%d", c.port)
-		})
+		c.app = newAPI(deps.HTTP, c.BaseURLFn())
 	}
 	return c
 }
-
-func (c *Configurator) Name() string {
-	return nodeName
-}
-
-// Port is the app port this node was constructed with, which is the catalog
-// `port:` when registration passed 0. The conformance harness compares it
-// against metadata.yaml, because only one of the two routes traffic.
-func (c *Configurator) Port() int { return c.port }
 
 // PreStart has nothing to do, and an explicit no-op is the honest shape: the
 // app takes no configuration from the host, so there is no file to converge and
