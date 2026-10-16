@@ -224,16 +224,6 @@ func ensureCredentials(secrets configurator.AppSecretsProvider, logger *slog.Log
 	return bearer, accessKey, nil
 }
 
-// currentCredentials reads both credentials without generating either, so a
-// probe always presents whatever is current even if a rotation landed between
-// the two phases.
-func currentCredentials(secrets configurator.AppSecretsProvider) (bearer, accessKey string) {
-	if secrets == nil {
-		return "", ""
-	}
-	return secrets.GetAppSecret(appName, httpTokenKey), secrets.GetAppSecret(appName, passwordKey)
-}
-
 // --- env file rendering ---
 
 // renderEnvFile builds the container's environment from the two credentials and

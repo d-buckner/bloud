@@ -190,15 +190,6 @@ func ensureCredentials(secrets configurator.AppSecretsProvider, logger *slog.Log
 	return bearer, endpointPath, nil
 }
 
-// currentBearer reads the bearer without generating one, so a probe always
-// presents whatever is current even if a rotation landed between the two phases.
-func currentBearer(secrets configurator.AppSecretsProvider) string {
-	if secrets == nil {
-		return ""
-	}
-	return secrets.GetAppSecret(appName, httpTokenKey)
-}
-
 // --- bindings ---
 
 // homeAssistantURL returns the address the MCP server dials for its target: the
