@@ -8,7 +8,7 @@ Hosts).
 ## Building
 
 ```bash
-./bloud package                     # host architecture, version from git describe
+./bloud package                     # host architecture, version from the newest release tag
 ./bloud package --arch amd64        # explicit architecture
 ./bloud package --version 1.2.3     # explicit version
 ./bloud package --out dist          # output directory (default: dist)
@@ -19,10 +19,15 @@ static bundle, stages the on-disk catalog, and hands the payload to
 [nfpm](https://nfpm.goreleaser.com/) through `packaging/nfpm.yaml.tmpl`. The
 output is `dist/bloud_<version>_<arch>.deb`.
 
-`.github/workflows/release.yml` runs the same command on every push to `main`
-(and on manual dispatch). It uploads the `.deb` as a workflow artifact and
-publishes a GitHub pre-release tagged `deb-<UTC timestamp>` (titled
-`bloud <date> (<sha>)`) with the `.deb` attached.
+The default version is the newest `vMAJOR.MINOR.PATCH` tag, with the distance
+from it when `HEAD` is past that tag. The `deb-<timestamp>` and `iso-<timestamp>`
+tags are build stamps, not versions, so `git describe` is told to ignore them.
+
+`.github/workflows/release.yml` runs the same command. A push to `main` builds
+the `.deb` and keeps it as a workflow artifact. A `v*` tag builds it at that
+version and publishes a GitHub release whose notes are the matching section of
+[`../../CHANGELOG.md`](../../CHANGELOG.md). [releases.md](releases.md) is the
+release process.
 
 ## Why there is no rolling asset
 
@@ -34,10 +39,12 @@ workflow cannot override the setting for one release either.
 
 That rules out a rolling fixed-name asset. A rolling asset has to be
 overwritten on every push, and immutability refuses the upload with
-`HTTP 422: Cannot upload assets to an immutable release`. So each push
-publishes exactly one immutable `deb-<UTC timestamp>` release, and
-`install.sh` resolves the newest one at install time through the releases
-API.
+`HTTP 422: Cannot upload assets to an immutable release`. So each release is one
+immutable `vMAJOR.MINOR.PATCH` tag, and `install.sh` resolves the newest one at
+install time through the releases API.
+
+The `deb-<UTC timestamp>` releases the old workflow published on every push to
+`main` stay on the releases page. Nothing publishes more of them.
 
 The old `latest` tag is retired for good. GitHub will not release a tag name
 that was attached to an immutable release, even after that release is

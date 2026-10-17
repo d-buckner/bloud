@@ -282,14 +282,35 @@ func withEnv(base []string, kv ...string) []string {
 	return base
 }
 
-// packageVersion derives a Debian version from git describe, ensuring it
-// starts with a digit (a hard requirement of the format).
+// packageVersion derives a Debian version from git. It reads the newest release
+// tag first, because the `deb-<timestamp>` and `iso-<timestamp>` tags are build
+// stamps rather than versions. With those tags in the set `git describe`
+// returned one of them, and every package was named
+// `0.0.0+deb-20261017-175224`, which tells nobody what a machine has installed.
 func packageVersion(root string) string {
-	v := ""
-	if out, err := exec.Command("git", "-C", root, "describe", "--tags", "--always", "--dirty").Output(); err == nil {
-		v = strings.TrimSpace(string(out))
+	describe := gitDescribe(root, "--match", "v[0-9]*")
+	if describe == "" {
+		describe = gitDescribe(root)
 	}
-	v = strings.TrimPrefix(v, "v")
+	return debianVersion(describe)
+}
+
+// gitDescribe runs `git describe` with the extra arguments, and returns "" when
+// it finds nothing to name.
+func gitDescribe(root string, extra ...string) string {
+	args := append([]string{"-C", root, "describe", "--tags", "--always", "--dirty"}, extra...)
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// debianVersion turns a describe string into a version Debian accepts. The first
+// character must be a digit, so anything that does not start that way becomes a
+// zero version with the description kept in the build metadata.
+func debianVersion(describe string) string {
+	v := strings.TrimPrefix(describe, "v")
 	if v == "" {
 		return "0.1.0"
 	}

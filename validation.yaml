@@ -134,6 +134,14 @@ tiers:
       - id: ports-check
         cwd: .
         run: ./bloud ports --check
+      # CHANGELOG.md is the source of every release's notes. This fails a file the
+      # release workflow cannot publish from: a section with no entries, a section
+      # out of order, a line the parser cannot read, and a tag with no section. The
+      # last one is the case that used to publish "Automated build of the Bloud
+      # .deb from <sha>" instead of a changelog.
+      - id: changelog-check
+        cwd: .
+        run: ./bloud changelog --check
 
   integration:
     # Commands run inside the guest against the validation runtime deployed
@@ -186,4 +194,4 @@ inference:
       # These ride the catch-all: any change can invalidate a doc, a link, an
       # image pin, or a file-length ceiling, and the matcher has no recursive
       # `**/*.md` form (see pathMatches in cli).
-      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, file-length, no-component-timers, no-component-writes, no-component-commands, no-legacy-store, depgraph-check, catalogdoc-check, ports-check]
+      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, file-length, no-component-timers, no-component-writes, no-component-commands, no-legacy-store, depgraph-check, catalogdoc-check, ports-check, changelog-check]

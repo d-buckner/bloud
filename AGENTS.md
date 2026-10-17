@@ -343,7 +343,7 @@ pruned to the newest 20).
 
 | Tier | Command | What happens |
 |---|---|---|
-| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate + nolintlint, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, file length ratchet, write-path check (`check:no-component-writes`: no mutating client call outside `store/commands/`), prose lint (Vale), em dash check, docs link check, generated-doc check (`depgraph --check` + `catalogdoc --check` + `ports --check`) |
+| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate + nolintlint, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, file length ratchet, write-path check (`check:no-component-writes`: no mutating client call outside `store/commands/`), prose lint (Vale), em dash check, docs link check, generated-doc check (`depgraph --check` + `catalogdoc --check` + `ports --check`), changelog check (`changelog --check`: a release the workflow cannot publish notes for) |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps. The `**` catch-all always runs the whole-tree checks, and a root config/script change triggers the full tier, so no file is ever unmapped. CI runs this tier (not `fast`) with the merge-base as the diff base on branches |
 | `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent and the integration test binary locally (no frontend build, see below); deploys them plus the app catalog to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) with `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install an app through the real API). `--test-run <regex>` narrows the suite to one app group, so CI runs one matrix leg per group in parallel |
 
@@ -666,6 +666,14 @@ Other:       depgraph             Full dependency graph from app metadata
             ports --check        Exit 1 when one of those is not what the
                                  catalog produces (the fast-tier gate)
             ports --target F     Narrow the run to one of those files
+Release:     package             Build the .deb (see docs/operations/packaging.md)
+            changelog            Print the newest CHANGELOG.md section
+            changelog --check    Exit 1 when a release cannot be published from it
+                                 (the fast-tier gate)
+            changelog --notes V  Render the release notes for one version
+            changelog --check-pr F  Check a pull request body for its entry
+            changelog collect --bump major|minor|patch
+                                 Cut the next section from the merged pull requests
 ```
 
 The README's graph is a Mermaid diagram, embedded directly in the `## the full graph` section
@@ -1312,6 +1320,7 @@ to the right doc. When a doc moves, update it in both places.
 | Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
 |Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|
 |Build the .deb release package|[operations/packaging.md](docs/operations/packaging.md)|
+|Cut a release, and how its notes get written|[operations/releases.md](docs/operations/releases.md)|
 |Back up, restore, and update an install|[operations/backup-restore.md](docs/operations/backup-restore.md)|
 |Sharing/federation (removed)|archived design in [docs/plans/archive/](docs/plans/archive/)|
 |MCP servers as catalog apps (shipped: the catalog carries MCP providers, and Hermes is a consumer)|[features/mcp.md](docs/features/mcp.md)|
