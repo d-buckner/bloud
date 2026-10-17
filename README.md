@@ -230,7 +230,7 @@ flowchart TD
     app_hermes -->|native-oidc| app_authentik
     app_hermes -->|mcp| app_dav_mcp
     app_hermes -->|mcp| app_ha_mcp
-    app_hermes -->|mcp| app_hindsight
+    app_hermes -->|memory| app_hindsight
     app_hermes -->|mcp| app_navidrome_mcp
     app_hermes -->|mcp| app_penpot
     app_hermes -->|inference| ai_model

@@ -10,8 +10,9 @@ disagreement is recorded.
 | Fact | How it was checked |
 | --- | --- |
 | `/health` answers `{"status":"healthy","database":"connected"}` and needs no credential | `curl` against the running container |
-| `/mcp` answers 401 with no bearer and completes the MCP handshake with one | `curl` POST, `initialize` |
-| The handshake names itself `hindsight-mcp-server` | response body, captured in `api_test.go` |
+| The REST API answers on `/v1/...` and `/version`, and checks the published bearer | `curl` with and without the header: 401, then the bank list |
+| The bearer in `HINDSIGHT_API_TENANT_API_KEY` is the string the `memory` offer publishes, and the REST API accepts it | the token from `secrets.json` against `/v1/default/banks` |
+| A memory client asks exactly `/v1/...` and `/version` | the gate's access log, against `hindsight-client-python 0.10.3` |
 | `HINDSIGHT_API_DATABASE_URL` is the database knob, and its default is an embedded database | container log line, then the same container pointed at a real PostgreSQL |
 | `HINDSIGHT_CP_DATAPLANE_API_KEY` is required once the API is protected | the UI 401s on every panel without it, and returns 200 with it |
 | `HINDSIGHT_CP_ACCESS_KEY` gates the UI | `POST /api/auth/login` returns 200 for the key and 401 for anything else |
@@ -21,7 +22,8 @@ disagreement is recorded.
 | `HINDSIGHT_API_RERANKER_PROVIDER=rrf` is the way to have no reranker | logs "RRF passthrough provider initialized (neural reranking disabled)" and the server reaches `healthy` |
 | The embedding endpoint is dialed during startup, not on first use | a stub `/v1/embeddings` server logged the probe, and the API logged "OpenAI provider initialized (model: bge-m3, dim: 384)" from its answer |
 | An unreachable embedding endpoint fails startup | the same container pointed at an address nothing answers exits with `openai.APIConnectionError: Connection error.` |
-| The gate's two routes split correctly | nginx in the same podman network, both paths plus `/mcpsomething` |
+| The gate's routes split correctly, and `/mcp` no longer reaches the API | real nginx on the app network with the rendered config: `/v1/...` and `/version` to 8888 with the bearer, everything else to 9999 |
+| The plugin completes a retain and a recall through the rendered gate config | the pinned plugin's own provider class and client, against a real bank |
 | The resolver address is only knowable inside the container | host `/etc/resolv.conf` named `10.0.0.1`, the container's named `10.89.0.1` |
 
 ## Why this app is three containers
@@ -39,8 +41,8 @@ its subdomain to it, and an `extraPorts` entry is reached through a path prefix 
 that same subdomain only when the port is separately reachable on the host, which
 is exactly what this app must not do: the memory API must not be dialable from the
 LAN. So a third container, nginx, holds the app's only published port and branches
-it. `/mcp` goes to 8888 and everything else goes to 9999. This is the shape
-`apps/ha-mcp` already uses for the same reason.
+it. `/v1` and `/version` go to 8888, and everything else goes to 9999. This is the
+shape `apps/ha-mcp` already uses for the same reason.
 
 The second is that the app needs a database, and its default is a trap.
 
@@ -69,11 +71,14 @@ reads as an empty directory to the next one.
 
 ## Two credentials, for two audiences
 
-`mcp` carries `httpToken`. This is the machine half: the bearer the API's own
+`memory` carries `httpToken`. This is the machine half: the bearer the API's own
 `ApiKeyTenantExtension` checks on every request, including the ones the Control
 Plane makes on a user's behalf. It is a credential the provider validates, not a
-string Bloud invented and hopes the app agrees with, which is what makes
-`reveal: always` on it honest.
+string Bloud invented and hopes the app agrees with. The offer also declares the
+three facts a harness needs to install the plugin that speaks this API: its catalog
+name, the commit to pin, and where it keeps its settings. Why the machine surface
+is this API rather than the MCP endpoint the same server also serves is in
+[Agent memory](../../docs/features/memory.md).
 
 `clientPassword` carries `password`. This is the human half. Hindsight cannot join
 Authentik: it has no OIDC client, no trusted-header mode, and no proxy-auth hook,
@@ -114,22 +119,28 @@ reconciliation pass see a diff, restart the gate, and never settle.
 `nginxResolverScript` in `gate.go` and the `command:` in `metadata.yaml` are the
 same script, and `TestGateCommandMatchesMetadata` fails if the two drift apart.
 
-### The route is a regex, not a prefix
+### The published routes are exactly the client's
 
-The MCP endpoint is both `/mcp` and `/mcp/<bank>/`. A plain nginx prefix location
-would also claim `/mcpsomething`, which no upstream serves, so the match is
-`^/mcp(/|$)`. `TestMCPRouteClaimsOnlyTheMCPPath` pins that against both families
-of path, and `TestMCPRouteMatchesThePublishedContractValue` pins the route against
-the `path: /mcp` the contract advertises, so a consumer is never handed a path the
-gate does not serve.
+A memory client composes its own paths from the origin it is given, so the gate
+serves the two prefixes that client uses and nothing else. `^/v1(/|$)` is anchored
+and complete: a plain prefix location would also claim `/v123`, which no upstream
+serves. `/version` is an exact match, because it is one path with nothing below it,
+and the client asks it to introduce the server before it asks for anything else.
+Measured against `hindsight-client-python 0.10.3`, whose first request is
+`GET /version` and whose every later request starts with `/v1`.
+
+`TestAPIRoutesClaimOnlyTheirOwnPaths` pins both matches against the families of
+path they must and must not claim, and `TestAPIRoutesCoverThePathsAMemoryClientAsks`
+names the two prefixes, so a client bump that moved one is a failing test rather
+than a 404 nothing reads.
 
 ### The locked shape
 
 While either credential is missing the gate serves nothing but its own health
-route: 401 on the MCP path, 503 everywhere else. Rendering the proxy with an empty
-bearer would be the one configuration worse than a refusal, because the API would
-then be reachable with no credential in front of it. Each half locks on its own
-credential, so a rotation of one never opens the other surface.
+route: 401 on the memory paths, 503 everywhere else. Rendering the proxy with an
+empty bearer would be the one configuration worse than a refusal, because the API
+would then be reachable with no credential in front of it. Each half locks on its
+own credential, so a rotation of one never opens the other surface.
 
 ## The generated env file
 
@@ -250,7 +261,7 @@ steady background draw.
 
 The refresh floor changes the image default of 0 into an hour. The default
 refreshes a mental model on every automatic trigger. An explicit refresh from the
-API or the MCP server still runs at once.
+API still runs at once.
 
 `HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS` lets the four fact fields be
 null. The image's own comment recommends it for a small local model under strict
@@ -339,10 +350,14 @@ Two consequences of the slim build are encoded in `metadata.yaml`:
   absence, and the app's own startup message about a missing endpoint is clearer
   than any placeholder Bloud could invent.
 
-**The MCP endpoint is the only machine surface.** Hindsight also has a REST API,
-and the gate does not route it. The catalog declares the `mcp` contract, so that is
-the surface Bloud promises and can test. Publishing a second, differently
-authenticated API on the same subdomain would be reach the app did not declare.
+**The REST API is the only machine surface.** The image also serves a
+streamable-HTTP MCP endpoint at `/mcp`, and the gate does not route it. The catalog
+declares the `memory` contract, so that is the surface Bloud promises and can
+test. The endpoint is left at the image's own default rather than switched off,
+because it is a documented part of the app and nothing Bloud does depends on its
+state; what Bloud does not do is hand a second memory surface to the harness, which
+is the failure mode the memory contract exists to avoid. See
+[Agent memory](../../docs/features/memory.md).
 
 **`inference` is optional and `embeddings` is not.** The distinction is what each
 one degrades to. With no chat endpoint the server still comes up: `none` is a
@@ -378,20 +393,21 @@ Unit tests in `apps/hindsight` cover what a live install cannot cheaply pin:
   keyless-endpoint placeholder, no env line ever written empty, rotation reaching
   the container, and idempotency with and without a secrets store.
 - `gate_test.go`: the gate command and the mount path bound to `metadata.yaml`,
-  only the gate publishing a port, the MCP regex claiming exactly the paths it
-  should, each half locking independently, and the two upstream ports staying
-  distinct.
-- `api_test.go`: the handshake parser against the captured real response, and every
-  shape that is "something is listening" but not "this app serves its tools".
+  only the gate publishing a port, both published routes claiming exactly the paths
+  they should, each half locking independently, the bearer the gate enforces being
+  the secret the offer publishes, and the two upstream ports staying distinct.
+- `api_test.go`: the readiness predicate against the captured real bank list, and
+  every shape that is "something is listening" but not "this app serves its API".
 
 Both nodes are rows in `apps/conformance_test.go`, so the shared idempotency and
 nil-deps harnesses run against them.
 
 The catalog rules that bind on this app are already enforced by existing tests:
-`TestShippedCatalog_EveryMCPProviderIsHarnessReady` requires every `mcp` provider
-to be declared by a shipped harness, which is why Hermes lists it, and
-`TestDeclaredProviders_RealCatalogDeclaresEveryMcpProvider` pins the resulting
-order.
+`TestShippedCatalog_MemoryProviderPublishesEveryBindingField` requires the offer to
+fill every value the contract carries and the pin to be a full commit,
+`TestShippedCatalog_RetiredMCPProviderIsGone` keeps the retired namespace retired,
+and `TestDeclaredProviders_RealCatalogDeclaresTheMemoryProvider` pins the one
+provider the harness wires.
 
 No Playwright spec and no integration leg, the same call `apps/ha-mcp` made for the
 same reason: the sign-in is a client-side form posting a minted key, and the

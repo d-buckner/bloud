@@ -89,10 +89,10 @@ func TestPreStartMintsAndWritesBothCredentials(t *testing.T) {
 
 	content := readEnvFile(t, state)
 	bearer, ok := envValue(t, content, envTenantAPIKey)
-	require.True(t, ok, "the MCP bearer line must be present")
+	require.True(t, ok, "the memory API bearer line must be present")
 	require.NotEmpty(t, bearer)
 	require.Equal(t, bearer, secrets.values[httpTokenKey],
-		"the bearer the file carries is the one published to the mcp contract")
+		"the bearer the file carries is the one published to the memory contract")
 
 	accessKey, ok := envValue(t, content, envCPAccessKey)
 	require.True(t, ok, "the access key line must be present")
@@ -225,7 +225,7 @@ func TestEnvFileIsNotWorldReadable(t *testing.T) {
 	info, err := os.Stat(filepath.Join(state.DataPath, configDir, envFileName))
 	require.NoError(t, err)
 	require.Zero(t, info.Mode().Perm()&0o077,
-		"a file holding the MCP bearer and the access key must not be readable by others")
+		"a file holding the memory API bearer and the access key must not be readable by others")
 }
 
 // TestCredentialsAreMintedOnceAndRotationReachesTheApp covers rotation, which is

@@ -74,12 +74,20 @@ integrations:
 
 # Two credentials, for two audiences.
 #
-# `mcp` is the machine half: every Hindsight server ships a streamable-HTTP MCP
-# endpoint at `/mcp`, and a harness (Hermes) registers it as a tool namespace
-# that exposes retain, recall, and reflect. The `httpToken` is the bearer the
-# endpoint authenticates with. Hindsight's own API-key tenant extension checks
-# it, so it is a credential the provider validates rather than a string Bloud
-# invented and hopes the app agrees with.
+# `memory` is the machine half: the REST API that a harness's own memory client
+# speaks. Hindsight's token is the bearer that API authenticates with, and
+# Hindsight's own API-key tenant extension checks it, so it is a credential the
+# provider validates rather than a string Bloud invented and hopes the app agrees
+# with. The gate publishes the API on the app's own address, and the consumer
+# composes its paths from there.
+#
+# The machine half is deliberately not Hindsight's MCP endpoint, which the same
+# server also serves at `/mcp`. A tool namespace makes the model remember: it
+# calls retain when it thinks to and recall when it thinks to look. A memory
+# provider makes the harness remember: it captures every turn and injects what it
+# has learned with no tool call in between, which is what the `memory` contract
+# exists for. Wiring both would give one server two memories, in two banks, with
+# the model choosing which one to write to. See apps/hermes/INTEGRATION.md.
 #
 # `clientPassword` is the human half. Hindsight cannot join the identity
 # provider: it has no OIDC client, no trusted-header mode, and no proxy-auth
@@ -88,20 +96,28 @@ integrations:
 # reaches the app through the env file the configurator rewrites, which is what
 # makes `rotate: bloud` a mechanism rather than a label.
 provides:
-  mcp:
+  # Address and bearer, plus the three facts Hermes needs to install and
+  # configure the plugin that speaks this API.
+  #
+  # `pluginName` is the plugin's own name in Hermes' plugin catalog, and the
+  # plugin's own manifest calls itself the same thing. `pluginCommit` is the pin:
+  # Hermes' catalog moves this pin when the plugin's maintainers release, and a
+  # machine that installs by name follows whatever is current, so the commit this
+  # repository verified with the pinned image is written down here beside that
+  # image tag. `pluginConfigPath` is where the plugin reads its settings, relative
+  # to Hermes' home directory.
+  #
+  # A memory client composes its own API paths from the origin it is given, so
+  # there is no path value: the routes this app publishes are `/v1/...` and
+  # `/version`, and the gate below serves exactly those. There is no `bankId`
+  # value either, because the bank a harness writes to is the harness's own
+  # setting.
+  memory:
     secrets: [httpToken]
     values:
-      serverName: hindsight
-      # The multi-bank endpoint, not a per-bank one. `/mcp/{bank_id}/` scopes a
-      # connection to one bank and hides the bank-management tools; `/mcp`
-      # exposes all of them and takes `bank_id` per call. A harness that serves
-      # one operator's whole instance wants to create and list banks through the
-      # same namespace, so the wider surface is the one to publish.
-      #
-      # It is a static value rather than a runtime one because nothing has to be
-      # running to know it: the path is fixed by the image, and the gate below
-      # routes exactly this prefix and nothing else.
-      path: /mcp
+      pluginName: hindsight
+      pluginCommit: d952b6e655fccab4581ee0722b51c5f103873d12
+      pluginConfigPath: hindsight/config.json
   clientPassword:
     secrets:
       - password
@@ -172,8 +188,8 @@ containers:
       # migrations, which is a slower and less obvious signal than a refused
       # connection.
       HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:{{postgresPassword}}@apps-hindsight-postgres:5432/hindsight
-      # Pinned to the number three other places depend on: the gate's MCP route
-      # dials it, the health check below probes it, and the Control Plane's
+      # Pinned to the number three other places depend on: the gate's API routes
+      # dial it, the health check below probes it, and the Control Plane's
       # dataplane URL below names it. The default is the same value today; it is
       # written down so a future image that moved it breaks the catalog review
       # rather than the running app.
@@ -186,10 +202,13 @@ containers:
       # the wire between the two processes in this container, and getting it wrong
       # produces a UI that loads, signs in, and then 401s on every panel.
       HINDSIGHT_CP_DATAPLANE_API_URL: http://localhost:8888
-      # The MCP endpoint is what this app publishes through the `mcp` contract, so
-      # a future upstream that changed the default would otherwise take the tool
-      # namespace down quietly.
-      HINDSIGHT_API_MCP_ENABLED: "true"
+      # The image's MCP endpoint is left at its own default and is not declared
+      # here. Bloud does not route it: the gate serves the memory API, and the
+      # harness that would consume a tool namespace consumes the `memory`
+      # contract instead. Turning it off is not Bloud's call to make, because the
+      # endpoint is a documented part of the image and nothing Bloud does depends
+      # on its state either way.
+      #
       # The slim image has no local reranker either, and the provider default is
       # `local`, which needs the `sentence-transformers` module the slim build
       # does not contain. Measured: with only the embedding endpoint configured
@@ -278,7 +297,7 @@ containers:
       HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS: "3600"
       # The default of 0 refreshes a mental model on every automatic trigger.
       # This floor covers automatic refreshes only: an explicit refresh from the
-      # API or MCP ignores it (memory_engine.py: min_refresh_interval_seconds).
+      # API ignores it (memory_engine.py: min_refresh_interval_seconds).
       HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS: "3600"
       # A small local model invents data when every fact field must be a string.
       # The image's own comment recommends this setting for exactly that case.
@@ -304,9 +323,9 @@ containers:
     # resolved contract binding reaches this image, which takes its whole
     # configuration through process environment and nothing else.
     #
-    # It carries the two credentials this app mints (the MCP bearer and the
-    # Control Plane access key), the LLM endpoint the inference binding resolved
-    # to, and the embedding endpoint the embeddings binding resolved to. The
+    # It carries the two credentials this app mints (the memory API bearer and
+    # the Control Plane access key), the LLM endpoint the inference binding
+    # resolved to, and the embedding endpoint the embeddings binding resolved to. The
     # database password is not here: `{{postgresPassword}}` is static metadata the
     # renderer can substitute, so it stays in `environment:`.
     envFile: "{{appDataDir}}/config/env"
@@ -344,7 +363,7 @@ containers:
   # same reason.
   #
   # The gate does no authentication of its own. Both surfaces behind it check their
-  # own credential: the API refuses anything that does not carry the published MCP
+  # own credential: the API refuses anything that does not carry the published memory
   # bearer, and the Control Plane refuses anything that has not presented the
   # access key. A second check here would be a copy of a credential the gate does
   # not own. What the gate does own is the locked shape: while either credential

@@ -101,5 +101,35 @@ func TestDeclaredProviders_RealCatalogDeclaresEveryMcpProvider(t *testing.T) {
 		require.False(t, p.IsSetting(), "hermes' mcp contract declares no instance provider")
 		names = append(names, p.App)
 	}
-	assert.Equal(t, []string{"affine-mcp", "arr-mcp", "dav-mcp", "ha-mcp", "hindsight", "navidrome-mcp", "penpot"}, names)
+	assert.Equal(t, []string{"affine-mcp", "arr-mcp", "dav-mcp", "ha-mcp", "navidrome-mcp", "penpot"}, names)
+}
+
+// TestDeclaredProviders_RealCatalogDeclaresTheMemoryProvider pins the other half
+// of the harness's wiring, and the rule that makes it different from `mcp`: the
+// harness activates exactly one memory provider, so the contract is exclusive.
+//
+// It is a second assertion rather than a loop over contracts because the shape is
+// the point. `mcp` is multi and grows with the catalog; this one is a single
+// provider by construction, and a second one arriving would have to change that
+// decision rather than quietly join a list.
+func TestDeclaredProviders_RealCatalogDeclaresTheMemoryProvider(t *testing.T) {
+	cache := NewMemoryCache()
+	require.NoError(t, cache.Refresh(NewLoader(filepath.Join("..", "..", "..", "..", "apps"))))
+
+	hermes, err := cache.Get("hermes")
+	require.NoError(t, err)
+	memory, ok := hermes.Integrations["memory"]
+	require.True(t, ok, "hermes must declare integrations.memory")
+	require.False(t, memory.Multi, "the harness activates exactly one memory provider")
+	require.False(t, memory.Required, "hermes is a working agent with no memory server")
+	assert.Equal(t, []string{"httpToken"}, memory.Requires,
+		"the bearer is the whole consumer surface")
+
+	providers := DeclaredProviders(memory)
+	var names []string
+	for _, p := range providers {
+		require.False(t, p.IsSetting(), "hermes' memory contract declares no instance provider")
+		names = append(names, p.App)
+	}
+	assert.Equal(t, []string{"hindsight"}, names)
 }

@@ -20,15 +20,16 @@ import (
 const nginxFileName = "nginx.conf"
 
 // GateConfig declares the app-specific half of a bearer gate node: an nginx
-// container that publishes the app's port and enforces the MCP bearer on the
-// published path, so a server with no bearer notion of its own still keeps the
-// `mcp` contract's promise.
+// container that publishes the app's port and enforces the app's own bearer on the
+// published API path, so a server with no bearer notion of its own still keeps its
+// contract's promise. The caller supplies the probe, because what proves "serving"
+// is a fact about the surface rather than about the gate.
 type GateConfig struct {
 	// App is the catalog id, for the secrets store and log identity.
 	App string
 	// Node is the gate's graph node and container name.
 	Node string
-	// TokenKey is the secret name holding the MCP bearer the gate enforces.
+	// TokenKey is the secret name holding the bearer the gate enforces.
 	TokenKey string
 	// Render builds the gate's nginx config from the secrets provider and the
 	// logger. The app resolves its own credentials inside, the shared bearer
@@ -118,12 +119,12 @@ func (g *Gate) PostStart(ctx context.Context, _ *configurator.AppState) error {
 		bearer = g.secrets.GetAppSecret(g.cfg.App, g.cfg.TokenKey)
 	}
 	if bearer == "" {
-		g.logger.Warn("the " + g.cfg.App + " MCP endpoint is locked until its bearer exists")
+		g.logger.Warn("the " + g.cfg.App + " API endpoint is locked until its bearer exists")
 		return nil
 	}
 	if err := g.cfg.Probe(ctx, g.api, bearer); err != nil {
 		return fmt.Errorf("waiting for the %s endpoint: %w", g.cfg.App, err)
 	}
-	g.logger.Info(g.cfg.App + " is serving MCP through the gate")
+	g.logger.Info(g.cfg.App + " is serving its API through the gate")
 	return nil
 }

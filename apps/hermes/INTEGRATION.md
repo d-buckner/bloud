@@ -566,6 +566,123 @@ Sources: [Tool Search](https://hermes-agent.nousresearch.com/docs/user-guide/fea
 and `tools/tool_search.py`, `tools/mcp_tool_registration.py`, and
 `hermes_cli/config_defaults.py` in the pinned image.
 
+## The memory provider contract (`integrations.memory`)
+
+Hermes can keep long-term memory. It does so through a **memory provider plugin**,
+which is a different mechanism from an MCP tool namespace, and the difference is
+who does the remembering.
+
+| | Tool namespace (`integrations.mcp`) | Memory provider (this contract) |
+|---|---|---|
+| Who writes a fact | the model, when it calls `retain` | the harness, on every turn |
+| Who reads one back | the model, when it calls `recall` | the harness, before the next answer |
+| Reaches the model as | a tool schema, deferred behind Tool Search | injected context, plus `retain`/`recall`/`reflect` tools |
+| How many are active | as many as the instance provides | exactly one |
+
+Hindsight used to sit on the `mcp` list, and both halves of that were a mistake
+once this contract existed. The model chose which surface to write to, and the two
+banks drifted apart. Hermes now gets one memory server, one way in.
+
+The provider declares four facts and Bloud writes none of them into Go: the plugin
+name, the commit to pin, where the plugin keeps its config, and the bearer its API
+checks. A second memory provider is metadata, not code here.
+
+### What Bloud writes
+
+Two things, and they are separate files with separate rules.
+
+`memory.provider` in `config.yaml` selects the plugin. It is adopt-once, the rule
+`tools.tool_search` and the inference model already follow: Bloud writes it only
+when the operator has not, and removes it only when it names a provider the
+catalog declares. `memory.provider: mem0` is the operator's statement and survives
+every pass, including the pass that removes Hindsight.
+
+`$HERMES_HOME/pluginConfigPath` (the provider's own declaration, checked for
+traversal) holds the connection. Measured on the pinned plugin:
+
+```json
+{
+  "mode": "local_external",
+  "api_url": "http://localhost:9999",
+  "api_key": "<the bearer the provider published>",
+  "bank_id": "hermes",
+  "memory_mode": "hybrid"
+}
+```
+
+`mode`, `api_url`, and `api_key` are Bloud's and are rewritten on every pass: they
+name the server Bloud runs, and a rotated bearer or a moved address has to land.
+`bank_id` and `memory_mode` are adopt-once, because they say where the agent's
+memory lives and how much of it is injected, and an operator who changed either
+means it.
+
+The address is the **host loopback**, for the same reason the MCP entries use it:
+Hermes runs in the host network namespace, so a container name does not resolve,
+and the gate publishes the app port on the host.
+
+The file is the carrier rather than `$HERMES_HOME/.env` (which Hermes owns and
+mints its own agent key into) and rather than a container environment variable
+(the bearer is a resolved binding, not a static template value). The plugin reads
+process environment only when no config file exists, and it reads the config file
+first when one does.
+
+### The install is pinned
+
+`hermes plugins install <name> --ref <commit> --enable`, run inside the container.
+The commit comes from the provider's metadata, and it is there for the reason the
+container image tags are there: a catalog name installs whatever the vendor's
+catalog pins today, and that pin moves without this repository reviewing it.
+
+Measured on the pinned image: the plugin lands in `$HERMES_HOME/plugins/<name>/`,
+its Python dependencies land in `$HERMES_HOME/lazy-packages/`, and Hermes
+activates that durable target on `sys.path` at process start. Both are on the
+app's data mount, so **an installed plugin outlives the container that installed
+it**, and a recreate does not reinstall it.
+
+Three details make this idempotent:
+
+- The check is the record Hermes writes inside the plugin
+  (`.hermes-catalog.json`, holding the installed commit), not the directory's
+existence. A directory at the wrong commit is replaced, which is how a pin bump
+lands; a directory with no record at all is replaced too, and the log line says
+so.
+- `hermes plugins install` refuses an existing plugin, so a commit change uses the
+  reinstall form (`--force`). Measured: the reinstall is also what repairs a plugin
+  whose dependencies were dropped.
+- The success check re-reads the record rather than trusting the exit status.
+
+### The restart, and why it is bounded
+
+The vendor's own install message is "Restart the gateway for the plugin to take
+effect", and Bloud does exactly that: `Deps.Runtime.RestartContainer` from
+PostStart. Measured: the gateway does **not** install the plugin by itself, and it
+does not load a plugin that appeared after it started.
+
+The restart is bounded to the one pass that installed something. Every later pass
+finds the pinned commit in place, runs no command, and leaves the running agent
+alone.
+
+### Known limits, recorded rather than hidden
+
+- **A Python ABI change wipes the plugin's dependencies.** The ABI stamp on
+  `lazy-packages` makes Hermes discard the whole store when the interpreter's
+  minor version or ABI tag changes, which an image bump can do. The plugin
+  directory survives, so the record still matches and the pin check stays quiet,
+  while the plugin's client import fails at runtime. The repair is
+  `hermes plugins install <name> --ref <commit> --force`, which is a manual step
+  until Bloud has a signal for it. This is the one memory failure that is silent.
+- **The reinstall removes before it clones.** `--force` deletes the plugin and
+  then fetches it again, so a network failure in that window leaves the previous
+  install gone. The next pass reinstalls it, and the pass logs a WARN, but memory
+  is down in between.
+- **A failed install does not fail the node.** Memory is an enhancement: a clone
+  that fails on a slow network would otherwise park a working dashboard, gateway,
+  and every MCP namespace in ERROR. The pass logs a WARN and retries.
+- **The token is readable inside the app's data tree.** The plugin reads its
+  config as the container's own user, which is a subordinate uid under rootless
+  podman, so the file is world-readable (`0644`) like `config.yaml`. The app data
+  root above it is `0700` and owned by the agent.
+
 ## The agent API contract (`provides: agentApi`, served on `extraPorts.gateway`)
 
 Hermes' gateway exposes an **OpenAI-compatible API server** (`gateway/platforms/api_server.py`),
@@ -697,7 +814,9 @@ without needing a session.
 
 ## Pinning
 
-The image is pinned to a `vYYYY.M.D` release tag (see `metadata.yaml`). Hermes
+The image is pinned to a `vYYYY.M.D` release tag (see `metadata.yaml`), and the
+memory provider's plugin is pinned to a commit that Hindsight's metadata declares
+(see "The install is pinned" above). Hermes
 tags roughly weekly. Before bumping, re-read
 `website/docs/user-guide/features/web-dashboard.md`
 (`#self-hosted-oidc-provider`) and the `plugins/dashboard_auth/self_hosted`
@@ -748,3 +867,13 @@ shared Authentik flow), and completing the Authentik login on the loopback
 issuer origin returns the user to the authenticated dashboard. Not covered here:
 the live OIDC round-trip's own PKCE exchange, which is upstream's surface, not
 Bloud's.
+
+`memory_test.go` covers the memory provider: the two files a first pass writes,
+the adopt-once key and the adopt-once config keys, the strip rule that removes only
+a name the catalog declares, every "not ready" binding shape, the traversal check
+on the declared config path, the install command and its pin, the reinstall that
+moves a pin, the restart that follows an install, and the no-op steady state.
+`TestRetiredMCPServersGuardAgainstNothing` reads Hindsight's metadata and fails if
+the provider offers the retired `mcp` namespace again, and
+`TestPruneRetiredMCPServers` covers the upgrade path that removes the entry Bloud
+wrote before this contract existed.

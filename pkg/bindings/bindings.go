@@ -299,6 +299,41 @@ type MCPBinding struct {
 	Path string
 }
 
+// MemoryBinding is a long-term memory server an agent harness keeps facts in.
+//
+// The payload is the provider's address, the bearer its API authenticates with,
+// and the three facts a harness needs to install and configure the plugin that
+// speaks that API. The harness appends its own API paths to whatever origin it is
+// given, so a path declared on the provider's side would be a second source for a
+// fact the client owns. Bank and mode are the harness's own settings, not the
+// provider's facts.
+//
+// The harness activates one memory provider, so a consumer reads this slice for
+// the single binding it wired and treats an empty slice as "no memory server
+// installed".
+type MemoryBinding struct {
+	ProviderRef
+	// Token is the bearer the provider's API expects, published under the
+	// provider's `memory` contract. A provider that publishes the same token
+	// for `mcp` names the same secret in both offers, because it is the same
+	// credential its API validates.
+	Token Secret
+	// PluginName is the name the provider's plugin answers to in the harness's
+	// plugin catalog, and the name the harness installs. It is a provider fact
+	// rather than a derivation from App: the plugin is published by whoever
+	// maintains the integration, and its name is theirs to choose.
+	PluginName string
+	// PluginCommit is the commit the catalog pinned. A harness installs that
+	// commit rather than the catalog's current one, so the plugin on a machine
+	// is the plugin this repository reviewed.
+	PluginCommit string
+	// PluginConfigPath is where that plugin reads its own settings, relative to
+	// the harness's home directory. A consumer must reject a path that is
+	// absolute or walks upward rather than joining it: the value arrives from an
+	// offer, and the write lands inside an app's data tree.
+	PluginConfigPath string
+}
+
 // AppAPIBinding is a credential into the provider's own API, for a companion
 // that is not a browser and cannot join the identity provider.
 //
@@ -422,6 +457,7 @@ type Integrations struct {
 	Transcription   []TranscriptionBinding
 	Embeddings      []EmbeddingsBinding
 	MCPServers      []MCPBinding
+	Memories        []MemoryBinding
 	AppAPIs         []AppAPIBinding
 	AgentAPIs       []AgentAPIBinding
 	CalDAVServers   []CalDAVBinding

@@ -45,11 +45,9 @@ type catalogVol struct {
 }
 
 type catalogProvides struct {
-	MCP struct {
-		Values struct {
-			Path string `yaml:"path"`
-		} `yaml:"values"`
-	} `yaml:"mcp"`
+	Memory struct {
+		Secrets []string `yaml:"secrets"`
+	} `yaml:"memory"`
 }
 
 func loadMetadata(t *testing.T) catalogMetadata {
@@ -110,31 +108,55 @@ func TestOnlyTheGatePublishesTheAppPort(t *testing.T) {
 	require.Equal(t, defaultPort, NewGateConfigurator(0, configurator.Deps{}).Port())
 }
 
-// TestMCPRouteClaimsOnlyTheMCPPath checks the match rule the gate is built on.
-// The endpoint is both `/mcp` and `/mcp/<bank>/`, so a plain prefix location would
-// also claim `/mcpsomething`, and a request for a path no upstream serves would
-// be answered by the wrong one.
-func TestMCPRouteClaimsOnlyTheMCPPath(t *testing.T) {
-	match := regexp.MustCompile(`^/mcp(/|$)`)
-	for _, path := range []string{"/mcp", "/mcp/", "/mcp/default/", "/mcp/default"} {
-		require.Truef(t, match.MatchString(path), "%s must reach the memory API", path)
+// TestAPIRoutesClaimOnlyTheirOwnPaths checks the match rules the gate is built
+// on. Both are anchored and complete: a plain prefix location on `/v1` would also
+// claim `/v123` that no upstream serves, and `/version` is a single path with
+// nothing below it.
+func TestAPIRoutesClaimOnlyTheirOwnPaths(t *testing.T) {
+	prefix := regexp.MustCompile("^" + apiPathPrefix + "(/|$)")
+	for _, path := range []string{apiPathPrefix, apiPathPrefix + "/",
+		apiPathPrefix + "/default/banks", apiPathPrefix + "/default/banks/main"} {
+		require.Truef(t, prefix.MatchString(path), "%s must reach the memory API", path)
 	}
-	for _, path := range []string{"/mcpsomething", "/api/mcp", "/mcpx", "/", "/login"} {
-		require.Falsef(t, match.MatchString(path), "%s belongs to the Control Plane", path)
+	for _, path := range []string{"/v", "/v1x", "/v10", "/api/v1", "/", "/login"} {
+		require.Falsef(t, prefix.MatchString(path), "%s belongs to the Control Plane", path)
 	}
 
-	// The rendered config is what nginx reads, so the rule has to survive into it.
-	require.Contains(t, renderNginxConfig(defaultPort, "bearer", "access-key"),
-		"location ~ ^/mcp(/|$) {")
+	conf := renderNginxConfig(defaultPort, "bearer", "access-key")
+	require.Contains(t, conf, "location ~ ^"+apiPathPrefix+"(/|$) {")
+	require.Contains(t, conf, "location = "+apiVersionPath+" {")
+	require.NotContains(t, conf, "location = "+apiVersionPath+"/")
 }
 
-// TestMCPRouteMatchesThePublishedContractValue keeps the gate's route and the
-// contract's advertised path from drifting: a consumer calls the value in
-// metadata.yaml, and the gate serves exactly one prefix.
-func TestMCPRouteMatchesThePublishedContractValue(t *testing.T) {
+// TestAPIRoutesCoverThePathsAMemoryClientAsks pins the gate to the client it
+// publishes for. A memory client composes its own paths from the origin it is
+// given, so a gate that routed only the versioned root would leave a configured
+// client unable to introduce itself to the server: the version probe is the first
+// request it makes, and the only one outside the prefix.
+//
+// The two paths are the ones hindsight-client-python 0.10.3 requests, read out of
+// the gate's access log against the running app. A client bump that moved either
+// one would make this test the place the change is noticed.
+func TestAPIRoutesCoverThePathsAMemoryClientAsks(t *testing.T) {
+	require.Equal(t, "/v1", apiPathPrefix, "the versioned root every API route sits under")
+	require.Equal(t, "/version", apiVersionPath, "the unversioned probe the client asks first")
+	require.True(t, strings.HasPrefix(apiProbePath, apiPathPrefix),
+		"the readiness probe must read a route the gate actually routes")
+
+	conf := renderNginxConfig(defaultPort, "bearer", "access-key")
+	require.Contains(t, conf, apiVersionPath)
+	require.Contains(t, conf, apiPathPrefix)
+}
+
+// TestGateBearerIsTheSecretTheContractPublishes keeps the credential the gate
+// enforces and the credential the metadata offers from drifting apart. A gate
+// enforcing a name the offer does not publish would lock the API forever with no
+// consumer able to present it.
+func TestGateBearerIsTheSecretTheContractPublishes(t *testing.T) {
 	meta := loadMetadata(t)
-	require.Equal(t, mcpPublicPath, meta.Provides.MCP.Values.Path)
-	require.Contains(t, renderNginxConfig(defaultPort, "bearer", "access-key"), mcpPublicPath)
+	require.Equal(t, []string{httpTokenKey}, meta.Provides.Memory.Secrets,
+		"the gate enforces the one secret the memory contract carries")
+	require.Contains(t, renderNginxConfig(defaultPort, "bearer", "access-key"), apiPathPrefix)
 }
 
 // TestRenderedConfigRoutesEachSurfaceToItsOwnPort is the split the gate exists to
@@ -143,9 +165,15 @@ func TestMCPRouteMatchesThePublishedContractValue(t *testing.T) {
 func TestRenderedConfigRoutesEachSurfaceToItsOwnPort(t *testing.T) {
 	conf := renderNginxConfig(defaultPort, "bearer", "access-key")
 
-	mcpBlock, uiBlock := splitLocations(t, conf, "/mcp", "/")
-	require.Contains(t, mcpBlock, "proxy_pass http://$hindsight_api:8888")
+	apiBlock := locationBlock(t, conf, "location ~ ^"+apiPathPrefix+"(/|$) {")
+	uiBlock := locationBlock(t, conf, "location / {")
+	require.Contains(t, apiBlock, "proxy_pass http://$hindsight_api:8888")
 	require.Contains(t, uiBlock, "proxy_pass http://$hindsight_ui:9999")
+
+	// The version path is a second location onto the same upstream, and it exists
+	// because a memory client asks it outside the versioned root.
+	versionBlock := locationBlock(t, conf, "location = "+apiVersionPath+" {")
+	require.Contains(t, versionBlock, "proxy_pass http://$hindsight_api:8888")
 
 	// Both upstreams are the server container, and neither is a literal address:
 	// a pinned IP goes stale the moment the server is recreated.
@@ -153,14 +181,14 @@ func TestRenderedConfigRoutesEachSurfaceToItsOwnPort(t *testing.T) {
 	require.Contains(t, conf, "set $hindsight_ui "+nodeName)
 	require.NotContains(t, conf, "proxy_pass http://10.")
 
-	// A streamable-HTTP server holds an SSE response open, and the Control Plane
-	// reports ingestion progress as it happens. A buffering proxy turns both into
-	// a page that fills in when the request ends.
+	// The API serves attachment bodies as whole files, and the Control Plane
+	// reports ingestion progress as it happens. A buffering proxy turns the first
+	// into a held response and the second into a page that fills in at the end.
 	require.Equal(t, 2, strings.Count(conf, "proxy_buffering off"))
 
 	// The health route is answered here, so a server mid-restart is not a dead gate.
 	require.Contains(t, conf, "location = /healthz { return 200 \"ok\"; }")
-	require.NotContains(t, mcpBlock, "healthz")
+	require.NotContains(t, apiBlock, "healthz")
 }
 
 // TestEachHalfLocksIndependently covers the "not configured yet" shape. Rendering
@@ -182,7 +210,7 @@ func TestEachHalfLocksIndependently(t *testing.T) {
 	require.Contains(t, noAccessKey, "return 503")
 	require.NotContains(t, noAccessKey, "proxy_pass http://$hindsight_ui")
 	require.Contains(t, noAccessKey, "proxy_pass http://$hindsight_api",
-		"a missing access key must not take the MCP endpoint down with it")
+		"a missing access key must not take the memory API down with it")
 
 	locked := renderNginxConfig(defaultPort, "", "")
 	require.NotContains(t, locked, "proxy_pass",
@@ -195,7 +223,7 @@ func TestEachHalfLocksIndependently(t *testing.T) {
 // could not have written itself.
 func TestRenderedConfigCarriesOnlyTheResolverPlaceholder(t *testing.T) {
 	conf := renderNginxConfig(defaultPort, "bearer", "access-key")
-	require.Equal(t, 2, strings.Count(conf, nginxResolverPort),
+	require.Equal(t, 3, strings.Count(conf, nginxResolverPort),
 		"one per proxied location, and the container substitutes every one")
 	require.NotContains(t, conf, "$resolver")
 }
@@ -248,34 +276,25 @@ func TestGatePortFollowsTheCatalogPort(t *testing.T) {
 	require.Contains(t, renderNginxConfig(c.Port(), "b", "a"), "listen 7777;")
 }
 
-// splitLocations returns the two named location blocks out of a rendered config.
-// The config is small and machine-generated, so a brace count is enough and beats
-// parsing nginx.
-func splitLocations(t *testing.T, conf, first, second string) (string, string) {
+// locationBlock returns one location block out of a rendered config, addressed by
+// its opening line. The config is small and machine-generated, so a brace count is
+// enough and beats parsing nginx.
+func locationBlock(t *testing.T, conf, opener string) string {
 	t.Helper()
-	blocks := map[string]string{}
-	for _, loc := range []string{first, second} {
-		start := strings.Index(conf, "location "+loc+" {")
-		if loc == "/mcp" {
-			start = strings.Index(conf, "location ~ ^/mcp(/|$) {")
-		}
-		require.Greaterf(t, start, -1, "no location for %s", loc)
-		depth := 0
-		for i := start; i < len(conf); i++ {
-			switch conf[i] {
-			case '{':
-				depth++
-			case '}':
-				depth--
-				if depth == 0 {
-					blocks[loc] = conf[start : i+1]
-				}
-			}
-			if blocks[loc] != "" {
-				break
+	start := strings.Index(conf, opener)
+	require.Greaterf(t, start, -1, "no location opening with %s", opener)
+	depth := 0
+	for i := start; i < len(conf); i++ {
+		switch conf[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return conf[start : i+1]
 			}
 		}
-		require.NotEmptyf(t, blocks[loc], "unbalanced braces after location %s", loc)
 	}
-	return blocks[first], blocks[second]
+	t.Fatalf("unbalanced braces after location %s", opener)
+	return ""
 }

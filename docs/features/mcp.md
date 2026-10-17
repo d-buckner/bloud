@@ -37,6 +37,11 @@ writes one `mcp_servers` entry per installed provider under that provider's
 without any change to Hermes, and uninstalling one removes its entry on the
 next pass instead of leaving a tool the agent keeps trying to call.
 
+A namespace is not the only way to give the agent a capability, and it is the
+wrong one for memory. A tool namespace leaves the remembering to the model: it
+calls `retain` when it thinks to, and `recall` when it thinks to look. A memory
+provider inverts that, so it is a separate contract. See [memory.md](memory.md).
+
 AFFiNE ships its own MCP server, and the first version of this design used it:
 `apps/affine` minted a scoped `aff_mcp_v1.<credentialId>.<secret>` bearer through
 AFFiNE's GraphQL API and published it. That server is **read-only and
