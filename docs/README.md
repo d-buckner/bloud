@@ -23,6 +23,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Dashboard layout + widgets | [features/dashboard.md](features/dashboard.md) |
 | Agent API + multi-port apps (`extraPorts`, the `agentApi` contract) | [features/agent-api.md](features/agent-api.md) |
 | Speech-to-text: the instance's transcription endpoint and the `transcription` contract | [features/transcription.md](features/transcription.md) |
+| The instance clock: the time zone every container gets | [features/timezone.md](features/timezone.md) |
 | How Bloud ships app credentials to clients (declare, reveal, rotate, revoke) | [features/client-credentials.md](features/client-credentials.md) (shipped); the design record is [plans/archive/client-credentials.md](plans/archive/client-credentials.md) |
 | Every dated review of this codebase, oldest first | [reviews/](reviews/) |
 | The review that found the remote admin bypass, and the first full audit | [reviews/2026-09-17.md](reviews/2026-09-17.md), [reviews/2026-09-19.md](reviews/2026-09-19.md) |
