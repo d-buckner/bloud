@@ -84,7 +84,12 @@
 	}
 
 	.btn.sm {
-		padding: var(--space-xs) var(--space-md);
+		/* The 44px tap target comes from the base rule, so the only thing left to
+		   trim is the room around the label: --space-md a side read as padding
+		   around a word rather than a button, and the icon sat a full --space-sm
+		   away from its text. */
+		padding: var(--space-xs) var(--space-sm);
+		gap: var(--space-xs);
 		font-size: 0.875rem;
 	}
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /**
  * The dialog contract, checked against the source rather than a rendered DOM.
@@ -62,13 +62,45 @@ describe('every modal caller', () => {
 	it.each(modalCallers.map((f) => [f.replace(SRC, 'src/'), readFileSync(f, 'utf8')]))(
 		'%s names its dialog',
 		(_file, source) => {
-			const labels = [...source.matchAll(/labelledBy="([^"]+)"/g)].map((m) => m[1]);
+			// A label may be a literal (`labelledBy="app-detail-title"`) or an
+			// expression that picks between ids. The catalog needs the second form:
+			// the same dialog is named by the list heading in one view and the app
+			// heading in the other. A dynamic label has to name its ids in string
+			// literals for this check to see them at all.
+			const labels = [...source.matchAll(/labelledBy=(?:"([^"]+)"|\{([^}]+)\})/g)];
 			expect(labels.length, 'every <Modal> must pass a labelledBy id').toBeGreaterThan(0);
 
-			for (const id of labels) {
-				expect(source, `labelledBy points at "${id}", which is not in this file`).toContain(
-					`id="${id}"`
-				);
+			// A heading may live in a child component: the catalog swaps its own list
+			// heading for the app heading it renders. Search the child components too,
+			// or the contract would force every label into the file that opens the
+			// dialog.
+			const dir = dirname(join(SRC, _file.replace(/^src\//, '')));
+			const childSources = [...source.matchAll(/from\s+'([^']+\.svelte)'/g)]
+				.map((m) => {
+					const spec = m[1];
+					const full = spec.startsWith('$lib/')
+						? join(SRC, 'lib', spec.slice('$lib/'.length))
+						: join(dir, spec);
+					try {
+						return readFileSync(full, 'utf8');
+					} catch {
+						return '';
+					}
+				})
+				.join('\n');
+			const haystack = `${source}\n${childSources}`;
+
+			for (const [, literal, expression] of labels) {
+				const ids = literal
+					? [literal]
+					: [...(expression ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+				expect(ids.length, 'a labelledBy expression must name an id').toBeGreaterThan(0);
+				for (const id of ids) {
+					expect(
+						haystack,
+						`labelledBy points at "${id}", which is not in this file or its children`
+					).toContain(`id="${id}"`);
+				}
 			}
 		}
 	);

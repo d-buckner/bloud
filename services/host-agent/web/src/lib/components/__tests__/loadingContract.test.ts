@@ -22,8 +22,11 @@ const SRC = new URL('../../..', import.meta.url).pathname;
 const read = (path: string) => readFileSync(join(SRC, path), 'utf8');
 
 const layout = read('routes/+layout.svelte');
-const home = read('routes/+page.svelte');
-const catalog = read('routes/catalog/+page.svelte');
+// The dashboard and the catalog moved into components: two routes render the
+// dashboard (`/` and `/catalog`), and the catalog list is a modal. The skeleton
+// branches moved with them, so the contract reads the components now.
+const home = read('lib/components/HomeView.svelte');
+const catalog = read('lib/components/CatalogModal.svelte');
 const shell = read('lib/components/LoadingShell.svelte');
 
 describe('the layout no longer has a bare spinner', () => {

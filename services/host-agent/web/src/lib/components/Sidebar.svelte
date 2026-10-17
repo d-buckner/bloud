@@ -34,6 +34,9 @@
 	}
 
 	let currentPath = $derived(page.url.pathname);
+	// `/catalog` is the dashboard with the catalog modal over it, so Home stays
+	// the active destination while it is open.
+	let activePath = $derived(currentPath === '/catalog' ? '/' : currentPath);
 	const user = select((s) => s.session.user);
 	const admin = select(isAdmin);
 	const installed = select(gridApps);
@@ -45,9 +48,11 @@
 		adminOnly: boolean;
 	}
 
+	// The catalog is a modal opened from the dashboard, so it is not a nav
+	// destination. A nav item that opens an overlay instead of a page does not
+	// behave like its siblings.
 	const allNavItems: NavItem[] = [
 		{ href: '/', label: 'Home', icon: 'home', adminOnly: false },
-		{ href: '/catalog', label: 'Catalog', icon: 'store', adminOnly: false },
 		{ href: '/settings', label: 'Settings', icon: 'settings', adminOnly: true },
 		{ href: '/developer', label: 'Developer', icon: 'terminal', adminOnly: true }
 	];
@@ -88,8 +93,8 @@
 			<li>
 				<a
 					href={resolve(item.href)}
-					class:active={currentPath === item.href}
-					aria-current={currentPath === item.href ? 'page' : undefined}
+					class:active={activePath === item.href}
+					aria-current={activePath === item.href ? 'page' : undefined}
 					title={item.label}
 				>
 					<span class="nav-icon">
