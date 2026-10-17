@@ -54,11 +54,6 @@ const EXCEPTIONS = [
     reason: 'one-shot focus after the modal renders. DOM timing, no data.',
   },
   {
-    file: `${FRONTEND}/lib/components/AddressSettingsSection.svelte`,
-    reason:
-      'hand-rolled convergence poll after saving the address. Plan phase 4 replaces it with the command layer settling on convergence.',
-  },
-  {
     file: `${FRONTEND}/lib/components/SetupWizard.svelte`,
     reason:
       'first-run wait for Authentik to come up, before a session exists to attach to. Plan phase 4 folds it into the session machine.',

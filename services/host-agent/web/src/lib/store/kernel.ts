@@ -19,7 +19,7 @@
 import { applyMiddleware, createStore } from 'redux';
 import type { Middleware, MiddlewareAPI, Store, StoreEnhancer } from 'redux';
 import type { HomeData } from '$lib/types';
-import { HOME_SNAPSHOT, homeSnapshot } from './actions';
+import { HOME_SNAPSHOT, commandsAbandoned, homeSnapshot } from './actions';
 import type { Action } from './actions';
 import { rootReducer } from './reducers';
 import type { RootState } from './reducers';
@@ -74,6 +74,11 @@ function resolveStore(): Store<RootState> {
 	if (import.meta.hot && carried) {
 		// Same store, new reducers: swap them and re-derive what it holds.
 		carried.replaceReducer(rootReducer);
+		// A module swap keeps the store but not the promises that were driving it.
+		// A pending record is now a claim nothing can confirm or drop, so its overlay
+		// would pin forever. Forget the set before the snapshot replay repopulates
+		// the slices the overlays were projected onto.
+		carried.dispatch(commandsAbandoned());
 		if (lastSnapshot) carried.dispatch(homeSnapshot(lastSnapshot));
 		return carried;
 	}

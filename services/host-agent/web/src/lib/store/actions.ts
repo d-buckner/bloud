@@ -13,6 +13,8 @@ import type { ActivityEvent, NodeEvent, PullEvent } from './wire';
 import type { ConnectionEvent } from './machine';
 import type { ToastTone } from './reducers/toasts';
 import type { CommandKey, SettleKind } from './reducers/commands';
+import type { SettingsField, SettingsLoadedPayload } from './reducers/settings';
+import type { OptimisticPatch } from './overlay';
 import type { DeveloperGraph } from '$lib/clients/developerClient';
 
 // The type strings live in `actionTypes.ts` so the known-type set below can be
@@ -94,12 +96,28 @@ export const progressActivity = (payload: ActivityEvent) => action(actionTypes.P
 export const toastPushed = (payload: { tone: ToastTone; message: string }) => action(actionTypes.TOAST_PUSHED, payload);
 export const toastDismissed = (payload: { id: number }) => action(actionTypes.TOAST_DISMISSED, payload);
 
-export const commandStarted = (payload: { key: CommandKey; kind: SettleKind; at: number }) =>
-	action(actionTypes.COMMAND_STARTED, payload);
+export const commandStarted = (payload: {
+	key: CommandKey;
+	kind: SettleKind;
+	at: number;
+	optimistic?: OptimisticPatch;
+}) => action(actionTypes.COMMAND_STARTED, payload);
+export const commandRefined = (payload: { key: CommandKey; patch: OptimisticPatch | null }) =>
+	action(actionTypes.COMMAND_REFINED, payload);
 export const commandSettled = (payload: { key: CommandKey; at: number }) =>
 	action(actionTypes.COMMAND_SETTLED, payload);
 export const commandFailed = (payload: { key: CommandKey; error: string; at: number }) =>
 	action(actionTypes.COMMAND_FAILED, payload);
+export const commandSuperseded = (payload: { key: CommandKey; at: number }) =>
+	action(actionTypes.COMMAND_SUPERSEDED, payload);
+export const commandsAbandoned = () => action(actionTypes.COMMANDS_ABANDONED, null);
+
+export const settingsReadStarted = (payload: { field: SettingsField }) =>
+	action(actionTypes.SETTINGS_READ_STARTED, payload);
+export const settingsLoaded = (payload: SettingsLoadedPayload) =>
+	action(actionTypes.SETTINGS_LOADED, payload);
+export const settingsReadFailed = (payload: { field: SettingsField; error: string }) =>
+	action(actionTypes.SETTINGS_READ_FAILED, payload);
 
 export const launchersReplaced = (payload: Launcher[]) => action(actionTypes.LAUNCHERS_REPLACED, payload);
 

@@ -4,9 +4,10 @@
 	import Button from '$lib/components/Button.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { widgetRegistry } from './registry';
-	import { enabledWidgetIds, select, toggleWidget } from '$lib/store';
+	import { enabledWidgetIds, select, useGridActions } from '$lib/store';
 
 	const widgets = select(enabledWidgetIds);
+	const gridActions = useGridActions();
 
 	interface Props {
 		open: boolean;
@@ -38,7 +39,7 @@
 			<div class="widget-list">
 				{#each widgetRegistry as widget (widget.id)}
 					{@const enabled = isEnabled(widget.id)}
-					<button class="widget-item" class:enabled onclick={() => toggleWidget(widget.id)}>
+					<button class="widget-item" class:enabled onclick={() => gridActions.toggleWidget(widget.id)}>
 						<span class="widget-icon">
 							<Icon name={widget.icon} size={18} />
 						</span>

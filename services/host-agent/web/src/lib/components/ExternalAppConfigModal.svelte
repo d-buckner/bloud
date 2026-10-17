@@ -13,9 +13,9 @@
 	import Modal from './Modal.svelte';
 	import CloseButton from './CloseButton.svelte';
 	import Button from './Button.svelte';
+	import { useExternalAppActions } from '$lib/store';
 	import {
 		fetchExternalProviders,
-		updateExternalApp,
 		type ExternalApp,
 		type ExternalProviderContract,
 		type ExternalProviderOption
@@ -30,6 +30,8 @@
 		type ProviderFieldValues
 	} from '$lib/utils/providerInputs';
 
+	const externalActions = useExternalAppActions();
+
 	interface Props {
 		app: ExternalApp | null;
 		onclose: () => void;
@@ -38,7 +40,6 @@
 
 	let { app, onclose, onsaved }: Props = $props();
 
-	let saving = $state(false);
 	let error = $state('');
 	let loadingSchema = $state(false);
 
@@ -83,7 +84,7 @@
 	// one on file", and the server re-validates the values it is sent -- but
 	// because a form that can be submitted before it has rendered its own
 	// fields teaches the operator that the fields are optional.
-	let canSubmit = $derived(missing.length === 0 && !saving && !loadingSchema);
+	let canSubmit = $derived(missing.length === 0 && !loadingSchema);
 
 	/**
 	 * A copy-on-write copy of the stored contract values, so editing the form
@@ -176,7 +177,6 @@
 
 	async function handleSave() {
 		if (!app || !canSubmit) return;
-		saving = true;
 		error = '';
 		try {
 			const typed = buildProviderPayload(inputs, fieldValues);
@@ -187,13 +187,15 @@
 				values: mergeTypedValues(app.values, typed.values),
 				secrets: typed.secrets
 			};
-			await updateExternalApp(app.id, isProvider ? providerPatch(form) : launcherPatch(form));
+			const result = await externalActions.update(
+				app.id,
+				isProvider ? providerPatch(form) : launcherPatch(form)
+			);
+			if (!result.ok) return;
 			onsaved?.();
 			onclose();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not save the change';
-		} finally {
-			saving = false;
+			error = e instanceof Error ? e.message : 'Could not load the integration schema';
 		}
 	}
 </script>
@@ -217,7 +219,7 @@
 
 		<form class="modal-body" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
 			<label for="cfg-name">Name</label>
-			<input id="cfg-name" type="text" bind:value={name} disabled={saving} autocomplete="off" />
+			<input id="cfg-name" type="text" bind:value={name} autocomplete="off" />
 
 			<label for="cfg-url">{endpointLabel}</label>
 			<input
@@ -225,7 +227,6 @@
 				type="text"
 				placeholder={endpointPlaceholder}
 				bind:value={url}
-				disabled={saving}
 				autocomplete="off"
 				spellcheck="false"
 			/>
@@ -238,7 +239,6 @@
 					type="text"
 					placeholder="https://example.com/icon.png"
 					bind:value={icon}
-					disabled={saving}
 					autocomplete="off"
 					spellcheck="false"
 				/>
@@ -252,7 +252,6 @@
 						type={input.kind === 'secret' ? 'password' : 'text'}
 						placeholder={input.kind === 'secret' ? secretPlaceholder(input) : ''}
 						bind:value={fieldValues[input.id]}
-						disabled={saving}
 						autocomplete="off"
 						spellcheck="false"
 					/>
@@ -274,7 +273,7 @@
 			<footer class="modal-footer">
 				<Button variant="ghost" size="sm" type="button" onclick={onclose}>Cancel</Button>
 				<Button variant="primary" size="sm" type="submit" disabled={!canSubmit}>
-					{saving ? 'Saving…' : 'Save'}
+					Save
 				</Button>
 			</footer>
 		</form>

@@ -4,7 +4,9 @@
 	import CloseButton from './CloseButton.svelte';
 	import Button from './Button.svelte';
 	import ExternalProviderForm from './ExternalProviderForm.svelte';
-	import { addExternalApp } from '$lib/clients/settingsClient';
+	import { useExternalAppActions } from '$lib/store';
+
+	const externalActions = useExternalAppActions();
 
 	interface Props {
 		open: boolean;
@@ -21,8 +23,6 @@
 
 	let { open, onclose, onsaved }: Props = $props();
 
-	let saving = $state(false);
-	let error = $state('');
 
 	// Remote app first, and the default. It is the tab that does the work: a
 	// remote install is wired to the apps already on this instance, while a
@@ -44,21 +44,22 @@
 		onclose();
 	}
 
+	/**
+	 * The store owns the request and the toast. A failure keeps the dialog open so
+	 * the operator can correct the field, and the toast says what went wrong.
+	 */
 	async function handleAdd() {
 		if (!name.trim() || !url.trim()) return;
-		saving = true;
-		error = '';
-		try {
-			await addExternalApp({ name: name.trim(), url: url.trim(), icon: icon.trim() });
-			name = '';
-			url = '';
-			icon = '';
-			handleAdded();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not add external app';
-		} finally {
-			saving = false;
-		}
+		const result = await externalActions.addLauncher({
+			name: name.trim(),
+			url: url.trim(),
+			icon: icon.trim()
+		});
+		if (!result.ok) return;
+		name = '';
+		url = '';
+		icon = '';
+		handleAdded();
 	}
 </script>
 
@@ -123,7 +124,6 @@
 						type="text"
 						placeholder="e.g. My NAS"
 						bind:value={name}
-						disabled={saving}
 						autocomplete="off"
 					/>
 					<label for="ext-url">URL</label>
@@ -132,7 +132,6 @@
 						type="url"
 						placeholder="https://example.com"
 						bind:value={url}
-						disabled={saving}
 						autocomplete="off"
 						spellcheck="false"
 					/>
@@ -142,12 +141,11 @@
 						type="text"
 						placeholder="https://example.com/icon.png"
 						bind:value={icon}
-						disabled={saving}
 						autocomplete="off"
 						spellcheck="false"
 					/>
-					<Button variant="primary" size="sm" type="submit" disabled={saving || !name.trim() || !url.trim()}>
-						{saving ? 'Adding…' : 'Add'}
+					<Button variant="primary" size="sm" type="submit" disabled={!name.trim() || !url.trim()}>
+						Add
 					</Button>
 				</form>
 			{:else}
@@ -155,9 +153,6 @@
 			{/if}
 		</div>
 
-		{#if error}
-			<p class="error">{error}</p>
-		{/if}
 	</div>
 </Modal>
 
@@ -244,9 +239,4 @@
 		gap: var(--space-md);
 	}
 
-	.error {
-		color: var(--color-error);
-		font-size: 0.875rem;
-		margin: 0;
-	}
 </style>

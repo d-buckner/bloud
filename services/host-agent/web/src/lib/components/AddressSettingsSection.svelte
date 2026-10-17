@@ -1,96 +1,11 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { fetchPublicURL, setPublicURL } from '$lib/clients/settingsClient';
+	import { usePublicUrl } from '$lib/store';
 
-	// Address state. One URL in, one URL out: the scheme, the host, and the
-	// port the proxy is dialed on all live in the string the operator types,
-	// so there is nothing else to hold.
-	let savedUrl = $state('');
-	let draftUrl = $state('');
-	let loading = $state(true);
-	let error = $state('');
-	let saving = $state(false);
-	// The acknowledgement for a changed address. It is a real gate on Save, not a
-	// decoration: see the callout in the markup for why.
-	let acknowledged = $state(false);
-
-	const addressDirty = $derived(draftUrl.trim() !== savedUrl);
-	const saveBlocked = $derived(addressDirty && !acknowledged);
-
-	// Any edit to the draft withdraws the acknowledgement. A user who agreed to
-	// restart the apps on one address has not agreed to whatever they typed next.
-	$effect(() => {
-		draftUrl;
-		acknowledged = false;
-	});
-
-	const POLL_INTERVAL = 500;
-	const APPLY_TIMEOUT = 20_000;
-
-	onMount(loadAddress);
-
-	async function loadAddress() {
-		loading = true;
-		error = '';
-		try {
-			const res = await fetchPublicURL();
-			savedUrl = res.url;
-			draftUrl = res.url;
-		} catch (err: unknown) {
-			error = errMessage(err, 'Failed to load the address');
-		} finally {
-			loading = false;
-		}
-	}
-
-	/**
-	 * The save is an intent: the API answers 202 and the orchestrator applies
-	 * it, re-provisioning SSO behind the scenes. Poll until the live address is
-	 * the canonical one the save reported, so a change that was dropped or never
-	 * landed gets reported instead of looking like it worked.
-	 *
-	 * The loop condition is the whole exit story: keep going while the address
-	 * still differs and the apply window is open. Both outcomes fall out of the
-	 * loop into the same if/else, so "it matched" and "it timed out" are read off
-	 * the final value rather than tracked through breaks.
-	 *
-	 * The comparison is against the canonical origin the PUT returned rather
-	 * than the raw typed string, because "bloud.example.com" is stored as
-	 * "http://bloud.example.com" and the parser is not duplicated here.
-	 */
-	async function handleSaveAddress() {
-		error = '';
-		saving = true;
-		try {
-			const res = await setPublicURL(draftUrl.trim());
-			const wanted = res.url;
-			const deadline = Date.now() + APPLY_TIMEOUT;
-			let live = await fetchPublicURL();
-			while (live.url !== wanted && Date.now() < deadline) {
-				await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-				live = await fetchPublicURL();
-			}
-			if (live.url === wanted) {
-				savedUrl = live.url;
-				draftUrl = live.url;
-			} else {
-				error = `Saved, but the address is still ${live.url}. Check the host-agent logs.`;
-			}
-		} catch (err: unknown) {
-			error = errMessage(err, 'Failed to save the address');
-		} finally {
-			saving = false;
-		}
-	}
-
-	function errMessage(err: unknown, fallback: string): string {
-		if (err && typeof err === 'object' && 'message' in err) {
-			return String((err as { message: unknown }).message);
-		}
-		return fallback;
-	}
+	// The platform owns the store, the draft, the read state and the consent gate.
+	// This component owns the markup.
+	const url = usePublicUrl();
 </script>
 
 <section class="section address-section">
@@ -101,7 +16,7 @@
 		listens on internally.
 	</p>
 
-	{#if loading}
+	{#if url.loading}
 		<div class="loading-state"><p>Loading address...</p></div>
 	{:else}
 		<!-- The consequence used to be the last sentence of the paragraph above,
@@ -111,7 +26,7 @@
 		     actually changed, states the blast radius, and has to be acknowledged
 		     before Save works. The input is described by it, so the warning is read
 		     with the field rather than hoping the user scrolled past it. -->
-		{#if addressDirty}
+		{#if url.dirty}
 			<aside class="callout" aria-labelledby="address-warning-title">
 				<span class="callout-icon" aria-hidden="true">
 					<Icon name="warning" size={16} />
@@ -125,40 +40,39 @@
 						Nothing is deleted and nobody is signed out.
 					</p>
 					<label class="acknowledge">
-						<input type="checkbox" bind:checked={acknowledged} />
+						<input type="checkbox" bind:checked={url.acknowledged} />
 						I understand my apps will briefly restart.
 					</label>
 				</div>
 			</aside>
 		{/if}
 
-		<form class="address-form" onsubmit={(e) => { e.preventDefault(); handleSaveAddress(); }}>
+		<form class="address-form" onsubmit={(e) => { e.preventDefault(); url.save(); }}>
 			<input
 				type="text"
 				class="address-input"
 				placeholder="https://bloud.example.com"
 				aria-label="Public address"
-				aria-describedby={addressDirty ? 'address-warning-title' : undefined}
+				aria-describedby={url.dirty ? 'address-warning-title' : undefined}
 				inputmode="url"
 				autocomplete="off"
 				autocapitalize="none"
 				spellcheck="false"
 				required
-				disabled={saving}
-				bind:value={draftUrl}
+				bind:value={url.edit}
 			/>
 			<button
 				class="btn btn-primary"
 				type="submit"
-				disabled={!addressDirty || saving || !draftUrl.trim() || saveBlocked}
+				disabled={!url.dirty || !url.edit.trim() || url.blocked}
 			>
-				{saving ? 'Applying…' : 'Save'}
+				Save
 			</button>
 		</form>
 	{/if}
 
-	{#if error}
-		<div class="error-message" role="alert">{error}</div>
+	{#if url.error}
+		<div class="error-message" role="alert">{url.error}</div>
 	{/if}
 </section>
 

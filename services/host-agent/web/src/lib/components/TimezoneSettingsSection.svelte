@@ -1,114 +1,12 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { fetchTimezone, setTimezone } from '$lib/clients/settingsClient';
-	import { pollUntil } from '$lib/store/effects/convergence';
-	import { browserZone, offsetLabel, supportedZones, zoneOptions } from '$lib/utils/timezone';
+	import { useTimezone } from '$lib/store';
 	import TimeZonePicker from './TimeZonePicker.svelte';
 
-	// Time zone state. One IANA name in, one name out, and "" is a value rather
-	// than a missing value: it means Bloud states no zone.
-	let savedZone = $state('');
-	let draftZone = $state('');
-	let loading = $state(true);
-	let error = $state('');
-	let saving = $state(false);
-	// The acknowledgement for a changed zone. It gates Save for the same reason
-	// the address section gates it: the change recreates every container.
-	let acknowledged = $state(false);
-
-	// The zone list comes from the browser, which is the only place that knows
-	// which zones exist without shipping a copy of the zone database. See
-	// `$lib/utils/timezone` for the fallback and the reason it may be short.
-	const zones = supportedZones();
-	const localZone = browserZone();
-
-	// A saved zone the browser does not list still has to be selectable, or the
-	// select would show the first option and a Save would change the zone the
-	// operator did not touch.
-	const options = $derived(zoneOptions(zones, [draftZone, savedZone, localZone]));
-
-	const zoneDirty = $derived(draftZone !== savedZone);
-	const saveBlocked = $derived(zoneDirty && !acknowledged);
-
-	// Any edit withdraws the acknowledgement. An operator who agreed to restart
-	// the apps on one zone has not agreed to the one they picked next.
-	$effect(() => {
-		draftZone;
-		acknowledged = false;
-	});
-
-	// The offset line is a fact about the zone, not a clock, so it needs no timer
-	// to stay true. See `offsetLabel` for why the form shows one at all.
-	const offset = $derived(offsetLabel(draftZone));
-	const suggestion = $derived(
-		!savedZone && localZone && draftZone !== localZone ? localZone : ''
-	);
-
-	// The window is wider than the address setting's on purpose. Every container
-	// on the instance is recreated here, in dependency order, and a stack with a
-	// database-heavy app in it takes minutes rather than seconds.
-	const POLL = { intervalMs: 500, timeoutMs: 60_000 };
-
-	onMount(loadTimezone);
-
-	async function loadTimezone() {
-		loading = true;
-		error = '';
-		try {
-			const res = await fetchTimezone();
-			savedZone = res.zone;
-			draftZone = res.zone;
-		} catch (err: unknown) {
-			error = errMessage(err, 'Failed to load the time zone');
-		} finally {
-			loading = false;
-		}
-	}
-
-	/**
-	 * The save is an intent: the API answers 202 and the orchestrator recreates
-	 * the containers so they come back on the new clock. Read until the live zone
-	 * is the one the save accepted, so a change that was dropped reads as a
-	 * failure instead of looking like it worked.
-	 *
-	 * `pollUntil` owns the timer. A component that decides when data changes is
-	 * what `scripts/no-component-timers.mjs` refuses, and the settings effects
-	 * module already carries that shape for every other intent save here.
-	 */
-	async function handleSaveTimezone() {
-		error = '';
-		saving = true;
-		try {
-			const res = await setTimezone(draftZone);
-			const live = await pollUntil(fetchTimezone, (s) => s.zone === res.zone, POLL);
-			if (live.zone === res.zone) {
-				savedZone = live.zone;
-				draftZone = live.zone;
-			} else {
-				error =
-					live.zone === ''
-						? 'Saved, but no zone is in force yet. Check the host-agent logs.'
-						: `Saved, but the zone is still ${live.zone}. Check the host-agent logs.`;
-			}
-		} catch (err: unknown) {
-			error = errMessage(err, 'Failed to save the time zone');
-		} finally {
-			saving = false;
-		}
-	}
-
-	function useSuggestion() {
-		draftZone = suggestion;
-	}
-
-	function errMessage(err: unknown, fallback: string): string {
-		if (err && typeof err === 'object' && 'message' in err) {
-			return String((err as { message: unknown }).message);
-		}
-		return fallback;
-	}
+	// The platform owns the clock, its browser zone list, the offset line and the
+	// consent gate. This component owns the markup.
+	const zone = useTimezone();
 </script>
 
 <section class="section timezone-section">
@@ -118,19 +16,19 @@
 		scheduled jobs, log lines, and timestamps agree with each other.
 	</p>
 
-	{#if loading}
+	{#if zone.loading}
 		<div class="loading-state"><p>Loading time zone...</p></div>
 	{:else}
-		{#if suggestion}
+		{#if zone.suggestion}
 			<p class="suggestion">
-				Your browser is in <code>{suggestion}</code>.
-				<button class="link" type="button" onclick={useSuggestion} disabled={saving}>
+				Your browser is in <code>{zone.suggestion}</code>.
+				<button class="link" type="button" onclick={() => zone.useSuggestion()}>
 					Use it
 				</button>
 			</p>
 		{/if}
 
-		{#if zoneDirty}
+		{#if zone.dirty}
 			<aside class="callout" aria-labelledby="timezone-warning-title">
 				<span class="callout-icon" aria-hidden="true">
 					<Icon name="warning" size={16} />
@@ -144,33 +42,32 @@
 						it. Nothing is deleted and nobody is signed out.
 					</p>
 					<label class="acknowledge">
-						<input type="checkbox" bind:checked={acknowledged} />
+						<input type="checkbox" bind:checked={zone.acknowledged} />
 						I understand my apps will briefly restart.
 					</label>
 				</div>
 			</aside>
 		{/if}
 
-		<form class="timezone-form" onsubmit={(e) => { e.preventDefault(); handleSaveTimezone(); }}>
+		<form class="timezone-form" onsubmit={(e) => { e.preventDefault(); zone.save(); }}>
 			<TimeZonePicker
-				zones={options}
-				value={draftZone}
-				disabled={saving}
-				describedby={zoneDirty ? 'timezone-warning-title' : undefined}
-				onchange={(zone) => (draftZone = zone)}
+				zones={zone.options}
+				value={zone.edit}
+				describedby={zone.dirty ? 'timezone-warning-title' : undefined}
+				onchange={(picked) => (zone.edit = picked)}
 			/>
-			<button class="btn btn-primary" type="submit" disabled={!zoneDirty || saving || saveBlocked}>
-				{saving ? 'Applying…' : 'Save'}
+			<button class="btn btn-primary" type="submit" disabled={!zone.dirty || zone.blocked}>
+				Save
 			</button>
 		</form>
 
-		{#if offset}
-			<p class="preview">Right now that zone is <strong>{offset}</strong> from UTC.</p>
+		{#if zone.offset}
+			<p class="preview">Right now that zone is <strong>{zone.offset}</strong> from UTC.</p>
 		{/if}
 	{/if}
 
-	{#if error}
-		<div class="error-message" role="alert">{error}</div>
+	{#if zone.error}
+		<div class="error-message" role="alert">{zone.error}</div>
 	{/if}
 </section>
 

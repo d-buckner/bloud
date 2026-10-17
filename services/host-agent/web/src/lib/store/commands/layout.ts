@@ -25,7 +25,6 @@ export function saveLayout(elements?: GridElement[]): Promise<CommandResult<null
 	const payload = elements ?? getState().layout.elements;
 	return runCommand<null>({
 		key: LAYOUT_KEY,
-		kind: 'request',
 		run: async () => {
 			await put('/api/user/layout', payload);
 			return null;

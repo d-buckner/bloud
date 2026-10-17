@@ -27,16 +27,18 @@
 		gridApps,
 		homeLoading,
 		homeSummary,
-		installApp,
 		opensProgressInsteadOfLaunching,
-		renameApp,
 		select,
-		uninstallApp
+		useAppActions,
+		useExternalAppActions
 	} from '$lib/store';
-	import { fetchExternalApps, removeExternalApp, type ExternalApp } from '$lib/clients/settingsClient';
+	import { fetchExternalApps, type ExternalApp } from '$lib/clients/settingsClient';
 	import { getAppUrl } from '$lib/utils/appUrl';
 
 	const installed = select(gridApps);
+
+	const appActions = useAppActions();
+	const externalActions = useExternalAppActions();
 	const summary = select(homeSummary);
 	const loading = select(homeLoading);
 	const readError = select((s) => s.apps.error);
@@ -121,7 +123,7 @@
 	}
 
 	async function handleRetryInstall(appName: string) {
-		const result = await installApp(appName);
+		const result = await appActions.install(appName);
 		if (!result.ok) console.error('Retry install failed:', result.error);
 	}
 
@@ -187,13 +189,11 @@
 		};
 	}
 
-	async function doRemoveExternalApp() {
+	function doRemoveExternalApp() {
 		if (!externalRemoveId) return;
-		try {
-			await removeExternalApp(externalRemoveId);
-		} catch (err) {
-			console.error('Remove failed:', err);
-		}
+		// The store owns the request and the toast. The tile leaves when the
+		// external list is re-read, which `onsaved` drives.
+		void externalActions.remove(externalRemoveId);
 	}
 
 	// Context menu handlers
@@ -212,12 +212,12 @@
 
 	// Modal actions
 	async function doUninstall(appName: string) {
-		const result = await uninstallApp(appName);
+		const result = await appActions.uninstall(appName);
 		if (!result.ok) console.error('Uninstall failed:', result.error);
 	}
 
 	async function doRename(appName: string, newDisplayName: string) {
-		const result = await renameApp(appName, newDisplayName);
+		const result = await appActions.rename(appName, newDisplayName);
 		if (!result.ok) console.error('Rename failed:', result.error);
 	}
 

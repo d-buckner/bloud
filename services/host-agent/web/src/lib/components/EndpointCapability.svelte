@@ -1,16 +1,9 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
-	import {
-		discoverEndpointModels,
-		fetchEndpointSettings,
-		setEndpointSettings,
-		type EndpointContract,
-		type EndpointSettings
-	} from '$lib/clients/settingsClient';
-	import { appliedTo, buildSaveRequest, SAVE_WINDOW } from '$lib/utils/endpointSave';
+	import { untrack } from 'svelte';
+	import { useEndpoint } from '$lib/store';
 	import Button from '$lib/components/Button.svelte';
-	import { pollUntil } from '$lib/store/effects/convergence';
+	import type { EndpointContract } from '$lib/clients/settingsClient';
 
 	interface Props {
 		/** Which single-endpoint contract this form reads and writes. */
@@ -23,140 +16,27 @@
 		defaultName: string;
 		/** Example address shown in the Base URL field. */
 		placeholder: string;
-		/**
-		 * The AI upstream address, offered as a one-click fill. Optional and
-		 * never a dependency: the parent may not have loaded it, and a missing
-		 * convenience is not a reason this form cannot be filled by hand.
-		 */
-		aiBaseUrl?: string;
 	}
 
-	let { contract, label, description, defaultName, placeholder, aiBaseUrl = '' }: Props = $props();
+	let { contract, label, description, defaultName, placeholder }: Props = $props();
 
-	let settings = $state<EndpointSettings | null>(null);
-	let loading = $state(true);
-	let saving = $state(false);
-	let removing = $state(false);
-	let error = $state('');
-	let saved = $state(false);
-
-	// Seeded in onMount rather than from `defaultName` here: a $state initialized
-	// from a prop captures only its initial value, and the field is re-seeded
-	// from the server on every load and every save anyway.
-	let name = $state('');
-	let baseUrl = $state('');
-	let apiKey = $state('');
-	let model = $state('');
-	let models = $state<string[]>([]);
-	let listing = $state(false);
-	let listResult = $state('');
-	let listOk = $state<boolean | null>(null);
-
-	let dirty = $derived(
-		name !== (settings?.name ?? defaultName) ||
-			baseUrl !== (settings?.baseUrl ?? '') ||
-			model !== (settings?.model ?? '') ||
-			apiKey !== ''
-	);
-	let configured = $derived(settings?.configured ?? false);
-	let hasApiKey = $derived(settings?.hasApiKey ?? false);
-	let servedTo = $derived(settings?.servedTo ?? []);
-
-	onMount(async () => {
-		try {
-			settings = await fetchEndpointSettings(contract);
-			name = settings.name || defaultName;
-			baseUrl = settings.baseUrl;
-			model = settings.model;
-			// The stored list is not returned (there is none: the endpoint owns
-			// its models), so the picker starts empty until the operator lists.
-		} catch (e) {
-			error = e instanceof Error ? e.message : `Could not load ${label.toLowerCase()} settings`;
-		} finally {
-			loading = false;
-		}
-	});
-
-	async function handleListModels() {
-		if (!baseUrl.trim()) return;
-		listing = true;
-		listResult = '';
-		listOk = null;
-		try {
-			const res = await discoverEndpointModels(contract, baseUrl.trim(), apiKey || undefined);
-			if (res.ok && res.models) {
-				models = res.models;
-				listOk = true;
-				listResult = `Reached it. ${res.models.length} model${res.models.length === 1 ? '' : 's'} offered.`;
-			} else {
-				listOk = false;
-				listResult = res.error ?? 'Could not reach that endpoint.';
-			}
-		} catch (e) {
-			listOk = false;
-			listResult = e instanceof Error ? e.message : 'Listing models failed';
-		} finally {
-			listing = false;
-		}
-	}
-
-	async function save(payload: { baseUrl?: string; remove?: boolean }) {
-		saving = true;
-		error = '';
-		saved = false;
-		try {
-			const body = buildSaveRequest(
-				{ name, baseUrl, model, apiKey, defaultName },
-				payload.remove === true
-			);
-			const accepted = await setEndpointSettings(contract, body);
-			// The save is an intent: the 202 is a receipt, not a result. Wait for the
-			// stored state to reach what the save reported, so a write the orchestrator
-			// dropped is an error on screen rather than a page that looks configured.
-			const applied = appliedTo(accepted, body.apiKey);
-			settings = await pollUntil(fetchEndpointSettings.bind(null, contract), applied, SAVE_WINDOW);
-			if (!applied(settings)) {
-				throw new Error(`Saved, but the endpoint is still ${settings.baseUrl || 'unset'}. Check the logs.`);
-			}
-			// Re-seed the fields from what the server now holds rather than from what
-			// was typed: the parser may have rewritten the address, and a Remove has
-			// to empty the input instead of leaving the removed address on screen.
-			name = settings.name || defaultName;
-			baseUrl = settings.baseUrl;
-			model = settings.model;
-			apiKey = '';
-			saved = true;
-		} catch (e) {
-			error = e instanceof Error ? e.message : `Could not save ${label.toLowerCase()} settings`;
-		} finally {
-			saving = false;
-		}
-	}
-
-	function handleSave() {
-		save({});
-	}
-
-	function handleRemove() {
-		removing = true;
-		save({ remove: true }).finally(() => (removing = false));
-	}
-
-	function useAIUpstream() {
-		if (aiBaseUrl) {
-			baseUrl = aiBaseUrl;
-		}
-	}
+	// The platform owns the endpoint, its fields, the probe, the save and the chat
+	// address offered as a fill. This component owns the markup.
+	//
+	// A contract and a default name are this component's identity, not reactive
+	// values: one instance serves one contract for its whole life. `untrack` says
+	// that on purpose instead of leaving a warning to guess at.
+	const ep = useEndpoint(untrack(() => contract), untrack(() => defaultName));
 </script>
 
 <div class="capability" data-contract={contract}>
 	<h3 class="capability-title">{label}</h3>
 	<p class="capability-description">{description}</p>
 
-	{#if loading}
+	{#if ep.loading}
 		<div class="loading-state"><p>Loading {label.toLowerCase()} settings...</p></div>
 	{:else}
-		<form class="capability-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
+		<form class="capability-form" onsubmit={(e) => { e.preventDefault(); ep.save(); }}>
 			<div class="form-field">
 				<label for="{contract}-base-url">Base URL</label>
 				<input
@@ -166,12 +46,11 @@
 					inputmode="url"
 					autocomplete="off"
 					autocapitalize="none"
-					bind:value={baseUrl}
-					disabled={saving}
+					bind:value={ep.baseUrl.edit}
 					spellcheck="false"
 				/>
-				{#if aiBaseUrl && aiBaseUrl !== baseUrl}
-					<button type="button" class="link-button" onclick={useAIUpstream} disabled={saving}>
+				{#if ep.canUseAIUpstream}
+					<button type="button" class="link-button" onclick={() => ep.useAIUpstream()}>
 						Use my AI upstream
 					</button>
 				{/if}
@@ -180,20 +59,19 @@
 			<div class="form-field">
 				<label for="{contract}-key">
 					API key
-					{#if hasApiKey}<span class="pill pill-success">stored</span>{/if}
+					{#if ep.hasApiKey}<span class="pill pill-success">stored</span>{/if}
 				</label>
 				<!-- new-password, not off: blank means "keep the stored key", so the
 				     last thing wanted is a manager autofilling the old one. -->
 				<input
 					id="{contract}-key"
 					type="password"
-					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
-					bind:value={apiKey}
-					disabled={saving}
+					placeholder={ep.hasApiKey ? 'unchanged' : 'sk-...'}
+					bind:value={ep.apiKey.edit}
 					autocomplete="new-password"
 				/>
 				<span class="hint">
-					{hasApiKey
+					{ep.hasApiKey
 						? 'Leave blank to keep the stored key.'
 						: 'Stored in the secrets manager.'}
 				</span>
@@ -202,14 +80,22 @@
 			<div class="form-row">
 				<div class="form-field">
 					<label for="{contract}-name">Name</label>
-					<input id="{contract}-name" type="text" bind:value={name} disabled={saving} autocomplete="off" />
+					<input
+						id="{contract}-name"
+						type="text"
+						bind:value={ep.name.edit}
+						autocomplete="off"
+					/>
 				</div>
 				<div class="form-field">
 					<label for="{contract}-model">Model</label>
-					{#if models.length > 0}
-						<select id="{contract}-model" bind:value={model} disabled={saving}>
+					{#if ep.models.length > 0}
+						<select
+						id="{contract}-model"
+						bind:value={ep.model.edit}
+					>
 							<option value="">(endpoint default)</option>
-							{#each models as entry (entry)}
+							{#each ep.models as entry (entry)}
 								<option value={entry}>{entry}</option>
 							{/each}
 						</select>
@@ -218,8 +104,7 @@
 							id="{contract}-model"
 							type="text"
 							placeholder="endpoint default"
-							bind:value={model}
-							disabled={saving}
+							bind:value={ep.model.edit}
 							autocomplete="off"
 							spellcheck="false"
 						/>
@@ -228,46 +113,39 @@
 			</div>
 
 			<div class="actions">
-				<Button variant="primary" type="submit" disabled={!dirty || saving}>
-					{saving ? 'Applying…' : 'Save'}
-				</Button>
+				<Button variant="primary" type="submit" disabled={!ep.dirty}>Save</Button>
 				<Button
 					variant="secondary"
 					type="button"
-					onclick={handleListModels}
-					disabled={!baseUrl.trim() || listing}
+					onclick={() => ep.test()}
+					disabled={!ep.baseUrl.edit.trim() || ep.testing}
 				>
-					{listing ? 'Listing…' : 'List models'}
+					{ep.testing ? 'Listing…' : 'List models'}
 				</Button>
-				{#if configured}
-					<Button variant="secondary" type="button" onclick={handleRemove} disabled={saving || removing}>
-						{removing ? 'Removing…' : 'Remove'}
-					</Button>
-				{/if}
-				{#if saved}
-					<span class="saved-note">Saved. Apps pick this up on their next pass.</span>
+				{#if ep.configured}
+					<Button variant="secondary" type="button" onclick={() => ep.remove()}>Remove</Button>
 				{/if}
 			</div>
 
-			{#if listResult}
+			{#if ep.testResult}
 				<!-- role=status: the listing takes a second and the result lands
 				     wherever the pointer is, so it has to be announced. -->
-				<p class="test-result" class:ok={listOk === true} class:fail={listOk === false} role="status">
-					{listResult}
+				<p class="test-result" class:ok={ep.testOk === true} class:fail={ep.testOk === false} role="status">
+					{ep.testResult}
 				</p>
 			{/if}
 		</form>
 	{/if}
 
-	{#if error}
-		<div class="error-message" role="alert">{error}</div>
+	{#if ep.error}
+		<div class="error-message" role="alert">{ep.error}</div>
 	{/if}
 
-	{#if servedTo.length > 0}
+	{#if ep.servedTo.length > 0}
 		<div class="served-to">
 			<h4>Served to</h4>
 			<div class="served-list">
-				{#each servedTo as consumer (consumer)}
+				{#each ep.servedTo as consumer (consumer)}
 					<div class="served-row">
 						<span class="consumer-name">{consumer}</span>
 					</div>
@@ -394,10 +272,6 @@
 		flex-wrap: wrap;
 	}
 
-	.saved-note {
-		font-size: 0.875rem;
-		color: var(--color-text-muted);
-	}
 
 	.test-result {
 		margin: 0;

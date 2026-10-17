@@ -1,6 +1,7 @@
 # Plan: One frontend store, modeled as state machines
 
-> Status: in progress
+> Status: in progress. Phase 4 is partly landed: settings are resources with an
+> optimistic overlay, and every write goes through one command module.
 
 Closes [#309](https://github.com/d-buckner/bloud/issues/309).
 
@@ -45,9 +46,23 @@ Not landed, and named so the next reader does not assume otherwise:
   never see. The slice adds the thing the component could not express: a failed
   poll keeps the last good payload and sets `stale`, so the page can say the
   picture has stopped moving instead of silently freezing it.
-- **Phases 3 to 5.** The widgets still own their timers, and settings still own
-  their convergence loops. Each is a row in the `EXCEPTIONS` table of
-  `scripts/no-component-timers.mjs`.
+- **The command module and the overlay (the first half of phase 4).**
+  `overlay.ts` (one `apply` and one `satisfied` per kind), `runner.ts` (dedupe,
+  supersede, refine, the convergence wait), `commands/` (named operations, the
+  only public surface), `reducers/settings.ts` (confirmed values only), and the
+  views in `selectors.ts` that project a pending claim over them. The four
+  settings forms and the users section lost their local convergence loops, their
+  `saving` booleans and their inline save errors. `draft.svelte.ts` holds the
+  editable value, so no form copies store state into local state with an effect.
+  `check:no-component-writes` fails a mutating client call outside
+  `store/commands/`.
+- **The rest of phase 4.** The setup wizard still waits for Authentik on its own,
+  the route-level reads still run `onMount`, and the catalog and external app
+  reads are still component-local. The write-path check covers writes only,
+  because the wider rule needs those reads migrated first.
+- **Phase 5.** The widgets still own their timers (a row each in the `EXCEPTIONS`
+  table of `scripts/no-component-timers.mjs`), and the layout write has no
+  revision, so two tabs still clobber each other.
 - **`check:no-legacy-store`** is in, with an empty exception table: nothing in the
   tree imports `svelte/store`, and the check is what keeps it that way.
 - **`check:no-component-fetch` and `check:bundle-budget`.** The fetch check needs
@@ -200,24 +215,20 @@ Rules, each replacing something hand-rolled today:
   write").
 - **Every command is cancellable by an effect teardown.** Route-scoped reads
   cancel with the route; HMR dispose cancels everything in flight.
-- **A command declares how it settles.** Three settle kinds, and the third is
-  the one the current code cannot express:
-  - `request`: the HTTP response is the whole story (rename, user role change).
-  - `reread`: the response means "stored", and settling means re-reading the
-    resource. `UsersSettingsSection` hand-rolls this as an explicit
-    `await loadUsers()` after each of its three mutations.
-  - `convergence`: the response is an acknowledgement carrying an `intentId`,
-    and the command is not done until the orchestrator agrees. The address save
-    is exactly this, hand-rolled as a 500 ms poll with a 20 s deadline inside
-    `AddressSettingsSection.handleSaveAddress`. Install is this too, and the
-    install modal infers it from progress events instead of from a declared
-    predicate.
+- **A command settles on its own claim.** The rule is one sentence: a command
+  that shows a claim is done when confirmed state carries that claim. The
+  overlay decides what "carries" means, so a command never states the comparison
+  and the two cannot drift. The shapes that fall out of it:
+  - `request`: no read. The HTTP response is the whole story.
+  - `reread`: a read and no claim. The response means "stored", and the read
+    that shows it ends the command.
+  - `convergence`: a read and a claim. The command is not done until the
+    orchestrator agrees, and `overlayReady` is the only predicate.
 
-  The predicate never lives in state: a function in a reducer's input breaks
-  devtools and makes a reducer swap surprising. A command module registers
-  `settlesBy(kind, predicate, deadline)` and an effect evaluates it against each
-  new state. The store holds only the facts: `deadline`, `settledBy`, and the
-  observed value that ended the wait.
+  This replaced a `settled` closure per command. The closure had to recompute
+  the claim the response reported, so `refine` and `settled` could disagree
+  about what was being waited for. Now `refine` runs once and its result is both
+  what the user sees and what the wait checks.
 
 **One settings write currently reports the wrong completion.** `setAISettings`
 returns an `IntentResponse` (`clients/settingsClient.ts:69`), so the save is an
@@ -615,9 +626,110 @@ smaller claim than replaying history, and the transport already provides it.
   and a client-side cache of them would be a second source of truth with worse
   latency than the first.
 
+### An editable value falls back to the live one
+
+`store/draft.svelte.ts` is the other half of the binding. A form shows a value the
+store owns and holds an edit the operator has not submitted. Keeping the second
+as a copy of the first grows a sync effect, then a latch to stop that effect
+overwriting a keystroke, then a second latch for the day the copy has to be
+reset. The primitive replaces all three. `value` is the edit when one is present
+and the live value otherwise, `dirty` compares them, and `set` and `clear` are
+the only writers.
+
+Two properties follow from the shape, and neither is a rule someone has to
+remember. While an edit is present the live value is not read at all, so a store
+update cannot reach the field. With no edit, `dirty` does not read the live value
+either, so an untouched form does not subscribe through it.
+
+The one rule the caller owes is: **call `clear()` when the command starts, not
+when it finishes.** From that moment the pending claim is the value to show. The
+field keeps the submitted text, adopts the server's canonical form when the claim
+is refined, and falls back to the confirmed value when the command fails. The
+form stops owning the value the instant it asks for a change.
+
+That rule is why the settings page has no sync effects left. The address and time
+zone acknowledgement gates are a fact about a string (`acknowledgedFor ===
+value.trim()`) rather than a boolean reset by an effect, and the chat base URL is
+selected by `AISettingsSection` instead of reported upward through a callback.
+
+### Hooks: a component calls one function and gets a form
+
+The draft primitive is the mechanism. A component should not see it.
+`store/hooks/` holds one hook per settings surface, and each returns a form
+shaped like its markup:
+
+```ts
+const url = usePublicUrl();      // value, dirty, loading, error, save, consent
+const zone = useTimezone();      // the list, the offset, the suggestion, the gate
+const ai = useAI();              // three fields, the key, the probe, the save
+const ep = useEndpoint(contract, defaultName);
+const users = useUsers();
+```
+
+`bind:value={url.edit}` and `bind:checked={url.acknowledged}` work because the
+fields are accessors, so a form is markup and nothing else. The component has no
+`$derived`, no `$effect`, no `select`, and no `.current`.
+
+The writable field is `edit`, not `value`, and that name is the rule. It is the
+form's own text and never the store's. A property that looked like the setting
+would invite a writer to believe it wrote one. A store write is a command, and a
+command is a method.
+
+The same split governs actions. A component never imports the command module. It
+imports the action hook its own job needs, so the catalog can install and the
+grid cannot:
+
+```ts
+const appActions = useAppActions();        // install, uninstall, rename
+const gridActions = useGridActions();      // saveLayout, toggleWidget, removeWidget
+const externalActions = useExternalAppActions();
+useDashboard();                            // starts the session and the stream
+```
+
+`store/index.ts` does not export `commands`, and `check:no-component-commands`
+fails a component that reaches the internal path. The scope is the point: a
+settings form has no way to install an app, not by convention but because the
+import does not exist.
+
+Every rule a form would otherwise restate lives in `field.svelte.ts`. `loading`
+is true only until there is something to draw, so a refresh does not blank a
+form. `error` is a failed read, because a failed save is a toast. `save` clears
+the edit, so the pending claim is what shows. Consent is a fact about the string
+the operator agreed to, so an edit withdraws it with no effect.
+
+The split is the rule: **the platform owns everything that touches the store, and
+the component owns markup.** A form that needs a new store fact asks its hook for
+it, so the rule lands in one place and every form gets it. A read-only view still
+uses `select`; a writable one uses a hook.
+
 ## Optimistic state is an overlay, not a write
 
-The grid is where this matters, and it is the case the first draft hand-waved.
+**Landed for apps, settings and users.** `store/overlay.ts` holds one patch kind
+per surface, and each kind supplies two functions: `apply` builds the value to
+show, and `satisfied` answers whether confirmed state already carries the claim.
+`store/selectors.ts` projects. Nothing writes a claim into a slice, so a failed
+command drops its patch and the confirmed value reappears.
+
+Five rules came out of building it, and they are the part a reviewer should
+check first:
+
+- **The settle predicate reads confirmed state.** It is called with `RootState`,
+  whose `settings` slice holds confirmed values only. A predicate that compared
+  the projected value would settle on its own claim in the same tick and flicker.
+- **A claim can be refined.** The address parser fills in a scheme and the time
+  zone save trims, so the typed value is not the stored value. A command replaces
+  its patch with what the response reported. Without that step the claim can never
+  match, and the wait runs to its cap over a save that already landed.
+- **Confirmed match drops the claim, not the response.** An install keeps its
+  tile after the 202, and a rename shows before the pass that stores it.
+- **The wait is long and backs off.** 500ms doubling to 5s, with a ten minute cap,
+  because a time zone save recreates every container. A failed read during the
+  wait is not a failed save. Hitting the cap drops the claim and raises one toast.
+- **A repeated save replaces the first.** The newest value wins, the older
+  command is superseded, and a superseded command raises no toast.
+
+The grid is the open case, and it is the part the first draft hand-waved. Its
+claim is a whole element list, and the write has no revision to guard it.
 `GridStackGrid` holds positions the server has not confirmed yet, `PUT
 /api/user/layout` replaces the whole set, and the next snapshot overwrites
 whatever the user just moved. So optimistic edits live in their own slice,
@@ -656,9 +768,10 @@ interface RootState {
                 orchestrator: OrchestratorStatus|null; lastPushAt: number };
   external:   { phase: Phase; byId: Record<string, ExternalApp>; order: string[] };
   settings:   { publicUrl: Resource<string>; ai: Resource<AISettings>; users: Resource<ManagedUser[]> };
-  commands:   { byKey: Record<string, { kind: string; target: string;
-                phase: 'pending'|'settled'|'failed'; settle: 'request'|'reread'|'convergence';
-                deadline?: number; error?: string; inverted?: Patch }> };
+  commands:   { byKey: Record<string, { key: string; kind: 'request'|'reread'|'convergence';
+                status: 'pending'|'settled'|'failed'|'superseded';
+                startedAt: number; settledAt: number; error: string;
+                optimistic?: OptimisticPatch }> };
   toasts:     { items: Toast[] };
   ui:         { sidebarCollapsed: boolean };
 }
@@ -686,7 +799,7 @@ writes. The target above is not a stretch goal to reach if time allows.
 | 1 | `session`, `connection`, `apps`, `layout`, `launchers`; `commands.bootstrap`; generated API types | `appEvents.ts`, `poller.ts`, `shouldEnableFallback`, `appFacade.initialized`, and every legacy `$store` import in a migrated component | L |
 | 2 | The mirror as reducers over the node/pull events; toasts; correction fixtures | `mergeSnapshot`'s settled heuristic, `lastStatuses` module memory | S |
 | 3 | Catalog (plus plans), graph as a store-owned poll, external providers, widget polls | The developer page's interval and `inflight`, the widget timers, `developer/+page.svelte`'s six `$state` | M |
-| 4 | Settings as resources with declared settle kinds, setup wizard, SvelteKit `load()` for route data, admin gate as state | Every `onMount` fetch, the address convergence loop, the AI save's fake success | M |
+| 4 | **Partly landed.** Settings and users are resources with declared settle kinds, the command module is the only write path, and the address, time zone, AI and endpoint loops are gone. Remaining: setup wizard, `load()` for route data, and the component-local reads | The address convergence loop and the AI save's fake success are deleted. The `saving` booleans and inline save errors went with them | M |
 | 5 | Layout as a versioned document (schema migration 10), optimistic overlay for grid edits, component test harness, bundle budget, docs | `gridElements`' direct-mutation API (`addApp`, `toggleWidget`), the last `fetch` allowlist entries | M |
 
 Three ordering notes, because these are the calls that look arbitrary:

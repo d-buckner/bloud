@@ -3,10 +3,11 @@
 	import { onMount, onDestroy, mount, unmount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { GridStack } from 'gridstack';
-	import { removeWidget, saveLayout, select } from '$lib/store';
+	import { select, useGridActions } from '$lib/store';
 	import type { GridElement } from '$lib/types';
 
 	const gridElements = select((s) => s.layout.elements);
+	const gridActions = useGridActions();
 	import { getWidgetById } from '$lib/widgets/registry';
 		import { type App } from '$lib/types';
 	import AppTile from './AppTile.svelte';
@@ -92,7 +93,7 @@
 		if (!widget) return null;
 		return mount(WidgetWrapper, {
 			target,
-			props: { widget, onRemove: () => removeWidget(element.id) },
+			props: { widget, onRemove: () => gridActions.removeWidget(element.id) },
 		});
 	}
 
@@ -239,7 +240,7 @@
 		});
 
 		if (settled.length === 0) return;
-		saveLayout(settled);
+		gridActions.saveLayout(settled);
 	}
 
 	/**

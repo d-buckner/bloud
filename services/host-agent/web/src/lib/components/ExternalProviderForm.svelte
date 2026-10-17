@@ -1,9 +1,9 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import Button from './Button.svelte';
+	import { useExternalAppActions } from '$lib/store';
 	import {
 		fetchExternalProviders,
-		addExternalProvider,
 		type ExternalProviderOption
 	} from '$lib/clients/settingsClient';
 	import {
@@ -13,6 +13,8 @@
 		missingProviderInputs,
 		type ProviderFieldValues
 	} from '$lib/utils/providerInputs';
+
+	const externalActions = useExternalAppActions();
 
 	interface Props {
 		/**
@@ -31,7 +33,6 @@
 
 	let options = $state<ExternalProviderOption[]>([]);
 	let loading = $state(true);
-	let saving = $state(false);
 	let error = $state('');
 
 	let selected = $state('');
@@ -93,26 +94,24 @@
 	);
 
 	async function handleAdd() {
-		if (!canSubmit || saving) return;
-		saving = true;
+		if (!canSubmit) return;
 		error = '';
 		try {
 			const payload = buildProviderPayload(inputs, fieldValues);
-			await addExternalProvider({
+			const result = await externalActions.addProvider({
 				app: selected,
 				name: name.trim(),
 				url: url.trim(),
 				values: payload.values,
 				secrets: payload.secrets
 			});
+			if (!result.ok) return;
 			selected = '';
 			url = '';
 			fieldValues = {};
 			onsaved?.();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not add the remote app';
-		} finally {
-			saving = false;
 		}
 	}
 </script>
@@ -126,7 +125,7 @@
 {:else}
 	<form class="provider-form" onsubmit={(e) => { e.preventDefault(); handleAdd(); }}>
 		<label for="prov-app">App</label>
-		<select id="prov-app" value={selected} onchange={(e) => chooseApp(e.currentTarget.value)} disabled={saving}>
+		<select id="prov-app" value={selected} onchange={(e) => chooseApp(e.currentTarget.value)}>
 			<option value="">Choose an app…</option>
 			{#each selectable as option (option.app)}
 				<option value={option.app}>{option.displayName}</option>
@@ -139,7 +138,7 @@
 			type="text"
 			placeholder={endpointPlaceholder}
 			bind:value={url}
-			disabled={saving || !selected}
+			disabled={!selected}
 			autocomplete="off"
 			spellcheck="false"
 		/>
@@ -151,7 +150,6 @@
 				id={`prov-${input.id}`}
 				type={input.kind === 'secret' ? 'password' : 'text'}
 				bind:value={fieldValues[input.id]}
-				disabled={saving}
 				autocomplete="off"
 				spellcheck="false"
 			/>
@@ -164,9 +162,7 @@
 			<p class="error">{error}</p>
 		{/if}
 
-		<Button variant="primary" size="sm" type="submit" disabled={!canSubmit || saving}>
-			{saving ? 'Adding…' : 'Add remote app'}
-		</Button>
+		<Button variant="primary" size="sm" type="submit" disabled={!canSubmit}>Add remote app</Button>
 	</form>
 {/if}
 

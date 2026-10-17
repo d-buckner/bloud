@@ -1,98 +1,52 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
 	import DeleteUserModal from './DeleteUserModal.svelte';
 	import Icon from './Icon.svelte';
-	import { select } from '$lib/store';
+	import { select, useUsers } from '$lib/store';
+	import type { ManagedUser } from '$lib/clients/userClient';
 	import type { Role } from '$lib/types';
+	import { guardUserRow, demoteBlocked, deleteBlocked } from '$lib/utils/userGuard';
 
+	// The list, the read state and the three writes. A pending member carries id 0,
+	// so rows are keyed by username.
+	const users = useUsers();
 	const currentUser = select((s) => s.session.user);
-	import {
-		fetchUsers,
-		createUser,
-		deleteUser,
-		setUserRole,
-		type ManagedUser
-	} from '$lib/clients/userClient';
-		import { guardUserRow, demoteBlocked, deleteBlocked } from '$lib/utils/userGuard';
 
-	let users = $state<ManagedUser[]>([]);
-	let usersLoading = $state(true);
-	let usersError = $state('');
-	let creatingUser = $state(false);
+	// The create form's fields derive from nothing, so they stay plain local state.
+	// The platform hook owns everything that is read from or written to the store.
 	let newUsername = $state('');
 	let newPassword = $state('');
 	let newRole = $state<Role>('member');
 	// The user whose deletion is being confirmed, not the one already deleted:
 	// the dialog has to name its target while it is still open.
 	let pendingDelete = $state<string | null>(null);
-	let deleting = $state(false);
 
-	onMount(loadUsers);
-
-	function rowGuard(u: ManagedUser) {
-		return guardUserRow(u, users, currentUser.current?.username ?? null);
+	function rowGuard(user: ManagedUser) {
+		return guardUserRow(user, users.list, currentUser.current?.username ?? null);
 	}
 
-	async function loadUsers() {
-		usersLoading = true;
-		usersError = '';
-		try {
-			users = await fetchUsers();
-		} catch (err: unknown) {
-			usersError = errMessage(err, 'Failed to load users');
-		} finally {
-			usersLoading = false;
-		}
-	}
-
-	async function handleCreateUser() {
+	/**
+	 * Clear the form at once, because the new row is already on screen. A failure
+	 * comes back as a toast and the row leaves with it. Retyping a password after
+	 * a visible failure is the safe direction: the form never holds a credential
+	 * for an account that was not created.
+	 */
+	function handleCreateUser() {
 		if (!newUsername || !newPassword) return;
-		usersError = '';
-		creatingUser = true;
-		try {
-			await createUser({ username: newUsername, password: newPassword, role: newRole });
-			newUsername = '';
-			newPassword = '';
-			newRole = 'member';
-			await loadUsers();
-		} catch (err: unknown) {
-			usersError = errMessage(err, 'Failed to create user');
-		} finally {
-			creatingUser = false;
-		}
+		users.create({ username: newUsername, password: newPassword, role: newRole });
+		newUsername = '';
+		newPassword = '';
+		newRole = 'member';
 	}
 
-	async function handleDeleteUser(username: string) {
-		usersError = '';
-		deleting = true;
-		try {
-			await deleteUser(username);
-			pendingDelete = null;
-			await loadUsers();
-		} catch (err: unknown) {
-			usersError = errMessage(err, 'Failed to delete user');
-		} finally {
-			deleting = false;
-		}
+	/** Close first, then let the claim remove the row. A failure is a toast. */
+	function handleDeleteUser(username: string) {
+		pendingDelete = null;
+		users.remove(username);
 	}
 
-	async function handleToggleRole(user: ManagedUser) {
-		usersError = '';
-		const newRoleValue: Role = user.is_admin ? 'member' : 'admin';
-		try {
-			await setUserRole(user.username, newRoleValue);
-			await loadUsers();
-		} catch (err: unknown) {
-			usersError = errMessage(err, 'Failed to update role');
-		}
-	}
-
-	function errMessage(err: unknown, fallback: string): string {
-		if (err && typeof err === 'object' && 'message' in err) {
-			return String((err as { message: unknown }).message);
-		}
-		return fallback;
+	function handleToggleRole(user: ManagedUser) {
+		users.setRole(user.username, user.is_admin ? 'member' : 'admin');
 	}
 </script>
 
@@ -102,12 +56,12 @@
 		Manage users who can access this Bloud instance. Admins can install apps and manage settings.
 	</p>
 
-	{#if usersLoading}
+	{#if users.loading}
 		<div class="loading-state"><p>Loading users...</p></div>
 	{:else}
-		{#if users.length > 0}
+		{#if users.list.length > 0}
 			<div class="users-list">
-				{#each users as u (u.id)}
+				{#each users.list as u (u.username)}
 					{@const guard = rowGuard(u)}
 					<div class="user-row">
 						<div class="user-line">
@@ -122,7 +76,7 @@
 									class="btn-sm"
 									onclick={() => handleToggleRole(u)}
 									title={guard.reason || (u.is_admin ? 'Demote to member' : 'Promote to admin')}
-									aria-describedby={guard.reason ? `guard-${u.id}` : undefined}
+									aria-describedby={guard.reason ? `guard-${u.username}` : undefined}
 									disabled={demoteBlocked(guard)}
 								>
 									{u.is_admin ? 'Make Member' : 'Make Admin'}
@@ -132,7 +86,7 @@
 										class="btn-sm btn-sm-danger"
 										onclick={() => (pendingDelete = u.username)}
 										title={guard.reason || `Delete ${u.username}`}
-										aria-describedby={guard.reason ? `guard-${u.id}` : undefined}
+										aria-describedby={guard.reason ? `guard-${u.username}` : undefined}
 										disabled={deleteBlocked(guard)}
 									>
 										Delete
@@ -141,7 +95,7 @@
 							</div>
 						</div>
 						{#if guard.reason}
-							<p class="guard-note" id={`guard-${u.id}`}>
+							<p class="guard-note" id={`guard-${u.username}`}>
 								<Icon name="info" size={13} />
 								{guard.reason}
 							</p>
@@ -189,26 +143,20 @@
 						</select>
 					</div>
 				</div>
-				<button
-					class="btn btn-primary"
-					type="submit"
-					disabled={creatingUser || !newUsername.trim() || !newPassword}
-				>
-					{creatingUser ? 'Creating...' : 'Create User'}
+				<button class="btn btn-primary" type="submit" disabled={!newUsername.trim() || !newPassword}>
+					Create User
 				</button>
 			</form>
 		</div>
 	{/if}
 
-	{#if usersError}
-		<div class="error-message" role="alert">{usersError}</div>
+	{#if users.error}
+		<div class="error-message" role="alert">{users.error}</div>
 	{/if}
 </section>
 
 <DeleteUserModal
 	username={pendingDelete}
-	error={usersError}
-	deleting={deleting}
 	onclose={() => (pendingDelete = null)}
 	onconfirm={handleDeleteUser}
 />
