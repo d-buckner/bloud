@@ -22,6 +22,7 @@ export * from './config';
 export * from './dashboard';
 export * from './diagnostics';
 export * from './forward-auth';
+export * from './ldap';
 export * from './login';
 export * from './origin';
 export * from './page-objects';

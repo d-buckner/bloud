@@ -168,7 +168,8 @@ the port is published before the outpost can search. The LDAP-only tests in
 `waitAppRunning`.
 
 **Effort.** Small. **Impact.** Collapses the multi-test integration cascades and
-most of the current Radicale red.
+most of the current Radicale red. **Follow-up:** the barrier landed only in the
+Go harness. The browser tier kept the gap, which is F11.
 
 ### F3. Radicale's own gate is red on main (deterministic)
 
@@ -348,6 +349,75 @@ polling an explicit readiness endpoint over a fixed timeout where one exists,
 and record the phase the app was in when the budget expired (the API already
 returns `last_error`).
 
+### F11. The browser suite has no LDAP readiness barrier (flake, fixed)
+
+**Symptom.** `e2e (radicale)` fails on
+`tests/radicale.spec.ts › radicale › admits a Bloud account over DAV with its
+own calendar root` with `TimeoutError: apiRequestContext.fetch: Timeout
+10000ms exceeded`. It fails on the retry as well, so the CI retry does not
+absorb it.
+
+**Occurrences.** 9 failed jobs in 35 attempts (26%) in the 2026-10-06 to
+2026-10-17 window, across 9 unrelated commits on `main` and three feature
+branches, interleaved with 26 passes. Five of the 11 red jobs on `main` in that
+window were this one test. Eight of the nine carry the same line in the app's own
+log.
+
+**Mechanism.** The app's log names it. The authenticated `PROPFIND` is logged as
+received, and about 20 seconds later Radicale logs:
+
+```
+[ERROR] An exception occurred during PROPFIND request on '/e2etest/':
+invalid server address
+```
+
+`invalid server address` is `ldap3`'s `LDAPSocketOpenError`, and it is raised in
+exactly one place, `ldap3/strategy/base.py`. That line is reachable only when
+`Server.candidate_addresses()` yields zero candidates, and with the default
+`IP_SYSTEM_DEFAULT` mode that means `Server.address_info` is empty, which means
+`socket.getaddrinfo("apps-authentik-ldap", 3389, …)` returned nothing. A refused
+TCP connection would have re-raised the original error, and two failed
+candidates would say `unable to open socket`. So this is name resolution inside
+the Radicale container, not the outpost refusing.
+
+The measured gap from request to that error is 19.7s to 20.7s in every job whose
+container log survived. That is the container's resolver exhausting its retry
+budget with no answer, so the failure is a temporary name-resolution failure.
+The runner resolves through a loopback stub (`ss` shows `127.0.0.53%lo:53` and
+`127.0.0.54:53`, which is systemd-resolved), and rootless podman has to translate
+that stub into the container. Why the lookup intermittently returns nothing is
+not visible in the artifacts and stays unverified.
+
+Two details make the failure read as a client timeout rather than as the app's
+real answer:
+
+- Radicale does catch the exception and returns a 500, but at about 20 seconds,
+  after the client gave up at 10. The test can only ever report a timeout.
+- The retry starts about 6 seconds after the first attempt's client gave up,
+  inside the same window, and stalls the same way.
+
+**Why only Radicale went red.** The Go integration suite already carried the
+barrier: `waitLDAPReady` performs a real service-account bind before any DAV
+call, and `davRequestSettled` retries while `ldapBackendWarming` reports 500,
+502, or 503. The browser suite had neither, and Jellyfin, the other LDAP app,
+survives only because its rung polls `toBeVisible({ timeout: 60_000 })`, which
+re-drives the whole login for 60 seconds. Radicale's rung was one fetch bounded
+by the global `actionTimeout` of 10 seconds, which is shorter than the stall it
+waits behind.
+
+**Fix (landed in the platform layer).** `harness/src/ldap.ts` now holds the
+barrier for the browser tier: `isLdapBackendWarming` keeps the same three codes
+as the Go harness, and `waitForLdapBackedAnswer` re-sends until the answer
+settles, retrying a send that throws because the observed failure is a request
+that never completes. `describeApp` gained an `ldap` option that registers the
+admitting rung for every LDAP-backed app, with a per-attempt budget above one
+resolver stall and a total budget above several of them. The rung reads the
+app's declared strategy from the catalog and fails when the app no longer
+declares `ldap`, so the option cannot stay switched on and assert nothing. The
+Radicale spec now supplies only its DAV values.
+
+**Effort.** Small. **Impact.** Removes the largest current `main` red.
+
 ## Log signal (DevEx)
 
 The same runs that are flaky are also hard to read, and the two problems share a
@@ -400,6 +470,7 @@ range is the right unit. `TestMergeBaseWithCoversEveryCommitInThePR` pins it.
 
 | Order | Item | Type | Effort | Why now |
 |---|---|---|---|---|
+| P0 | F11 browser-tier LDAP readiness barrier | Flake | Small | Was 5 of the 11 red jobs on `main` |
 | P0 | F2 integration LDAP-outpost readiness barrier | Flake | Small | Largest current `main` red; unblocks F3 |
 | P0 | F1 forward-auth gate rung in a fresh context | Flake | Small | Most frequent current E2E flake |
 | P1 | F4 self-heal status poll | Flake | Small | Recurring fast-tier race |

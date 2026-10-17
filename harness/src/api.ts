@@ -154,6 +154,19 @@ export async function getAppStatus(name: string): Promise<string | null> {
   return app?.status ?? null;
 }
 
+/**
+ * The SSO strategy the catalog declares for an app: `native-oidc`, `ldap`,
+ * `forward-auth`, or `none`. Read from the catalog rather than from a spec, so
+ * a rung that only makes sense for one strategy can check that the app still
+ * declares it. A rung that guards nothing is a rung that has gone stale.
+ */
+export async function getAppSSOStrategy(name: string): Promise<string> {
+  const meta = await fetchJSON<{ sso?: { strategy?: string } }>(
+    '/api/apps/' + name + '/metadata',
+  );
+  return meta.sso?.strategy ?? '';
+}
+
 export async function installApp(name: string): Promise<void> {
   await fetchJSON('/api/apps/' + name + '/install', {
     method: 'POST',
