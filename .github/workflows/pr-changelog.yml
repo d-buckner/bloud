@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The per-pull-request half of the changelog process: every pull request carries
+# a `## Changelog` section, and this job reads it.
+#
+# The section is the only copy of the entry. This repository squash-merges, and
+# the commit body that lands on main is empty, so an entry that is not in the
+# pull request body is not recorded anywhere. `./bloud changelog collect` reads
+# these sections back out of the API when it cuts a release, and a merged pull
+# request with no section stops that run.
+#
+# The body arrives in the workflow event payload, so the check needs no API call
+# and no token. It is passed through the environment rather than interpolated
+# into the script: a pull request body is untrusted text, and a heredoc would let
+# one line of it run commands in this job.
+#
+# The Forgejo mirror carries no copy of this job. Forgejo runs the fast tier, and
+# the fast tier checks CHANGELOG.md; the body check belongs to the forge whose
+# pull requests produce the entries.
+name: Changelog
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  entry:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+          cache-dependency-path: cli/go.sum
+
+      # The check is one Go build: no npm install, no frontend, no browser.
+      - name: Build the bloud CLI
+        run: npm run cli:build
+
+      - name: Check the Changelog section
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" | ./bloud changelog --check-pr -

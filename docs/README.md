@@ -19,6 +19,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Run Vaultwarden in dev (needs `BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1` over plain HTTP) | [../apps/vaultwarden/INTEGRATION.md](../apps/vaultwarden/INTEGRATION.md#plain-http) |
 | Backend debt + repayment plan | [operations/tech-debt.md](operations/tech-debt.md), the per-slice plan [plans/tech-debt-repayment.md](plans/tech-debt-repayment.md), and the closed-item record [operations/archive/tech-debt-history.md](operations/archive/tech-debt-history.md) |
 | Build the .deb release package | [operations/packaging.md](operations/packaging.md) |
+| Cut a release, and how its notes get written | [operations/releases.md](operations/releases.md) |
 | Back up, restore, and update an install | [operations/backup-restore.md](operations/backup-restore.md) |
 | How MCP servers work in Bloud (shipped: the catalog carries MCP providers) | [features/mcp.md](features/mcp.md) |
 | How the agent's long-term memory works (the `memory` contract, and why it is not an MCP namespace) | [features/memory.md](features/memory.md) |

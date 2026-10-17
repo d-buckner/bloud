@@ -20,9 +20,9 @@ REPO="d-buckner/bloud"
 # setting is on, so once a release is published its assets can never be added,
 # replaced, or deleted, and its tag can never be moved. A rolling fixed-name
 # asset is therefore impossible, because the release behind it would have to be
-# rewritten on every push. Each push to main publishes its own immutable
-# deb-<UTC timestamp> prerelease instead, and the newest of those is resolved
-# here, at install time.
+# rewritten on every push. A release is cut by a vMAJOR.MINOR.PATCH tag, and the
+# newest of those is resolved here, at install time. See
+# docs/operations/releases.md.
 #
 # Resolution is unauthenticated on purpose. Asking a first-time user for a
 # GitHub token is a barrier to entry this install path should not have, and one

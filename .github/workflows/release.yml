@@ -1,8 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Release packaging: builds the production .deb and publishes it as a GitHub
-# pre-release, tagged deb-<UTC timestamp> (a .deb build, distinct from the ISO
-# image releases).
+# Release packaging: builds the production .deb, and publishes it as a GitHub
+# release when the run was started by a `v*` tag push.
+#
+# A release is a semver tag, and its notes are the matching section of
+# CHANGELOG.md. Nothing here writes a placeholder note: `./bloud changelog
+# --notes` exits nonzero when the tag has no section, so a release that would
+# have said "Automated build of the Bloud .deb from <sha>" does not get
+# published at all. The changelog section is committed with the tag, so the tag
+# and its notes are the same change. See docs/operations/releases.md.
+#
+# A push to main still builds the .deb and keeps it as a workflow artifact. It
+# publishes nothing, so the releases page lists versions rather than every
+# commit, and `install.sh` resolves a build someone decided to ship.
 #
 # This repository has GitHub's release immutability setting enabled, so every
 # release published here is immutable: once published, its assets cannot be
@@ -13,16 +23,15 @@
 # immutable release". The create-release API has no per-release opt-out, so the
 # setting cannot be worked around from here either.
 #
-# So each push publishes exactly one immutable release and nothing is ever
-# rewritten. install.sh resolves the newest one through the releases API at
-# install time, unauthenticated, and checks the downloaded bytes against the
-# SHA256SUMS asset published alongside it. That file exists because the API's
-# own digest field is awkward to pair to its asset without a JSON parser, and jq
-# is not installed on a stock Debian box.
+# install.sh resolves the newest release through the releases API at install
+# time, unauthenticated, and checks the downloaded bytes against the SHA256SUMS
+# asset published alongside it. That file exists because the API's own digest
+# field is awkward to pair to its asset without a JSON parser, and jq is not
+# installed on a stock Debian box.
 #
-# Runs on pushes to main, plus manual dispatch. This is not a validation check
-# (those live in validation.yaml and run through ./bloud validate); it produces
-# the artifact a release is cut from. The local equivalent is ./bloud package.
+# This is not a validation check (those live in validation.yaml and run through
+# ./bloud validate); it produces the artifact a release is cut from. The local
+# equivalent is ./bloud package.
 name: Release
 
 on:
@@ -30,6 +39,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
 
 # gh release create needs to write releases and tags.
 permissions:
@@ -42,7 +53,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Full history so `git describe --tags` resolves a real version.
+          # Full history so `git describe --tags --match 'v*'` resolves a real
+          # version on a branch build.
           fetch-depth: 0
 
       - name: Set up Go
@@ -66,8 +78,25 @@ jobs:
       - name: Build the bloud CLI
         run: npm run cli:build
 
+      # A tag push names the version. Anything else builds an artifact and
+      # publishes nothing, and the version comes from git describe.
+      - name: Resolve what this run publishes
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+            echo "PACKAGE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=" >> "$GITHUB_ENV"
+            echo "PACKAGE_VERSION=" >> "$GITHUB_ENV"
+          fi
+
       - name: Package the .deb
-        run: ./bloud package --arch amd64
+        run: |
+          if [ -n "$PACKAGE_VERSION" ]; then
+            ./bloud package --arch amd64 --version "$PACKAGE_VERSION"
+          else
+            ./bloud package --arch amd64
+          fi
 
       # Kept alongside the release so the raw build is inspectable from the run.
       - name: Upload the .deb as a workflow artifact
@@ -85,15 +114,30 @@ jobs:
           sha256sum *.deb > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Publish a pre-release
+      # The changelog section is the release notes. A tag with no section fails
+      # here, before anything is published, rather than publishing a release that
+      # says nothing about what it contains.
+      - name: Render the release notes
+        if: env.RELEASE_TAG != ''
+        run: |
+          ./bloud changelog --notes "$RELEASE_TAG" --out dist/NOTES.md
+          {
+            printf '\n---\n\n'
+            printf 'Install:\n\n'
+            printf '```bash\n'
+            printf 'curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | sudo sh\n' "$GITHUB_REPOSITORY"
+            printf '```\n\n'
+            printf 'The release carries `SHA256SUMS`, and `install.sh` checks the .deb against it.\n'
+          } >> dist/NOTES.md
+          cat dist/NOTES.md
+
+      - name: Publish the release
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          stamp="$(date -u +%Y%m%d-%H%M%S)"
-          day="$(date -u +%Y-%m-%d)"
-          sha="$(git rev-parse --short HEAD)"
-          gh release create "deb-${stamp}" dist/*.deb dist/SHA256SUMS \
-            --title "bloud ${day} (${sha})" \
+          test -s dist/NOTES.md
+          gh release create "$RELEASE_TAG" dist/*.deb dist/SHA256SUMS \
+            --title "$RELEASE_TAG" \
             --target "$GITHUB_SHA" \
-            --prerelease \
-            --notes "Automated build of the Bloud .deb from ${GITHUB_SHA}."
+            --notes-file dist/NOTES.md
