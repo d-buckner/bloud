@@ -80,6 +80,31 @@ export function zoneOptions(base: string[], extra: string[]): string[] {
 }
 
 /**
+ * The zones matching a search query, most relevant first, capped.
+ *
+ * A name that starts with the query outranks one that only contains it, so
+ * `lond` puts `Europe/London` above a zone that merely has those letters later.
+ * Matching is case-insensitive and treats a space like the `/` segment break, so
+ * `new york` finds `America/New_York`.
+ *
+ * The cap keeps the rendered list small. The list is a search result, not a
+ * browsable catalog, and every browser offers about 400 zones; a caller that
+ * shows more than the cap is showing rows nobody asked for.
+ */
+export function filterZones(query: string, zones: string[], limit = 50): string[] {
+	const q = query.trim().toLowerCase().replace(/\s+/g, '_');
+	if (!q) return zones.slice(0, limit);
+	const starts: string[] = [];
+	const contains: string[] = [];
+	for (const zone of zones) {
+		const lower = zone.toLowerCase();
+		if (lower.startsWith(q)) starts.push(zone);
+		else if (lower.includes(q)) contains.push(zone);
+	}
+	return [...starts, ...contains].slice(0, limit);
+}
+
+/**
  * The zone's offset from UTC, rendered as `UTC+1` or `UTC-5:30`, or "" when the
  * zone is empty or the runtime cannot render it.
  *

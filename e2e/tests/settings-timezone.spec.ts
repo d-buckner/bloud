@@ -23,26 +23,60 @@ function section(page: import('@playwright/test').Page) {
   return page.locator('.timezone-section');
 }
 
-function zoneSelect(page: import('@playwright/test').Page) {
-  return section(page).getByLabel('Time zone');
+/** The searchable field. The listbox shares the label "Time zone", so this
+ * targets the combobox role and not a bare label lookup. */
+function zoneField(page: import('@playwright/test').Page) {
+  return section(page).getByRole('combobox', { name: 'Time zone' });
 }
 
-async function optionValues(page: import('@playwright/test').Page): Promise<string[]> {
-  return zoneSelect(page)
-    .locator('option')
-    .evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
+/**
+ * Choose a zone through the searchable field: type to filter, then click the row.
+ *
+ * The empty zone is the "No zone" row, which leads the list while the field is
+ * empty and is hidden once a query is typed.
+ */
+async function chooseZone(page: import('@playwright/test').Page, zone: string) {
+  const field = zoneField(page);
+  await field.click();
+  if (zone) {
+    await field.fill(zone);
+    await section(page).getByRole('option', { name: zone, exact: true }).click();
+  } else {
+    await field.fill('');
+    await section(page).getByRole('option', { name: /No zone/ }).click();
+  }
+  await expect(field).toHaveValue(zone);
 }
 
 test.describe('time zone round trip (Settings -> Time zone)', () => {
-  test('the select is populated with the live zone', async ({ authenticatedPage: page, api }) => {
+  test('the field shows the live zone', async ({ authenticatedPage: page, api }) => {
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
 
-    const select = zoneSelect(page);
-    await expect(select).toBeVisible({ timeout: 15_000 });
+    const field = zoneField(page);
+    await expect(field).toBeVisible({ timeout: 15_000 });
 
     const live = await api.getTimezone();
-    await expect(select).toHaveValue(live.zone);
+    await expect(field).toHaveValue(live.zone);
+  });
+
+  // The search is the reason the control exists: a browser offers about 400
+  // zones, and a city name is what an operator knows. Typing a city has to bring
+  // the zone up and choosing it has to put that zone in the field.
+  test('typing a city finds the zone and choosing it fills the field', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/settings');
+    await page.waitForLoadState('domcontentloaded');
+
+    const field = zoneField(page);
+    await expect(field).toBeVisible({ timeout: 15_000 });
+
+    await field.click();
+    await field.fill('tokyo');
+    await expect(section(page).getByRole('option', { name: 'Asia/Tokyo', exact: true })).toBeVisible();
+    await section(page).getByRole('option', { name: 'Asia/Tokyo', exact: true }).click();
+    await expect(field).toHaveValue('Asia/Tokyo');
   });
 
   test('the stored zone survives a save that changes nothing', async ({
@@ -51,7 +85,7 @@ test.describe('time zone round trip (Settings -> Time zone)', () => {
   }) => {
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
-    await expect(zoneSelect(page)).toBeVisible({ timeout: 15_000 });
+    await expect(zoneField(page)).toBeVisible({ timeout: 15_000 });
 
     // The form cannot submit an unchanged zone: Save stays disabled until the
     // selection differs. This is the API-level round trip, and it is what shows
@@ -68,19 +102,15 @@ test.describe('time zone round trip (Settings -> Time zone)', () => {
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
 
-    const select = zoneSelect(page);
-    await expect(select).toBeVisible({ timeout: 15_000 });
+    const field = zoneField(page);
+    await expect(field).toBeVisible({ timeout: 15_000 });
     const save = section(page).getByRole('button', { name: /^Save$/ });
     await expect(save).toBeDisabled();
 
-    const before = await select.inputValue();
-    const other = (await optionValues(page)).find((value) => value !== before);
-    if (!other) {
-      test.skip(true, 'the browser offers only one zone to choose from');
-      return;
-    }
-
-    await select.selectOption(other);
+    const before = await field.inputValue();
+    // A zone every browser lists and the instance is certainly not on.
+    const other = before === 'Asia/Tokyo' ? 'Europe/London' : 'Asia/Tokyo';
+    await chooseZone(page, other);
 
     // The change is dirty, and dirty is not enough: the warning names what the
     // save does, and Save stays gated until the operator agrees to it.
@@ -97,7 +127,7 @@ test.describe('time zone round trip (Settings -> Time zone)', () => {
 
     // Leave the page with the stored zone selected, so a later spec in the same
     // run reads the value it expects.
-    await select.selectOption(before);
+    await chooseZone(page, before);
     await expect(save).toBeDisabled();
   });
 
@@ -107,16 +137,16 @@ test.describe('time zone round trip (Settings -> Time zone)', () => {
   }) => {
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
-    await expect(zoneSelect(page)).toBeVisible({ timeout: 15_000 });
+    await expect(zoneField(page)).toBeVisible({ timeout: 15_000 });
 
     // The warning is about a change that has not been made. On a clean form it
     // is noise, and noise here trains the operator to click through it.
     await expect(section(page).getByText(/recreates every container it manages/)).toHaveCount(0);
 
-    // One Save for this section, and the select carries the stored value rather
+    // One Save for this section, and the field carries the stored value rather
     // than the browser's guess at it.
     await expect(section(page).getByRole('button', { name: /^Save$/ })).toHaveCount(1);
     const live = await api.getTimezone();
-    await expect(zoneSelect(page)).toHaveValue(live.zone);
+    await expect(zoneField(page)).toHaveValue(live.zone);
   });
 });
