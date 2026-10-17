@@ -67,7 +67,6 @@ containers:
     environment:
       PUID: "1000"
       PGID: "1000"
-      TZ: Etc/UTC
     ports:
       - host: 8989
         container: 8989

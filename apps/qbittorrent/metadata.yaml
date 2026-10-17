@@ -38,7 +38,6 @@ containers:
     environment:
       PUID: "1000"
       PGID: "1000"
-      TZ: Etc/UTC
       # LSIO's init runs `qbittorrent-nox --webui-port=${WEBUI_PORT}`, and
       # --webui-port overwrites WebUI\Port in qBittorrent.conf. Both this value
       # and the conf key must stay 8081 or the WebUI listens somewhere Traefik

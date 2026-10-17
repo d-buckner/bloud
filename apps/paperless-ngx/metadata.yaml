@@ -113,7 +113,6 @@ containers:
       - host: 8000
         container: 8000
     environment:
-      TZ: Etc/UTC
       PAPERLESS_DBENGINE: postgresql
       PAPERLESS_DBHOST: apps-paperless-ngx-postgres
       PAPERLESS_DBNAME: paperless

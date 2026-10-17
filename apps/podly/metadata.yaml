@@ -111,7 +111,6 @@ containers:
     network: apps-net
     restartPolicy: always
     environment:
-      TZ: Etc/UTC
       PORT: "5001"
       # The image's entrypoint drops to its own unprivileged `appuser` only when
       # both are set; with neither it runs the whole app as root. These are
