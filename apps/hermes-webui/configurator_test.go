@@ -444,3 +444,107 @@ func TestMetadata_DeclaresTheSharedInbox(t *testing.T) {
 	}
 	require.Equal(t, 1, found, "expected exactly one mount of {{dataDir}}/%s", sharedInboxRel)
 }
+
+// TestPrepareSharedDirsCreatesAndWidens: the web UI resolves
+// HERMES_WEBUI_DEFAULT_WORKSPACE only when the directory exists and is writable. A
+// 0755 mount source owned by the host agent fails that check, and the app then
+// silently falls back to its own /workspace and browses a tree the agent never
+// writes. The world bits are what make the mount actually used.
+func TestPrepareSharedDirsCreatesAndWidens(t *testing.T) {
+	cfg := NewConfigurator(0, testDeps(nil, nil))
+	state := &configurator.AppState{DataPath: t.TempDir(), BloudDataPath: t.TempDir()}
+
+	require.NoError(t, cfg.prepareSharedDirs(state))
+	dir := filepath.Join(state.BloudDataPath, sharedWorkspaceRel)
+	require.NoError(t, os.Chmod(dir, 0o755))
+
+	require.NoError(t, cfg.prepareSharedDirs(state))
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o777), info.Mode().Perm(),
+		"the world bits are the only ones that reach the agent's uid")
+	assert.Zero(t, info.Mode()&os.ModeSticky,
+		"sticky would stop the agent removing a file this app created in the same tree")
+}
+
+// TestMetadata_DeclaresTheSharedTrees pins this app's constants to the mounts it
+// declares. The Go side widens the workspace and the top-level test pairs the
+// destinations with Hermes; the YAML side is what podman mounts.
+func TestMetadata_DeclaresTheSharedTrees(t *testing.T) {
+	raw, err := os.ReadFile("metadata.yaml")
+	if err != nil {
+		t.Fatalf("reading metadata.yaml: %v", err)
+	}
+	var m struct {
+		Containers []struct {
+			Name    string `yaml:"name"`
+			Volumes []struct {
+				Source      string   `yaml:"source"`
+				Destination string   `yaml:"destination"`
+				Options     []string `yaml:"options"`
+			} `yaml:"volumes"`
+		} `yaml:"containers"`
+	}
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parsing metadata.yaml: %v", err)
+	}
+
+	want := map[string]string{
+		"{{dataDir}}/" + sharedWorkspaceRel: sharedWorkspacePath,
+		"{{dataDir}}/" + sharedCacheRel:     sharedCachePath,
+	}
+	found := map[string]bool{}
+	for _, c := range m.Containers {
+		for _, v := range c.Volumes {
+			dest, ok := want[v.Source]
+			if !ok {
+				continue
+			}
+			found[v.Source] = true
+			assert.Equal(t, dest, v.Destination, "%s destination", v.Source)
+			// The cache is the agent's to write; this app only reads it.
+			if v.Source == "{{dataDir}}/"+sharedCacheRel {
+				assert.Contains(t, v.Options, "ro",
+					"the cache must be read-only here, or this app's delete API reaches the agent's files")
+			}
+		}
+	}
+	for source := range want {
+		require.True(t, found[source], "expected exactly one mount of %s", source)
+	}
+}
+
+// TestMetadata_NamesTheSharedWorkspaceAndMediaRoots closes the loop between the
+// mounts and the two settings that make them useful. A mount the app is never told
+// about fixes nothing.
+func TestMetadata_NamesTheSharedWorkspaceAndMediaRoots(t *testing.T) {
+	raw, err := os.ReadFile("metadata.yaml")
+	if err != nil {
+		t.Fatalf("reading metadata.yaml: %v", err)
+	}
+	var m struct {
+		Containers []struct {
+			Name        string            `yaml:"name"`
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"containers"`
+	}
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parsing metadata.yaml: %v", err)
+	}
+
+	var env map[string]string
+	for _, c := range m.Containers {
+		if c.Name == "apps-hermes-webui" {
+			env = c.Environment
+		}
+	}
+	require.NotEmpty(t, env, "apps-hermes-webui declares no environment")
+
+	assert.Equal(t, sharedWorkspacePath, env["HERMES_WEBUI_DEFAULT_WORKSPACE"],
+		"HERMES_WEBUI_DEFAULT_WORKSPACE must name the shared workspace")
+	roots := strings.Split(env["MEDIA_ALLOWED_ROOTS"], ":")
+	assert.Contains(t, roots, sharedWorkspacePath,
+		"MEDIA_ALLOWED_ROOTS must include the workspace, or an agent-written file is refused")
+	assert.Contains(t, roots, sharedCachePath,
+		"MEDIA_ALLOWED_ROOTS must include the cache, or a screenshot or MCP image is refused")
+}

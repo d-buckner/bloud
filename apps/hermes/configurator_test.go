@@ -1336,3 +1336,148 @@ func TestMetadata_DeclaresTheSharedInbox(t *testing.T) {
 		t.Fatalf("expected exactly one mount of {{dataDir}}/%s, got %d", sharedInboxRel, found)
 	}
 }
+
+// TestMetadata_PinsTheAgentWorkspace: the pin is the container's TERMINAL_CWD,
+// which the gateway reads at startup. A missing pin leaves the agent inside its
+// own HERMES_HOME, where the web UI cannot reach an artifact, and a pin that
+// disagrees with the web UI's workspace mount puts the two back on different trees.
+func TestMetadata_PinsTheAgentWorkspace(t *testing.T) {
+	raw, err := os.ReadFile("metadata.yaml")
+	if err != nil {
+		t.Fatalf("reading metadata.yaml: %v", err)
+	}
+	var m struct {
+		Containers []struct {
+			Name        string            `yaml:"name"`
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"containers"`
+	}
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parsing metadata.yaml: %v", err)
+	}
+
+	var env map[string]string
+	for _, c := range m.Containers {
+		if c.Name == "apps-hermes" {
+			env = c.Environment
+		}
+	}
+	if env["TERMINAL_CWD"] != sharedWorkspacePath {
+		t.Fatalf("TERMINAL_CWD = %q, want %q", env["TERMINAL_CWD"], sharedWorkspacePath)
+	}
+	// The browser scratch directory must be the one prepareSharedDirs creates. A
+	// drift leaves a pre-created 0777 directory the harness never writes to, and the
+	// default screenshot lands back outside every shared tree.
+	if env["BH_TMP_DIR"] != sharedBrowserTmpPath {
+		t.Fatalf("BH_TMP_DIR = %q, want %q", env["BH_TMP_DIR"], sharedBrowserTmpPath)
+	}
+	if env["AGENT_BROWSER_SCREENSHOT_DIR"] != sharedBrowserTmpPath {
+		t.Fatalf("AGENT_BROWSER_SCREENSHOT_DIR = %q, want %q; both browser tools must write to one shared directory",
+			env["AGENT_BROWSER_SCREENSHOT_DIR"], sharedBrowserTmpPath)
+	}
+	if want := sharedCachePath + "/browser-harness"; sharedBrowserTmpPath != want {
+		t.Fatalf("sharedBrowserTmpPath = %q, want %q, or the container path names a directory outside the served cache",
+			sharedBrowserTmpPath, want)
+	}
+	if want := sharedCacheRel + "/browser-harness"; sharedBrowserTmpRel != want {
+		t.Fatalf("sharedBrowserTmpRel = %q, want %q, or prepareSharedDirs creates a directory the harness does not write to",
+			sharedBrowserTmpRel, want)
+	}
+}
+
+// TestPrepareSharedDirsCreatesAndWidens: the orchestrator creates every mount
+// source 0755 owned by the host agent, which the agent's subordinate uid cannot
+// write. The world bits are what reach across, and there is deliberately no sticky
+// bit: the agent and the web UI edit the same workspace files, so each must be able
+// to rename and remove what the other created.
+func TestPrepareSharedDirsCreatesAndWidens(t *testing.T) {
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
+	state := &configurator.AppState{DataPath: t.TempDir(), BloudDataPath: t.TempDir()}
+
+	if err := c.prepareSharedDirs(state); err != nil {
+		t.Fatalf("prepareSharedDirs: %v", err)
+	}
+	for _, rel := range []string{sharedWorkspaceRel, sharedCacheRel, sharedBrowserTmpRel} {
+		dir := filepath.Join(state.BloudDataPath, rel)
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatalf("narrowing %s: %v", rel, err)
+		}
+		if err := c.prepareSharedDirs(state); err != nil {
+			t.Fatalf("second prepareSharedDirs: %v", err)
+		}
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		if got := info.Mode().Perm(); got != 0o777 {
+			t.Errorf("%s mode = %o, want 777; the world bits are the only ones that reach "+
+				"the other container's uid", rel, got)
+		}
+		if info.Mode()&os.ModeSticky != 0 {
+			t.Errorf("%s is sticky; the agent and the web UI edit the same files, so sticky "+
+				"would stop each removing what the other created", rel)
+		}
+	}
+}
+
+// TestPrepareSharedDirsWithoutASharedRootIsNotFatal keeps the degraded-but-alive
+// shape: an offline or CLI context has no shared root, and a node parked in ERROR
+// over directories the agent can run without is worse than one whose config was
+// still written. It must not fall back to a relative path either.
+func TestPrepareSharedDirsWithoutASharedRootIsNotFatal(t *testing.T) {
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), HTTP: appclient.Factory{}})
+
+	if err := c.prepareSharedDirs(&configurator.AppState{DataPath: t.TempDir()}); err != nil {
+		t.Fatalf("prepareSharedDirs with no shared root: %v", err)
+	}
+	if _, err := os.Stat(sharedWorkspaceRel); !os.IsNotExist(err) {
+		t.Errorf("an empty shared root created %q relative to the working directory", sharedWorkspaceRel)
+	}
+}
+
+// TestMetadata_DeclaresTheSharedTrees pins this package's constants to the mounts
+// metadata declares. The Go side builds the host paths and the configurator pins
+// terminal.cwd; the YAML side is what podman mounts. A drift means the agent is
+// pinned to a directory nobody mounts, or the web UI is told about a tree Hermes
+// never writes.
+func TestMetadata_DeclaresTheSharedTrees(t *testing.T) {
+	raw, err := os.ReadFile("metadata.yaml")
+	if err != nil {
+		t.Fatalf("reading metadata.yaml: %v", err)
+	}
+	var m struct {
+		Containers []struct {
+			Name    string `yaml:"name"`
+			Volumes []struct {
+				Source      string `yaml:"source"`
+				Destination string `yaml:"destination"`
+			} `yaml:"volumes"`
+		} `yaml:"containers"`
+	}
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parsing metadata.yaml: %v", err)
+	}
+
+	want := map[string]string{
+		"{{dataDir}}/" + sharedWorkspaceRel: sharedWorkspacePath,
+		"{{dataDir}}/" + sharedCacheRel:     sharedCachePath,
+	}
+	found := map[string]bool{}
+	for _, c := range m.Containers {
+		for _, v := range c.Volumes {
+			dest, ok := want[v.Source]
+			if !ok {
+				continue
+			}
+			found[v.Source] = true
+			if v.Destination != dest {
+				t.Errorf("%s destination = %q, want %q", v.Source, v.Destination, dest)
+			}
+		}
+	}
+	for source := range want {
+		if !found[source] {
+			t.Errorf("expected exactly one mount of %s", source)
+		}
+	}
+}

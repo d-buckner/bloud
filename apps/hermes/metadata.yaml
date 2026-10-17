@@ -227,6 +227,32 @@ containers:
       # published, so no `ports:` entry exists for it and the LAN never
       # sees it; consumers arrive through the routed /v1 prefix instead.
       API_SERVER_PORT: "8642"
+      # The agent's working directory, pinned to the tree shared with hermes-webui.
+      # Left unset the agent's cwd is its own HERMES_HOME (/opt/data), a private
+      # tree the web UI must not mount, and every artifact it writes lands where
+      # the web UI cannot reach it. The pin lives here rather than in config.yaml
+      # because Hermes' file-tools base is read from TERMINAL_CWD at gateway start,
+      # and a terminal.cwd an operator sets still wins: the config bridge runs last.
+      TERMINAL_CWD: /workspace
+      # The image's own value is /opt/data alone, so the agent's file tools would
+      # refuse to write the shared workspace at /workspace. Widening the list (the
+      # separator is os.pathsep) lets the agent write its own workspace. A tool write
+      # there is allowed. The agent's protected state stays out of reach.
+      HERMES_WRITE_SAFE_ROOT: /opt/data:/workspace
+      # Where the browser tools write a screenshot by default. The harness
+      # (browser-use / browser-harness) defaults to $HOME/.config/browser-harness/tmp,
+      # which is outside every tree the web UI may serve, so the screenshot the agent
+      # takes and puts in its reply answers 403. Pointing the tmp directory into the
+      # shared cache makes that default land in a tree the web UI already serves; the
+      # configurator creates it at 0777, because the harness narrows a directory it
+      # creates itself to 0700 and the web UI could not read it.
+      BH_TMP_DIR: /opt/data/cache/browser-harness
+      # The directory is shared by concurrent browser sessions, so the harness must
+      # put the session name in a filename to keep two screenshots apart.
+      BH_TMP_DIR_SHARED: "1"
+      # The bundled agent-browser skill takes its screenshots through its own
+      # variable. It points at the same shared directory for the same reason.
+      AGENT_BROWSER_SCREENSHOT_DIR: /opt/data/cache/browser-harness
       # The data-directory permission contract. Hermes secures $HERMES_HOME to
       # 0700 for a bare-metal install, and the host agent cannot undo that from
       # outside: the directory belongs to the container's uid mapped into the
@@ -263,6 +289,21 @@ containers:
       # runtime uid is not that owner, so it could not write an upload.
       - source: "{{dataDir}}/shared-trees/hermes/inbox"
         destination: /bloud-hermes/inbox
+      # The agent's working directory, shared with hermes-webui at this same path.
+      # Without the pin the agent's cwd is its own HERMES_HOME (/opt/data), which
+      # the web UI must not mount, while the web UI browses /workspace: a path this
+      # container has never had. The shared tree makes the two agree, and /workspace
+      # is the web UI's own convention, so its stored workspace stays valid on an
+      # existing install.
+      - source: "{{dataDir}}/shared-trees/hermes/workspace"
+        destination: /workspace
+      # The agent's media cache, shared with hermes-webui. Tool-generated media
+      # (screenshots, MCP image blocks, TTS) lands under $HERMES_HOME/cache and is
+      # delivered as a MEDIA: tag naming that absolute path, so the web UI can serve
+      # it only when the bytes exist at the same path in its own container. Hermes
+      # mounts it read-write; the web UI mounts it read-only.
+      - source: "{{dataDir}}/shared-trees/hermes/cache"
+        destination: /opt/data/cache
     healthCheck:
       # /api/health is the upstream public liveness path, exempt from the
       # dashboard auth gate (safe for external probes by design).

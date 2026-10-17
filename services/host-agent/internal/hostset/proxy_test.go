@@ -24,7 +24,10 @@ func TestIssuerExtraHostFollowsTheScheme(t *testing.T) {
 // Each ProxyConsistency issue names one layer, so a failed login points at one
 // setting instead of three candidates.
 func TestProxyConsistency(t *testing.T) {
-	t.Run("https with no named proxy is reported", func(t *testing.T) {
+	t.Run("an unresolved trust set is reported", func(t *testing.T) {
+		// The caller resolves the private-range default before it calls this. Nil
+		// here means the caller skipped that, which is a caller error rather than
+		// a deployment fault.
 		hs := New(mustParse(t, "https://home.test"))
 		codes := issueCodes(hs.ProxyConsistency(nil, false))
 		assert.Contains(t, codes, "https_without_trusted_proxy_nets")

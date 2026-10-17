@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 )
 
 type staticEntrypoint struct {
@@ -101,6 +103,34 @@ func TestTraefikStaticConfig_EmptyListSelectsTheDefault(t *testing.T) {
 
 	// A nil list and an empty list render the same bytes.
 	require.Equal(t, staticConfigOf(t, nil), staticConfigOf(t, []string{}))
+}
+
+// EffectiveTrustedProxyNets is the rule the startup diagnostic depends on. The
+// diagnostic read the raw config and so reported a broken login flow on every
+// https install whose terminator the private-range default already covers.
+func TestEffectiveTrustedProxyNets(t *testing.T) {
+	assert.Equal(t, defaultTrustedProxyNets, EffectiveTrustedProxyNets(nil))
+	assert.Equal(t, defaultTrustedProxyNets, EffectiveTrustedProxyNets([]string{}))
+
+	named := []string{"192.168.1.7"}
+	assert.Equal(t, named, EffectiveTrustedProxyNets(named),
+		"an explicit list replaces the default rather than widening it")
+}
+
+// TestProxyConsistencyIsSilentWhenTheDefaultCoversTheHTTPSAddress pins the false
+// positive end to end: an https address with no operator list must produce no
+// issue, because Traefik trusts the private ranges whether or not the operator
+// named them.
+func TestProxyConsistencyIsSilentWhenTheDefaultCoversTheHTTPSAddress(t *testing.T) {
+	pub, err := hostset.ParsePublicURL("https://home.example.com")
+	require.NoError(t, err)
+
+	codes := []string{}
+	for _, issue := range hostset.New(pub).ProxyConsistency(EffectiveTrustedProxyNets(nil), false) {
+		codes = append(codes, issue.Code)
+	}
+	assert.Empty(t, codes,
+		"an empty operator list selects the private-range default, so the startup diagnostic must stay silent")
 }
 
 // When the operator names the proxy in front of Bloud, every entrypoint Traefik

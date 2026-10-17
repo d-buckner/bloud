@@ -55,9 +55,9 @@ newest `N` archives; the default keeps every one.
 
 `shared-trees/` is **not** what `--include-shared` refers to, and it is always
 archived. Those directories hold app state that two apps share by path (the
-Hermes agent's attachment inbox today), so losing one would restore an app
-whose uploaded files had vanished. The flag's name predates it and refers to
-the media library only.
+Hermes agent's attachment inbox, workspace, and media cache today), so losing
+one would restore an app whose uploaded files had vanished. The flag's name
+predates it and refers to the media library only.
 
 Note the retention: uninstalling an app does not remove a shared tree. Neither
 app's uninstall can reach it, so an archive keeps growing until a restore point

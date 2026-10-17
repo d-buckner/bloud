@@ -488,8 +488,12 @@ type Issue struct {
 //	    scheme as the issuer string, because OIDC requires that string to
 //	    match on every hop. See Deployability.
 //
-// trustedProxyNets is config.TrustedProxyNets, and tlsAtTraefik is whether
-// TLS terminates where the container's issuer pin actually lands.
+// trustedProxyNets is the effective trust set, not the raw operator config: the
+// configured list when one was given, and the private-range default otherwise
+// (appconfig.EffectiveTrustedProxyNets). An empty slice means the caller skipped
+// that resolution, which is the only way the first issue below can fire: an empty
+// operator list is not "trust nobody". tlsAtTraefik is whether TLS terminates
+// where the container's issuer pin actually lands.
 func (h HostSet) ProxyConsistency(trustedProxyNets []string, tlsAtTraefik bool) []Issue {
 	var issues []Issue
 	hasProxy := len(trustedProxyNets) > 0
@@ -499,9 +503,10 @@ func (h HostSet) ProxyConsistency(trustedProxyNets []string, tlsAtTraefik bool) 
 		if !hasProxy {
 			issues = append(issues, Issue{
 				Code: "https_without_trusted_proxy_nets",
-				Message: "public scheme is https but BLOUD_TRUSTED_PROXY_NETS is empty, so Traefik rewrites " +
-					"X-Forwarded-Proto to http and Authentik reads an HTTPS request as HTTP. Name the proxy " +
-					"in BLOUD_TRUSTED_PROXY_NETS.",
+				Message: "public scheme is https but no trusted proxy set was resolved, so Traefik trusts " +
+					"nobody and rewrites X-Forwarded-Proto to http, and Authentik reads an HTTPS request as " +
+					"HTTP. Resolve BLOUD_TRUSTED_PROXY_NETS through " +
+					"appconfig.EffectiveTrustedProxyNets: an empty list selects the private-range default.",
 			})
 		}
 	case SchemeHTTP:

@@ -479,7 +479,12 @@ func resolveAddress(database *sql.DB, cfg *config.Config, logger *slog.Logger) (
 	// proxy" is a one-line answer instead of three candidates. tlsAtTraefik is
 	// false because Bloud ships no certificate resolver at Traefik; when a
 	// deployment does terminate there, this is the call site that changes.
-	for _, issue := range hostSet.ProxyConsistency(cfg.TrustedProxyNets, false) {
+	//
+	// The trust set is the effective one, not the raw config: an empty
+	// BLOUD_TRUSTED_PROXY_NETS selects the private-range default, which is what
+	// Traefik actually trusts. Passing the raw config reported a broken login
+	// flow on every https install whose terminator the default already covers.
+	for _, issue := range hostSet.ProxyConsistency(appconfig.EffectiveTrustedProxyNets(cfg.TrustedProxyNets), false) {
 		logger.Warn("address configuration issue",
 			"code", issue.Code,
 			"issuer", hostSet.IssuerBaseURL(),

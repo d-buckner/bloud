@@ -50,14 +50,25 @@ var defaultTrustedProxyNets = []string{
 	"100.64.0.0/10",
 }
 
-// effectiveTrustedProxyNets returns the operator's list when one was given, and
+// EffectiveTrustedProxyNets returns the operator's list when one was given, and
 // the private-range default otherwise. An explicit list replaces the default
 // rather than widening it, so naming one terminator trusts exactly that one.
-func (c *TraefikConfigurator) effectiveTrustedProxyNets() []string {
-	if len(c.trustedProxyNets) == 0 {
+//
+// A caller that asks "does Traefik trust the terminator?" must ask this, not read
+// the raw config. An empty operator list is not "trust nobody", so a diagnostic
+// that reads the raw config reports a broken login flow on an install the default
+// already covers.
+func EffectiveTrustedProxyNets(configured []string) []string {
+	if len(configured) == 0 {
 		return defaultTrustedProxyNets
 	}
-	return c.trustedProxyNets
+	return configured
+}
+
+// effectiveTrustedProxyNets resolves this configurator's list through the rule
+// above, so Traefik and the startup diagnostic cannot disagree about it.
+func (c *TraefikConfigurator) effectiveTrustedProxyNets() []string {
+	return EffectiveTrustedProxyNets(c.trustedProxyNets)
 }
 
 // NewTraefikConfigurator creates a new Traefik configurator. trustedProxyNets

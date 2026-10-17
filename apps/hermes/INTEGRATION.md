@@ -31,7 +31,7 @@ own `config.yaml`, memory, skills, and SQLite session store there on first boot.
 Bloud writes **only** the SSO keys into that `config.yaml` (see below); every
 other key belongs to the user and is preserved untouched.
 
-### The attachment inbox (the one tree Hermes shares)
+### The attachment inbox
 
 `{{dataDir}}/shared-trees/hermes/inbox` mounts at `/bloud-hermes/inbox` in this
 container **and** in `apps-hermes-webui`. Hermes only reads it; hermes-webui
@@ -71,12 +71,87 @@ installs not. And it is `os.FileMode(0o777)|os.ModeSticky`, not
 `os.FileMode(0o1777)`, because `FileMode`'s sticky flag is its own high bit and the
 octal literal silently means a plain `0777`.
 
+### The shared workspace
+
+`{{dataDir}}/shared-trees/hermes/workspace` mounts at `/workspace` in this
+container **and** in `apps-hermes-webui`. Both containers read and write it.
+
+The mount destination matters twice.
+
+- It is under `HERMES_WRITE_SAFE_ROOT`, which the image sets to `/opt/data`
+  alone. The environment in `metadata.yaml` widens it to
+  `/opt/data:/workspace`, and that widening is what lets the agent's `write_file`
+  and `patch` tools write their own working directory. Without it the pin below
+  would leave the agent able to read its workspace and not write it.
+- It is the web UI's own workspace convention. The app trusts a path under its
+  boot default and already stores `/workspace` as its last workspace, so an
+  existing install keeps working. Mounted elsewhere, every new chat fails to
+  start with `Path is outside the user home directory, not in the saved
+  workspace list`.
+
+`TERMINAL_CWD=/workspace` pins the agent to it. Without the pin the agent's
+working directory is `$HERMES_HOME` (`/opt/data`), a private tree the web UI must
+not mount, while the web UI browses `/workspace`. The agent then writes an
+artifact into one directory and the web UI looks in another. The pin is an
+environment value rather than a `terminal.cwd` config key because Hermes'
+`config.yaml` carries only what an operator set, and the config bridge runs last,
+so an operator's own `terminal.cwd` still wins.
+
+`PreStart` creates the tree at `0777`, with no sticky bit. The world bits are
+what reach across the rootless podman uid boundary. The sticky bit is absent
+because the agent and the web UI edit the same files, so each must be able to
+rename and remove what the other created.
+
+### The shared media cache
+
+`{{dataDir}}/shared-trees/hermes/cache` mounts at `/opt/data/cache` in this
+container **read-write**, and in `apps-hermes-webui` **read-only**.
+
+`/opt/data/cache` is where the built-in tools write deliverable media: the MCP
+image cache, the browser screenshot cache, TTS output, and documents. Each of
+those is delivered as a `MEDIA:<absolute path>` tag. The web UI snapshots and
+serves such a tag only when the bytes exist in its own container at the same
+path, so the tree has to be mounted at the agent's own cache path rather than at
+a Bloud-chosen one.
+
+The read-only flag is the ownership statement. Hermes writes the cache; the web
+UI reads it. The web UI ships `/api/file/delete`, `rename`, and `move`, and the
+flag keeps those APIs away from files the agent owns.
+
+`PreStart` creates the tree at `0777`. The cache subdirectories (`images`,
+`screenshots`, `audio`, `videos`, `documents`) are created by the app on demand.
+
+Pre-creating the directory is necessary and not sufficient. The web UI runs as
+uid 1024 and Hermes as uid 10000 with no shared group, so the screenshot *file*
+must be other-readable as well. Hermes writes it with its own umask (0022), so it
+lands `0644` and the web UI reads it. A tool that ran with a tighter umask would
+produce a file the web UI could not read, and the directory mode would not help.
+
+The browser tools' scratch directory also points here. `BH_TMP_DIR` and
+`AGENT_BROWSER_SCREENSHOT_DIR` name `/opt/data/cache/browser-harness`, so the
+default screenshot from a browser session lands in a tree the web UI serves. That
+widens the share past deliverable media: every signed-in web UI user can also
+enumerate a session's browser screenshots and the daemon log. The rest of the
+harness state, its auth and profiles, stays under `$HOME/.config/browser-harness`,
+outside this tree.
+
+The mount shadows `{{appDataDir}}/data/cache`, the path the cache had before this
+tree. The old directory stays on disk and in every backup archive, and the mount
+makes it unreachable, so an upgrade does not free that space. It is cache, and an
+operator may remove the old directory by hand.
+
+The cache is the agent's private state, so the share is narrow: this subtree,
+read-only, and nothing else. The rest of `$HERMES_HOME` is not mounted into the
+web UI.
+
 What this does **not** fix, in case a later reader is chasing one of them:
 
-- Agent-produced media still will not render in the web UI. Its `/api/file/raw`
-  only serves `$HERMES_HOME`, `/tmp`, the last workspace, and
-  `MEDIA_ALLOWED_ROOTS`, and none of those exist here or overlap with
-  `/opt/data/workspace`.
+- A tool that writes a deliverable outside the shared trees is unreachable. The
+  trees carry `/workspace` and `$HERMES_HOME/cache`, which cover the file tools,
+  the built-in `browser_vision` screenshot, and the MCP image cache. A skill that
+  writes its own scratch directory under `$HOME`, for example
+  `~/.config/browser-harness/tmp/shot.png`, is not covered, and `/api/media`
+  answers 403 for it.
 - The web UI cannot `import agent` (upstream installs it from a shared
   `hermes-agent-src` volume), so its `get_config()` reads a nonexistent
   `/root/.hermes/config.yaml` and every config-derived default falls back.
