@@ -108,14 +108,24 @@ describe('the field styles name tokens, not literals', () => {
  * carried its own copy of the measure and heading rule. Two had it and the third
  * did not, and nothing failed: the section that lost its copy simply rendered
  * wider with an oversized heading, next to two that looked right.
- */
+ *
+ * The measure moved again when the settings page became a two-column grid. The
+ * width is the page container's job now, and a cap on `.section` would leave the
+ * empty right side the grid exists to remove. What stays global and unforgetting
+ * is the heading. */
 describe('the settings section shell is defined once, globally', () => {
 	const SECTIONS = ['AddressSettingsSection', 'AISettingsSection', 'UsersSettingsSection'];
 
 	it('lives in the global sheet', () => {
 		const base = read('lib/styles/base.css');
-		expect(base).toMatch(/\.section\s*\{[^}]*max-width/);
 		expect(base).toMatch(/\.section h2\s*\{/);
+		// One page container owns the width, and it is centered. Three routes used
+		// to carry three different width rules, which is what moved the content's
+		// edges when you changed pages on a wide screen.
+		expect(base).toMatch(/\.page\s*\{[^}]*max-width/);
+		expect(base).toMatch(/\.page\s*\{[^}]*margin:\s*0 auto/);
+		// A cap on `.section` would fight the grid column it is placed in.
+		expect(base).not.toMatch(/\.section\s*\{[^}]*max-width/);
 	});
 
 	it.each(SECTIONS)('%s carries no private copy', (name) => {

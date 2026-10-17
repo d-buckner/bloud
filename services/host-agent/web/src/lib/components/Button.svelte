@@ -1,12 +1,15 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import type { Snippet } from 'svelte';
+	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	interface Props {
+	/* The component's own props plus whatever a native button takes, so a caller
+	   can add `aria-haspopup`, a name, or a data attribute without this file
+	   growing a prop per attribute. `onclick` and `children` are restated because
+	   the local shapes are narrower than the DOM ones. */
+	interface Props extends Omit<HTMLButtonAttributes, 'onclick' | 'children'> {
 		variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
 		size?: 'sm' | 'md';
-		disabled?: boolean;
-		type?: 'button' | 'submit';
 		onclick?: () => void;
 		children: Snippet;
 	}
@@ -17,7 +20,8 @@
 		disabled = false,
 		type = 'button',
 		onclick,
-		children
+		children,
+		...rest
 	}: Props = $props();
 </script>
 
@@ -31,6 +35,7 @@
 	{type}
 	{disabled}
 	{onclick}
+	{...rest}
 >
 	{@render children()}
 </button>

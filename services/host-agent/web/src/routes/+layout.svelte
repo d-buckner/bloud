@@ -3,6 +3,8 @@
 	import '../app.css';
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
+	import Icon from '$lib/components/Icon.svelte';
 	import LoadingShell from '$lib/components/LoadingShell.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
@@ -13,6 +15,17 @@
 	let { children }: { children: Snippet } = $props();
 
 	let sidebarCollapsed = $state(false);
+	// The mobile drawer. It is a separate state from `sidebarCollapsed`: below the
+	// breakpoint the rail is off-canvas and always labelled, so a persisted
+	// collapsed desktop rail must not strip a phone's navigation names.
+	let mobileNavOpen = $state(false);
+
+	const currentPath = $derived(page.url.pathname);
+	// Any navigation closes the drawer. Reading the path is the trigger.
+	$effect(() => {
+		currentPath;
+		mobileNavOpen = false;
+	});
 
 	// The session read and the stream are the store's business now. This page only
 	// says when the dashboard starts and stops, and renders the four states the
@@ -57,7 +70,32 @@
 		     target takes tabindex="-1" so focus actually lands on <main>: a
 		     fragment jump scrolls, and on some browsers that is all it does. -->
 		<a class="skip-link" href="#main">Skip to main content</a>
-		<Sidebar bind:collapsed={sidebarCollapsed} />
+
+		<!-- Narrow screens get a bar with a real button instead of a permanent
+		     64px icon rail with no way to read it. -->
+		<header class="mobile-bar">
+			<button
+				class="mobile-menu"
+				type="button"
+				aria-label="Open navigation"
+				aria-expanded={mobileNavOpen}
+				onclick={() => (mobileNavOpen = true)}
+			>
+				<Icon name="menu" size={22} />
+			</button>
+			<span class="mobile-title">Bloud</span>
+		</header>
+
+		<Sidebar bind:collapsed={sidebarCollapsed} bind:open={mobileNavOpen} />
+
+		{#if mobileNavOpen}
+			<button
+				class="scrim"
+				type="button"
+				aria-label="Close navigation"
+				onclick={() => (mobileNavOpen = false)}
+			></button>
+		{/if}
 
 		<main id="main" tabindex="-1" class:collapsed={sidebarCollapsed}>
 			<div class="route-content">
@@ -100,9 +138,58 @@
 		flex: 1;
 	}
 
+	.mobile-bar,
+	.scrim {
+		display: none;
+	}
+
 	@media (max-width: 768px) {
-		main {
-			margin-left: 64px;
+		main,
+		main.collapsed {
+			margin-left: 0;
+			/* Clear the fixed bar. */
+			padding-top: 56px;
+		}
+
+		.mobile-bar {
+			display: flex;
+			align-items: center;
+			gap: var(--space-xs);
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			height: 56px;
+			padding: 0 var(--space-sm);
+			background: var(--color-bg-subtle);
+			border-bottom: 1px solid var(--color-border);
+			z-index: 60;
+		}
+
+		.mobile-menu {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			background: transparent;
+			border: none;
+			border-radius: var(--radius-sm);
+			color: var(--color-text-secondary);
+			cursor: pointer;
+		}
+
+		.mobile-title {
+			font-size: 1.125rem;
+			font-weight: 500;
+		}
+
+		.scrim {
+			display: block;
+			position: fixed;
+			inset: 0;
+			z-index: 70;
+			background: var(--color-scrim);
+			border: none;
+			cursor: pointer;
 		}
 	}
 </style>

@@ -1,6 +1,7 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import { page } from '$app/state';
+	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
 	import ThemeToggle from './ThemeToggle.svelte';
 	import { gridApps, isAdmin, select } from '$lib/store';
@@ -9,10 +10,28 @@
 	import type { RouteId } from '$app/types';
 
 	interface Props {
+		/** Desktop rail collapsed to icons. Ignored below the drawer breakpoint. */
 		collapsed?: boolean;
+		/** Mobile drawer open. The layout owns the value and the scrim. */
+		open?: boolean;
 	}
 
-	let { collapsed = $bindable(false) }: Props = $props();
+	let { collapsed = $bindable(false), open = $bindable(false) }: Props = $props();
+
+	const STORAGE_KEY = 'bloud.sidebar.collapsed';
+
+	// The rail remembers its width. It was a bindable prop with an expand button
+	// and a full set of collapsed styles, but nothing ever set it to true, so the
+	// collapsed state was unreachable. A control plus this read is what makes the
+	// feature real.
+	onMount(() => {
+		collapsed = localStorage.getItem(STORAGE_KEY) === '1';
+	});
+
+	function toggleCollapsed() {
+		collapsed = !collapsed;
+		localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0');
+	}
 
 	let currentPath = $derived(page.url.pathname);
 	const user = select((s) => s.session.user);
@@ -41,20 +60,27 @@
 	);
 </script>
 
-<nav class="sidebar" class:collapsed aria-label="Main navigation">
-	<div class="logo">
-		{#if collapsed}
-			<button
-				class="expand-btn"
-				onclick={() => (collapsed = false)}
-				title="Expand sidebar"
-				aria-label="Expand sidebar"
-			>
-				<Icon name="menu" size={20} />
-			</button>
-		{:else}
-			<span class="logo-text">Bloud</span>
-		{/if}
+<nav class="sidebar" class:collapsed class:open aria-label="Main navigation">
+	<div class="sidebar-header">
+		<span class="logo-text">Bloud</span>
+		<button
+			class="collapse-toggle"
+			type="button"
+			aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+			aria-expanded={!collapsed}
+			title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+			onclick={toggleCollapsed}
+		>
+			<Icon name={collapsed ? 'menu' : 'chevron-left'} size={18} />
+		</button>
+		<button
+			class="close-toggle"
+			type="button"
+			aria-label="Close navigation"
+			onclick={() => (open = false)}
+		>
+			<Icon name="close" size={18} />
+		</button>
 	</div>
 
 	<ul class="nav-links">
@@ -64,6 +90,7 @@
 					href={resolve(item.href)}
 					class:active={currentPath === item.href}
 					aria-current={currentPath === item.href ? 'page' : undefined}
+					title={item.label}
 				>
 					<span class="nav-icon">
 						<Icon name={item.icon} size={20} />
@@ -78,9 +105,7 @@
 								: `${attentionApps.length} apps need attention`}
 						>
 							<Icon name="warning" size={12} />
-							{#if !collapsed}
-								<span class="attention-text">{attentionApps.length} need attention</span>
-							{/if}
+							<span class="attention-text">{attentionApps.length} need attention</span>
 						</span>
 					{/if}
 				</a>
@@ -108,14 +133,16 @@
 				</button>
 			</form>
 		</div>
-		<span class="version">v0.1.0</span>
 	</div>
 </nav>
 
 <style>
 	.sidebar {
 		width: var(--sidebar-width);
-		background: var(--color-bg-elevated);
+		/* A well, not a lift: the rail is a distinct surface from the canvas
+		   without depending on the hairline border alone, and the active row can
+		   then be a lift on top of it. */
+		background: var(--color-bg-subtle);
 		border-right: 1px solid var(--color-border);
 		display: flex;
 		flex-direction: column;
@@ -123,47 +150,55 @@
 		top: 0;
 		left: 0;
 		bottom: 0;
-		z-index: 50;
-		transition: width 0.2s ease;
+		z-index: 80;
+		transition: width 0.2s ease, transform 0.2s ease;
 	}
 
-	.logo {
-		padding: var(--space-xl) var(--space-lg);
-		border-bottom: 1px solid var(--color-border-subtle);
+	.sidebar-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: var(--space-sm);
+		padding: var(--space-md);
+		border-bottom: 1px solid var(--color-border-subtle);
 	}
 
 	.logo-text {
-		font-size: 1.375rem;
+		font-size: 1.25rem;
 		font-weight: 500;
 		letter-spacing: -0.02em;
 	}
 
-	.expand-btn {
-		display: flex;
+	.collapse-toggle,
+	.close-toggle {
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+		width: var(--tap-target-min);
+		height: var(--tap-target-min);
+		padding: 0;
 		background: transparent;
 		border: none;
+		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
 		cursor: pointer;
-		padding: var(--space-xs);
-		border-radius: var(--radius-sm);
-		transition: all 0.15s ease;
-		margin: 0 auto;
+		transition: background 0.15s ease, color 0.15s ease;
 	}
 
-	.expand-btn:hover {
-		background: var(--color-bg-subtle);
+	.collapse-toggle:hover,
+	.close-toggle:hover {
+		background: var(--color-bg-elevated);
 		color: var(--color-text);
+	}
+
+	.close-toggle {
+		display: none;
 	}
 
 	.nav-links {
 		list-style: none;
 		margin: 0;
-		padding: var(--space-lg) var(--space-md);
+		padding: var(--space-sm);
 		flex: 1;
 	}
 
@@ -172,6 +207,7 @@
 	}
 
 	.nav-links a {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
@@ -179,7 +215,7 @@
 		border-radius: var(--radius-md);
 		text-decoration: none;
 		color: var(--color-text-secondary);
-		transition: all 0.15s ease;
+		transition: background 0.15s ease, color 0.15s ease;
 		font-size: 0.9375rem;
 		/* A nav link is an <a>, so the global button rule does not reach it, and
 		   the audit measured these at 43px: one pixel short of the minimum, which
@@ -188,14 +224,28 @@
 	}
 
 	.nav-links a:hover {
-		background: var(--color-bg-subtle);
+		background: var(--color-bg-elevated);
 		color: var(--color-text);
 	}
 
 	.nav-links a.active {
-		background: var(--color-bg);
+		background: var(--color-bg-elevated);
 		color: var(--color-text);
-		font-weight: 500;
+		font-weight: 600;
+	}
+
+	/* The active row also carries a bar on its leading edge. The fill alone was
+	   within a hair of the rail's own value, so the current page was a squint. */
+	.nav-links a.active::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 50%;
+		transform: translateY(-50%);
+		width: 3px;
+		height: 60%;
+		border-radius: 0 2px 2px 0;
+		background: var(--color-accent);
 	}
 
 	.nav-icon {
@@ -203,6 +253,10 @@
 		align-items: center;
 		justify-content: center;
 		opacity: 0.7;
+	}
+
+	.nav-links a.active .nav-icon {
+		opacity: 1;
 	}
 
 	.attention-chip {
@@ -224,12 +278,12 @@
 		text-overflow: ellipsis;
 	}
 
-	.nav-links a.active .nav-icon {
-		opacity: 1;
-	}
-
 	.sidebar-footer {
-		padding: var(--space-lg);
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-sm);
+		padding: var(--space-md);
 		border-top: 1px solid var(--color-border-subtle);
 	}
 
@@ -237,37 +291,22 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-xs);
-		margin-bottom: var(--space-sm);
+		min-width: 0;
 		color: var(--color-text-secondary);
 		font-size: 0.8125rem;
-		overflow: hidden;
-	}
-
-	/* The two controls that are not navigation. The theme sits here rather than
-	   under Settings because it is a preference of the browser, not of the
-	   instance: it belongs to whoever is looking, and a non-admin can change it
-	   too. */
-	.footer-actions {
-		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		gap: var(--space-xs);
-		margin-bottom: var(--space-sm);
-	}
-
-	.username {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-		color: var(--color-text-secondary);
-		font-size: 0.8125rem;
-		overflow: hidden;
 	}
 
 	.username-text {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.footer-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		flex-shrink: 0;
 	}
 
 	.logout-form {
@@ -284,106 +323,47 @@
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
 		cursor: pointer;
-		transition: all 0.15s ease;
+		transition: background 0.15s ease, color 0.15s ease;
 	}
 
 	.logout-btn:hover {
-		background: var(--color-bg-subtle);
+		background: var(--color-bg-elevated);
 		color: var(--color-text);
 	}
 
-	.version {
-		font-size: 0.75rem;
-		/* --color-text-faint, not --color-text-muted: this is build metadata, the
-		   one thing in the sidebar nobody reads for information, so it is allowed
-		   to sit below the text bar that every other label has to clear. */
-		color: var(--color-text-faint);
-		font-family: var(--font-mono);
-	}
+	/* --- Collapsed rail, desktop only ---------------------------------------
 
-	/* Collapsed sidebar - icons only */
-	.sidebar.collapsed {
-		width: 64px;
-	}
-
-	.sidebar.collapsed .logo {
-		padding: var(--space-lg) var(--space-sm);
-		text-align: center;
-	}
-
-	.sidebar.collapsed .nav-links {
-		padding: var(--space-lg) var(--space-sm);
-	}
-
-	.sidebar.collapsed .nav-links a {
-		justify-content: center;
-		padding: var(--space-sm);
-	}
-
-	.sidebar.collapsed .nav-links a span:not(.nav-icon),
-	.sidebar.collapsed .username-text {
-		/* Hidden visually, never removed: an icon rail whose links are `display:
-		   none` apart from their icon is a row of anonymous "link" announcements.
-		   Same treatment as the mobile rail below. */
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		margin: -1px;
-		padding: 0;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
-		border: 0;
-	}
-
-	.sidebar.collapsed .sidebar-footer {
-		padding: var(--space-md) var(--space-sm);
-	}
-
-	.sidebar.collapsed .version {
-		display: block;
-		text-align: center;
-	}
-
-	.sidebar.collapsed .footer-actions {
-		flex-direction: column;
-	}
-
-	.sidebar.collapsed .username {
-		justify-content: center;
-	}
-
-	/* Mobile - always collapsed */
-	@media (max-width: 768px) {
-		.sidebar {
+	   The collapsed rules are scoped to the desktop width on purpose. Below the
+	   drawer breakpoint the rail is off-canvas and always shows its labels, so a
+	   persisted collapsed state cannot strip the names off a phone's navigation. */
+	@media (min-width: 769px) {
+		.sidebar.collapsed {
 			width: 64px;
 		}
 
-		.logo {
-			padding: var(--space-lg) var(--space-sm);
-			text-align: center;
-		}
-
-		.logo-text {
-			font-size: 1rem;
-		}
-
-		.nav-links {
-			padding: var(--space-lg) var(--space-sm);
-		}
-
-		.nav-links a {
+		.sidebar.collapsed .sidebar-header {
 			justify-content: center;
 			padding: var(--space-sm);
 		}
 
-		.nav-links a span:not(.nav-icon),
-		.username-text {
-			/* The mobile rail is the collapsed rail: same visually-hidden treatment,
-			   because the media query cannot add a class and `display: none` takes
-			   the accessible name away with the pixels. The footer at 64px was
-			   clipping the username to a stray initial, which is worse than hiding
-			   it. */
+		.sidebar.collapsed .logo-text {
+			display: none;
+		}
+
+		.sidebar.collapsed .nav-links {
+			padding: var(--space-sm);
+		}
+
+		.sidebar.collapsed .nav-links a {
+			justify-content: center;
+			padding: var(--space-sm);
+		}
+
+		.sidebar.collapsed .nav-links a span:not(.nav-icon),
+		.sidebar.collapsed .username-text {
+			/* Hidden visually, never removed: an icon rail whose links are
+			   `display: none` apart from their icon is a row of anonymous "link"
+			   announcements. The `title` on each link is what a pointer user gets. */
 			position: absolute;
 			width: 1px;
 			height: 1px;
@@ -395,13 +375,34 @@
 			border: 0;
 		}
 
-		.sidebar-footer {
-			padding: var(--space-md) var(--space-sm);
+		.sidebar.collapsed .sidebar-footer {
+			justify-content: center;
+			padding: var(--space-sm);
 		}
 
-		.version {
-			display: block;
-			text-align: center;
+		.sidebar.collapsed .footer-actions {
+			flex-direction: column;
+		}
+	}
+
+	/* --- Off-canvas drawer, narrow screens ---------------------------------- */
+	@media (max-width: 768px) {
+		.sidebar {
+			width: 264px;
+			transform: translateX(-100%);
+			box-shadow: var(--shadow-popover);
+		}
+
+		.sidebar.open {
+			transform: none;
+		}
+
+		.collapse-toggle {
+			display: none;
+		}
+
+		.close-toggle {
+			display: inline-flex;
 		}
 	}
 </style>

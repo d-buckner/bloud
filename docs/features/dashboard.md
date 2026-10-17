@@ -44,9 +44,9 @@ A launcher or a remote install of a catalog app renders as a `LauncherTile`
 and is not an installed app, so it gets its own affordances rather than the
 lifecycle ones:
 
-- **Add** lives in the page header grouped with **Add widget** in one action
-  cluster, not in the catalog. An external app is not a catalog entry, and
-  putting it in the catalog list made it look like one: the same card shape,
+- **Add** lives in the page header behind one **Add** menu with **Widget** and
+  **External app**, not in the catalog. An external app is not a catalog entry,
+  and putting it in the catalog list made it look like one: the same card shape,
   the same place you go to install, and no install behind it.
 - **Right-click** opens a menu with **Configure** and **Remove**. Configure
   edits the record the operator declared: name and endpoint always, the icon

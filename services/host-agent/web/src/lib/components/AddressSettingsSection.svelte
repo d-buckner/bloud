@@ -167,7 +167,7 @@
 	   settings section reads the same rule. Address is the first section, so it
 	   has no separator above it. */
 	.section-description {
-		margin: 0 0 var(--space-xl) 0;
+		margin: 0 0 var(--space-md) 0;
 		color: var(--color-text-secondary);
 		font-size: 0.9375rem;
 		line-height: 1.5;

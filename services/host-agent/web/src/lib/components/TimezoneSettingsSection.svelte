@@ -180,17 +180,11 @@
 </section>
 
 <style>
-	/* The section shell (measure, heading) comes from `base.css`, where every
-	   settings section reads the same rule. This section follows another, so it
-	   carries the separator of its own. */
-	.timezone-section {
-		margin-top: var(--space-2xl);
-		padding-top: var(--space-2xl);
-		border-top: 1px solid var(--color-border);
-	}
-
+	/* The section shell (heading, measure) comes from `base.css`. The settings
+	   grid owns the spacing between sections, so this section carries no rule of
+	   its own any more. */
 	.section-description {
-		margin: 0 0 var(--space-xl) 0;
+		margin: 0 0 var(--space-md) 0;
 		color: var(--color-text-secondary);
 		font-size: 0.9375rem;
 		line-height: 1.5;

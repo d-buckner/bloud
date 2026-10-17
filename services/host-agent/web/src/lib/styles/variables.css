@@ -24,10 +24,6 @@
 	--color-text: #1C1917;
 	--color-text-secondary: #57534E;
 	--color-text-muted: #6E6A66;
-	/* Not text. The retired muted value stays available for what is genuinely
-	   decoration: a glyph inside a control that already has its own label, a
-	   hover border. Anything that says a word uses --color-text-muted. */
-	--color-text-faint: #A8A29E;
 	--color-border: #E7E5E4;
 	--color-border-strong: #D6D3D1;
 	--color-border-subtle: #F0EFED;
@@ -159,7 +155,6 @@
 	--color-text: #F5F4F1;
 	--color-text-secondary: #C6C1BB;
 	--color-text-muted: #A09A93;
-	--color-text-faint: #8B857E;
 	--color-border: #3D3934;
 	--color-border-strong: #57534E;
 	--color-border-subtle: #2C2926;

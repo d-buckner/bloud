@@ -293,7 +293,7 @@
 	}
 
 	.capability-description {
-		margin: 0 0 var(--space-lg) 0;
+		margin: 0 0 var(--space-md) 0;
 		color: var(--color-text-secondary);
 		font-size: 0.875rem;
 		line-height: 1.5;
@@ -308,7 +308,7 @@
 	.capability-form {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-lg);
+		gap: var(--space-md);
 	}
 
 	.form-field {

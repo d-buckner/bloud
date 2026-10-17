@@ -41,6 +41,16 @@
 	const launchers = select((s) => s.launchers.items);
 	const widgets = select(enabledWidgetIds);
 
+	// The Add menu. One control for the two things a home screen can gain, rather
+	// than two buttons whose labels both start with "Add".
+	let addMenuOpen = $state(false);
+	let addMenuEl = $state<HTMLDivElement | null>(null);
+
+	function closeAddMenu(event: MouseEvent) {
+		if (addMenuEl && event.target instanceof Node && addMenuEl.contains(event.target)) return;
+		addMenuOpen = false;
+	}
+
 	// Context menu state
 	let contextMenuApp = $state<App | null>(null);
 	let contextMenuPos = $state({ x: 0, y: 0 });
@@ -91,6 +101,8 @@
 
 	onMount(() => {
 		mounted = true;
+		document.addEventListener('click', closeAddMenu);
+		return () => document.removeEventListener('click', closeAddMenu);
 	});
 
 	// Clicking an in-flight or unhealthy tile opens the live install view
@@ -220,18 +232,54 @@
 			<h1>Home</h1>
 			<p class="subtitle">{subtitle}</p>
 		</div>
-		<!-- Both carry the plus because the glyph names the action, not the kind of
-		     thing added: each button puts something new on the grid, and an
-		     external app is as much an addition as a widget is. -->
+		<!-- One Add control with a menu, not two buttons whose labels both start
+		     with "Add". Each item puts something new on the grid, and an external
+		     app is as much an addition as a widget is, so the menu names the kind
+		     and the button names the action. -->
 		<div class="header-actions">
-			<Button variant="secondary" size="sm" onclick={() => (showWidgetPicker = true)}>
-				<Icon name="plus" size={15} />
-				Add widget
-			</Button>
-			<Button variant="secondary" size="sm" onclick={() => (showExternalAppModal = true)}>
-				<Icon name="plus" size={15} />
-				Add external app
-			</Button>
+			<div class="add-menu" bind:this={addMenuEl}>
+				<Button
+					variant="secondary"
+					size="sm"
+					aria-haspopup="menu"
+					aria-expanded={addMenuOpen}
+					onclick={() => (addMenuOpen = !addMenuOpen)}
+					onkeydown={(event) => {
+						if (event.key === 'Escape') addMenuOpen = false;
+					}}
+				>
+					<Icon name="plus" size={15} />
+					Add
+				</Button>
+				{#if addMenuOpen}
+					<div class="add-menu-list" role="menu" aria-label="Add to home">
+						<button
+							class="add-menu-item"
+							type="button"
+							role="menuitem"
+							onclick={() => {
+								addMenuOpen = false;
+								showWidgetPicker = true;
+							}}
+						>
+							<Icon name="grid" size={16} />
+							Widget
+						</button>
+						<button
+							class="add-menu-item"
+							type="button"
+							role="menuitem"
+							onclick={() => {
+								addMenuOpen = false;
+								showExternalAppModal = true;
+							}}
+						>
+							<Icon name="external-link" size={16} />
+							External app
+						</button>
+					</div>
+				{/if}
+			</div>
 		</div>
 	</header>
 
@@ -319,31 +367,6 @@
 />
 
 <style>
-	.page {
-		width: 100%;
-		/* Wide enough for six comfortable columns, narrow enough that tiles
-		   stay tile-sized on a large display. */
-		max-width: 1300px;
-		margin: 0 auto;
-		padding: var(--space-2xl) var(--space-xl);
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: var(--space-lg);
-		margin-bottom: var(--space-xl);
-		padding-bottom: var(--space-lg);
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.header-content h1 {
-		margin: 0;
-		font-size: 1.75rem;
-		font-weight: 500;
-	}
-
 	/* The two add actions travel together. Without this wrapper the header has
 	   three flex children under `justify-content: space-between`, which puts
 	   one of them in the middle of the row: a button floating out over the
@@ -354,24 +377,44 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
+		flex-wrap: wrap;
 	}
 
-	.subtitle {
-		margin: var(--space-xs) 0 0;
-		font-family: var(--font-sans);
-		font-size: 0.8125rem;
-		color: var(--color-text-muted);
+	.add-menu {
+		position: relative;
 	}
 
-	@media (max-width: 768px) {
-		.page {
-			padding: var(--space-xl) var(--space-md);
-		}
+	.add-menu-list {
+		position: absolute;
+		top: calc(100% + 4px);
+		right: 0;
+		z-index: 30;
+		display: flex;
+		flex-direction: column;
+		min-width: 190px;
+		padding: var(--space-xs);
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-popover);
+	}
 
-		.page-header {
-			flex-direction: column;
-			align-items: flex-start;
-			gap: var(--space-md);
-		}
+	.add-menu-item {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		background: none;
+		border: none;
+		border-radius: var(--radius-sm);
+		font-family: var(--font-serif);
+		font-size: 0.875rem;
+		color: var(--color-text);
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.add-menu-item:hover {
+		background: var(--color-bg-subtle);
 	}
 </style>

@@ -214,10 +214,26 @@
 />
 
 <style>
-	/* The section shell (measure, heading) comes from `base.css`, where every
-	   settings section reads the same rule. */
+	/* The list and the Add User form sit side by side once there is room, so a
+	   full-width section does not stretch one list across the whole page. The
+	   heading and any error span both columns. */
+	.users-section {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+		gap: var(--space-md) var(--space-xl);
+		align-items: start;
+	}
+
+	.users-section > h2,
+	.users-section > .section-description,
+	.users-section > .error-message {
+		grid-column: 1 / -1;
+	}
+
+	/* The section heading size comes from `base.css`, where every settings section
+	   reads the same rule. */
 	.section-description {
-		margin: 0 0 var(--space-xl) 0;
+		margin: 0 0 var(--space-md) 0;
 		color: var(--color-text-secondary);
 		font-size: 0.9375rem;
 		line-height: 1.5;
@@ -229,17 +245,13 @@
 		color: var(--color-text-muted);
 	}
 
-	.users-section {
-		margin-top: var(--space-2xl);
-		padding-top: var(--space-2xl);
-		border-top: 1px solid var(--color-border);
-	}
-
+	/* The settings grid owns the spacing between sections, so this one carries no
+	   rule of its own. */
 	.users-list {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
-		margin-bottom: var(--space-xl);
+		margin-bottom: var(--space-md);
 	}
 
 	.user-row {

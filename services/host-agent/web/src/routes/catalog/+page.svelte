@@ -207,31 +207,6 @@
 />
 
 <style>
-	.page {
-		padding: var(--space-2xl) var(--space-xl);
-	}
-
-	.page-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		margin-bottom: var(--space-2xl);
-		padding-bottom: var(--space-xl);
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.header-content h1 {
-		margin: 0;
-		font-size: 1.75rem;
-		font-weight: 500;
-	}
-
-	.subtitle {
-		margin: var(--space-xs) 0 0 0;
-		color: var(--color-text-muted);
-		font-style: italic;
-	}
-
 	.error-state, .empty-state {
 		padding: var(--space-2xl);
 		text-align: center;
@@ -263,11 +238,15 @@
 	}
 
 	/* Search and Filters */
+	/* Search and filters share one row on a wide screen and stack on a narrow
+	   one. As a column they left a long empty run to the right of the pills. */
 	.filters {
 		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-		margin-bottom: var(--space-xl);
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-sm) var(--space-md);
+		margin-bottom: var(--space-md);
 	}
 
 	.filters-row {
@@ -378,27 +357,17 @@
 
 	.apps-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-		gap: var(--space-lg);
+		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+		gap: var(--space-md);
 	}
 
 	@media (max-width: 768px) {
 		.apps-grid { grid-template-columns: 1fr; }
-		.page-header {
-			flex-direction: column;
-			gap: var(--space-md);
-			align-items: flex-start;
-		}
 	}
 
-	/* The page gutter is 32px a side, which is 64px of a 390px screen before any
-	   content. Trimming it is what gives the chip row and the search field room
-	   to stop pushing the document wider than the viewport. */
+	/* The search field has no room left once the page gutter and the field's own
+	   cap are both in play, so the cap goes at the narrow end. */
 	@media (max-width: 480px) {
-		.page {
-			padding: var(--space-lg) var(--space-md);
-		}
-
 		.search-wrapper {
 			max-width: none;
 		}
