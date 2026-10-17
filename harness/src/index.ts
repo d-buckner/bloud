@@ -18,6 +18,7 @@ export * from './api';
 // whole host-agent client (`api.installApp`) without importing each function.
 export * as api from './api';
 export * from './auth';
+export * from './check';
 export * from './config';
 export * from './dashboard';
 export * from './diagnostics';
@@ -25,5 +26,6 @@ export * from './forward-auth';
 export * from './login';
 export * from './origin';
 export * from './page-objects';
+export * from './report';
 export * from './session';
 export * from './wait';

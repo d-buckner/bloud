@@ -39,6 +39,8 @@
     "test:go:apps": "cd apps && go run gotest.tools/gotestsum --format testdox ./...",
     "test:go:all": "npm run test:go && npm run test:go:apps",
     "test:ts": "npm run test --workspace=@bloud/host-agent-web",
+    "check:harness": "npm --prefix harness run check",
+    "test:harness": "npm --prefix harness test",
     "test:go:coverage": "cd services/host-agent && go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1",
     "license:check": "node scripts/license-header.mjs check",
     "license:fix": "node scripts/license-header.mjs fix",

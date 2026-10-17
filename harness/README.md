@@ -23,8 +23,11 @@ design and the full command reference.
 |---|---|
 | `src/` | The library. Type-only import of `@playwright/test`, no run-time Playwright. |
 | `src/index.ts` | The public surface. |
-| `cli/` | The recipe runner: a Playwright config and `recipe.spec.ts`. |
+| `src/check.ts` | The check contract: the collector, its assertions, and the report. |
+| `cli/` | The recipe runner: a Playwright config, `args.mjs`, and `recipe.spec.ts`. |
 | `bin/browser.mjs` | The agent entry. It sets the recipe in the environment and runs `cli/`. |
+| `checks/` | The built-in checks: `app-health`, `dashboard`, `settings-roundtrip`, `api-smoke`. |
+| `test/` | Unit tests for the check contract, the report text, and the command line. |
 
 ## Install
 
@@ -55,12 +58,55 @@ node harness/bin/browser.mjs shot bloud --full      # full dashboard shot
 node harness/bin/browser.mjs review immich          # url, title, text, problems
 node harness/bin/browser.mjs verify jellyfin        # exit nonzero on problems
 node harness/bin/browser.mjs review https://x --anon
+node harness/bin/browser.mjs apps                   # what is installed, and its state
+node harness/bin/browser.mjs status                 # health, setup, address, clock
+node harness/bin/browser.mjs api GET /api/system/diagnostics
+node harness/bin/browser.mjs run app-health jellyfin  # a targeted check
+node harness/bin/browser.mjs checks                 # list the built-in checks
 ```
 
 Run `node harness/bin/browser.mjs --help` for the options.
 
 Screenshots land in `.bloud/screenshots/` unless `--out` names another
 directory.
+
+### Write a check
+
+A check is one plain JavaScript file that default-exports a function. The runner
+signs in, opens the target, calls your function, prints one line per assertion,
+and exits nonzero when any assertion failed.
+
+```js
+// check-immich.mjs
+export default async function ({ api, check, open }) {
+  const status = await api.getAppStatus('immich');
+  check.ok(status === 'running', 'the orchestrator reports Immich as running', `its state is "${status}"`);
+
+  await open('immich');
+  await check.textIncludes(/login|assets/i, 'the Immich page renders its own content');
+  await check.noProblemsIgnoringSignIn('Immich loaded without problems');
+}
+```
+
+```bash
+node harness/bin/browser.mjs run ./check-immich.mjs
+```
+
+The context hands over the assertions (`check`), the page, the API client, and
+the library, so the common case needs no import. `harness/checks/` holds the
+built-ins, and each one is a worked example. The full reference, including every
+assertion and what a check reports, is in
+[docs/guides/browser-harness.md](../docs/guides/browser-harness.md#write-a-targeted-check).
+
+## Tests
+
+```bash
+npm --prefix harness test        # vitest: the check contract, the report, the command line
+npm --prefix harness run check   # tsc --noEmit
+```
+
+These tests drive no browser. The fast validation tier runs both when a file
+under `harness/` changes.
 
 ## Environment
 

@@ -56,6 +56,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The fast tier runs the browser harness unit tests, and the harness owns
+      # its own install: it is not a root workspace, because it carries its own
+      # Playwright. No browsers here: these tests drive no browser.
+      - name: Install the browser harness
+        run: npm --prefix harness ci
+
       - name: Build the bloud CLI
         run: npm run cli:build
 

@@ -20,6 +20,11 @@ export interface HarnessSessionOptions {
   signedIn?: boolean;
   /** Time to let the page settle after a navigation, in milliseconds. Default 1500. */
   settleMs?: number;
+  /**
+   * True when this session created its own browser context, so `close` may close
+   * the context and not only the page. `fork` sets it; a borrowed page never has it.
+   */
+  ownsContext?: boolean;
 }
 
 /** A filesystem-safe token for one target, for a screenshot file name. */
@@ -69,7 +74,34 @@ export class HarnessSession {
         ? '/'
         : appOrigin(target);
     await this.page.goto(url, { waitUntil: 'domcontentloaded' });
+    await this.settle();
     await this.page.waitForTimeout(this.settleMs);
+  }
+
+  /**
+   * Wait until the page has stopped moving.
+   *
+   * A fixed sleep after a navigation is the wrong wait twice over: too short for
+   * an app that bounces a visitor through the identity provider and back, and
+   * wasted on a page that renders at once. This waits for the requests to drain,
+   * then for the address to hold still, and gives up on a budget rather than
+   * forever, because an app that holds a stream open never goes quiet at all.
+   */
+  async settle(timeoutMs = 8_000): Promise<void> {
+    await this.page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => {});
+    const deadline = Date.now() + timeoutMs;
+    let last = this.page.url();
+    let stableSince = Date.now();
+    while (Date.now() < deadline) {
+      await this.page.waitForTimeout(250);
+      const url = this.page.url();
+      if (url !== last) {
+        last = url;
+        stableSince = Date.now();
+        continue;
+      }
+      if (Date.now() - stableSince >= 1_000) return;
+    }
   }
 
   /**
@@ -98,5 +130,39 @@ export class HarnessSession {
       problems: this.diag.problems_,
       pending: this.diag.pending,
     };
+  }
+
+  /**
+   * A second page in a browser context of its own, signed in or anonymous.
+   *
+   * A check that needs an anonymous look cannot take it on the run's own page:
+   * that page holds the Authentik session, and signing out of it signs out of
+   * everything behind it. The caller closes the returned session when it is done.
+   */
+  async fork(options: { signedIn?: boolean } = {}): Promise<HarnessSession> {
+    const browser = this.page.context().browser();
+    if (!browser) {
+      throw new Error('this page has no browser to fork a context from');
+    }
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const forked = new HarnessSession(page, {
+      signedIn: options.signedIn ?? true,
+      settleMs: this.settleMs,
+      ownsContext: true,
+    });
+    if (forked.signedIn) {
+      await forked.signIn();
+    }
+    return forked;
+  }
+
+  /** Close this session's page, and its context when the session created it. */
+  async close(): Promise<void> {
+    if (this.options.ownsContext) {
+      await this.page.context().close().catch(() => {});
+      return;
+    }
+    await this.page.close().catch(() => {});
   }
 }

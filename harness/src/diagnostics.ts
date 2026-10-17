@@ -67,9 +67,12 @@ export class Diagnostics {
       }
     });
     page.on('console', (msg) => {
-      if (msg.type() === 'error') {
-        this.problems.push({ kind: 'console', detail: msg.text() });
-      }
+      if (msg.type() !== 'error') return;
+      // The browser prints a console error for every failed response too. The
+      // response event already recorded that fault with its URL and its status,
+      // so keeping the mirror would report one problem twice.
+      if (/Failed to load resource/i.test(msg.text())) return;
+      this.problems.push({ kind: 'console', detail: msg.text(), url: msg.location()?.url });
     });
     page.on('pageerror', (err) => {
       this.problems.push({ kind: 'pageerror', detail: String(err).split('\n')[0] });
@@ -124,14 +127,22 @@ export class Diagnostics {
     return lines.slice(0, limit).join('\n') || '(no problems recorded)';
   }
 
-  /** Problems that mean the page is actually broken, not merely noisy. */
-  failures(): Problem[] {
+  /**
+   * Problems that mean the page is actually broken, not merely noisy.
+   *
+   * `ignore` is a caller's own filter, and it is there because a real app can
+   * answer 401 on its own session probe while an OIDC round trip is still in
+   * flight. A caller that ignores something says what it ignores; nothing is
+   * dropped silently here.
+   */
+  failures(ignore?: (problem: Problem) => boolean): Problem[] {
     return this.problems.filter(
       (p) =>
         p.kind !== 'ws' &&
         // A cancelled subresource is usually the browser abandoning a request
         // when the document navigated away, not a fault in the app.
-        !(p.kind === 'requestfailed' && /ERR_ABORTED/.test(p.detail)),
+        !(p.kind === 'requestfailed' && /ERR_ABORTED/.test(p.detail)) &&
+        !(ignore?.(p)),
     );
   }
 }
@@ -196,36 +207,96 @@ export function probeWebSocketUpgrade(
 }
 
 /**
+ * True for the 401 or 403 a page records while a sign-in round trip is in flight.
+ *
+ * An app that delegates authentication asks its own backend who the visitor is
+ * before the identity provider has answered, and the honest answer is 401. The
+ * Bloud dashboard does the same on a cold load. That is the protocol working, so
+ * a caller that wants faults and not noise filters it out, and says what it
+ * filtered: nothing is dropped silently here.
+ */
+export function isAuthRoundTripNoise(problem: Problem): boolean {
+  return (/\b40[13]\b/.test(problem.detail) || /status of a 40[13]/.test(problem.detail)) &&
+    /auth|session/i.test(`${problem.url ?? ''} ${problem.detail}`);
+}
+
+/**
+ * What an app's address actually answers, before a browser is involved.
+ *
+ * Traefik covers a dead app with Bloud's waiting page, and marks that page with
+ * the `X-Bloud-Loading` header. A browser sees a tidy page and reports success.
+ * This read tells the two apart: `loading: true` means the app is not serving and
+ * Bloud is speaking for it.
+ */
+export interface AppAnswer {
+  status: number;
+  finalUrl: string;
+  loading: boolean;
+  redirected: boolean;
+}
+
+export async function probeAppAnswer(url: string, timeoutMs = 20_000):
+  Promise<AppAnswer> {
+  const response = await fetch(url, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  return {
+    status: response.status,
+    finalUrl: response.url,
+    loading: response.headers.get('x-bloud-loading') !== null,
+    redirected: response.url !== new URL(url).origin + new URL(url).pathname,
+  };
+}
+
+/**
  * Visible text of a page, piercing open shadow roots.
  *
  * `document.body.innerText` stops at a shadow boundary, so a page built from
  * web components (Authentik's flow interface, Home Assistant's whole shell)
  * reports empty text while rendering perfectly. Reading it as empty and
  * concluding "the page did not load" is the specific mistake this prevents.
+ *
+ * The read walks every element that is rendered, through a shadow root wherever
+ * one appears, and keeps the text of the leaf nodes only. A slotted tree reaches
+ * the same string twice, and an ancestor repeats everything under it, so both
+ * are dropped.
  */
 export async function visibleText(page: Page): Promise<string> {
   const read = () =>
     page.evaluate(() => {
       const out: string[] = [];
+      // A style or a script node carries text, and none of it is content a
+      // reader meant to see.
+      const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'HEAD', 'META', 'LINK']);
       const walk = (root: Document | ShadowRoot | Element): void => {
         for (const node of Array.from(root.children) as HTMLElement[]) {
-          if (node.shadowRoot) {
-            walk(node.shadowRoot);
-          }
+          if (skip.has(node.tagName)) continue;
           const style = getComputedStyle(node);
-          if (style.display === 'none' || style.visibility === 'hidden') {
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
             continue;
           }
-          const text = (node.innerText ?? '').trim();
-          if (text) {
-            out.push(text);
+          // A custom element keeps its own tree behind a shadow root, and the
+          // host's `innerText` stops at that boundary. Walk both trees: the
+          // shadow root when there is one, the light children otherwise.
+          if (node.shadowRoot) {
+            walk(node.shadowRoot);
+          } else if (node.children.length > 0) {
+            walk(node);
+          }
+          // Only a node with no children of its own contributes text, so an
+          // ancestor does not repeat everything under it.
+          if (node.children.length === 0 && !node.shadowRoot) {
+            const text = (node.textContent ?? '').replace(/\s+/g, ' ').trim();
+            if (text) out.push(text);
           }
         }
       };
       if (document.body) {
         walk(document.body);
       }
-      // Siblings repeat their ancestors' text; dedupe keeps the output readable.
+      // The same string can be reached twice through a slotted tree, so dedupe
+      // keeps the output readable.
       return [...new Set(out)].join('\n');
     });
 
