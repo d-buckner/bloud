@@ -49,15 +49,18 @@ const (
 	memoryProviderKey = "provider"
 
 	// memoryBankID and memoryProviderMode are the values Bloud adopts when the
-	// plugin's config carries neither. They match the plugin's own defaults, and
-	// they are written down for the reason every other default is: an upstream
-	// that changed one would move where every fact the agent learned is stored,
-	// with nothing in this repository showing it.
+	// plugin's config carries neither.
 	//
-	// The bank is per-harness on purpose. A bank is a memory, and the one the
-	// agent keeps for itself should not be the one an operator's other tools
-	// write to.
-	memoryBankID       = "hermes"
+	// `default` is Hindsight's own bank: the one the Control Plane creates and
+	// shows, and where an operator's memory already is. Writing the plugin's
+	// default instead (a bank named after the harness) would leave the agent
+	// starting empty beside the facts the operator already has, and put two banks
+	// in a UI that reads as one memory.
+	//
+	// `hybrid` matches the plugin's own default, and it is written down for the
+	// reason every default is: an upstream that changed it would move what the
+	// agent remembers between turns, with nothing in this repository showing it.
+	memoryBankID       = "default"
 	memoryProviderMode = "hybrid"
 
 	// memoryPluginRecord is the file Hermes writes inside an installed plugin,

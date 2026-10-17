@@ -72,7 +72,7 @@ catalog declares. An operator who pointed Hermes at another memory server keeps 
   "mode": "local_external",
   "api_url": "http://localhost:9999",
   "api_key": "<the bearer the provider published>",
-  "bank_id": "hermes",
+  "bank_id": "default",
   "memory_mode": "hybrid"
 }
 ```
@@ -80,7 +80,9 @@ catalog declares. An operator who pointed Hermes at another memory server keeps 
 `mode`, `api_url`, and `api_key` are Bloud's and are rewritten on every pass, so a
 rotated bearer or a moved address lands. `bank_id` and `memory_mode` are
 adopt-once, because they say where the memory lives and how much of it is
-injected.
+injected. Bloud writes `default`, which is Hindsight's own bank: the one the
+Control Plane creates, and where an operator's memory already is. A bank named
+after the harness would start the agent empty beside the facts they have.
 
 The file is written by the consumer rather than by the provider: an app never
 writes another app's files (invariant 15).
