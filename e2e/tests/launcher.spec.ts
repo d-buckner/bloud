@@ -6,11 +6,19 @@ import { addLauncher, listLaunchers, removeLauncher } from '@bloud/browser-harne
 // tile is added through the API (the settings form is a thin wrapper over the
 // same endpoint), and it must show up on the home grid and open its URL.
 test.describe('external app launcher', () => {
-  test.beforeEach(async () => {
+  // A launcher is instance state, and the suite runs against a shared instance.
+  // Clearing before each test alone left the tile the test added sitting on the
+  // home grid after the run: that is how a "Bloud Catalog" tile ended up on a
+  // developer's dashboard, looking like a product feature rather than a test
+  // leftover. Clear after each test as well.
+  async function clearLaunchers() {
     for (const launcher of await listLaunchers()) {
       await removeLauncher(launcher.id);
     }
-  });
+  }
+
+  test.beforeEach(clearLaunchers);
+  test.afterEach(clearLaunchers);
 
   test('a launcher tile opens its URL', async ({ authenticatedPage }) => {
     const page = authenticatedPage;
