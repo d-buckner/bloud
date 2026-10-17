@@ -87,6 +87,8 @@ func TestPreStartWritesTheMemoryProviderAndItsConfig(t *testing.T) {
 		"the plugin dials the host loopback: the harness shares the host network namespace, so a container name will not resolve")
 	assert.Equal(t, "memory-bearer", cfg["api_key"])
 	assert.Equal(t, memoryBankID, cfg["bank_id"])
+	assert.Equal(t, "default", cfg["bank_id"],
+		"the bank decides where the operator's memory lives; Hindsight's own default bank is the one they already have")
 	assert.Equal(t, memoryProviderMode, cfg["memory_mode"])
 }
 
