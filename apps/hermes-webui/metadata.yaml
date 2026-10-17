@@ -182,6 +182,18 @@ containers:
       # /data is this container's private state directory that Hermes has never
       # seen. Naming it here is what makes the two containers agree.
       HERMES_WEBUI_ATTACHMENT_DIR: /bloud-hermes/inbox
+      # The workspace this app browses, edits, and serves. It is the tree Hermes
+      # pins its own working directory to, mounted here at the same path, so a file
+      # the agent writes is a file this app can show. Without it the app browses a
+      # tree the agent never writes, which is exactly the split that made agent
+      # artifacts unreachable. /workspace is this app's own convention, so an
+      # existing install's stored workspace stays valid.
+      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
+      # The roots the app may snapshot and serve a file from. The workspace covers
+      # what the agent writes; the cache covers tool-generated media (browser
+      # screenshots, MCP image blocks, TTS), whose MEDIA: tags name the cache path.
+      # Both are mounted below. The separator is os.pathsep, a colon on POSIX.
+      MEDIA_ALLOWED_ROOTS: /workspace:/opt/data/cache
     ports:
       - host: 8787
         container: 8787
@@ -198,6 +210,18 @@ containers:
       # neither container mounts the other's state (invariant 15).
       - source: "{{dataDir}}/shared-trees/hermes/inbox"
         destination: /bloud-hermes/inbox
+      # The agent's working directory, and the path HERMES_WEBUI_DEFAULT_WORKSPACE
+      # names above. Read-write, because the app's file browser and editor own the
+      # same files the agent edits: it is a Bloud-owned shared tree, not the agent's
+      # private state (invariant 15).
+      - source: "{{dataDir}}/shared-trees/hermes/workspace"
+        destination: /workspace
+      # The agent's media cache, read-only here. This app only reads it, so the
+      # read-only mount keeps the app's own delete, rename, and move APIs away from
+      # files the agent owns. Hermes mounts the same tree read-write.
+      - source: "{{dataDir}}/shared-trees/hermes/cache"
+        destination: /opt/data/cache
+        options: [ro]
     healthCheck:
       # /health is in the app's PUBLIC_PATHS, so the probe answers without a
       # session. Safe for external probing by design.

@@ -93,6 +93,9 @@ func NodePublishesAppPort(md Metadata, node string) bool {
 type MetadataVolume struct {
 	Source      string `yaml:"source"`
 	Destination string `yaml:"destination"`
+	// Options are the mount flags, such as `ro`. A shared tree the reader must
+	// not write is declared read-only here, so a test can pin which side owns it.
+	Options []string `yaml:"options"`
 }
 
 // LoadMetadata reads and parses the metadata.yaml in dir. The apps module

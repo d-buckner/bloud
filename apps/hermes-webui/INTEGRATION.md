@@ -15,6 +15,8 @@ with a password Bloud mints and reveals once.
   routed `/v1` prefix on Hermes' subdomain
 - Uploads: a shared inbox at `/bloud-hermes/inbox`, mounted identically in both
   containers
+- Artifacts: a shared workspace at `/workspace` and a read-only media cache at
+  `/opt/data/cache`, so a file the agent produces is a file this app serves
 - Client credential: `clientPassword`, `reveal: once`, `rotate: bloud`
 
 The browser SSO criterion (SC1) and the phone-connection criterion (SC2) have
@@ -220,15 +222,42 @@ looks perfectly healthy. The sticky bit is there because a world-writable direct
 otherwise lets either side unlink the other's files, and this app's own delete API
 reaches it. See `apps/hermes/INTEGRATION.md` for why it must be a plain `os.Chmod`.
 
-What still does not work, so a later reader does not rediscover it: files the
-**agent** produces cannot be shown or downloaded. This app's `/api/file/raw`
-serves only `$HERMES_HOME`, `/tmp`, the last workspace, and
-`MEDIA_ALLOWED_ROOTS`; here `$HERMES_HOME` is `/root/.hermes` (unset, absent) and
-the last workspace is this container's own empty `/workspace`, so nothing that
-lives under the agent's `/opt/data/workspace` is reachable. Fixing that needs
-the agent's workspace mounted here too plus `MEDIA_ALLOWED_ROOTS`, and it is a
-bigger trust question: this app ships `/api/file/delete`, `rename`, and `move`,
-so anything mounted read-write is deletable by every signed-in user.
+## The shared workspace and the shared media cache
+
+Two trees make an agent-produced artifact visible here. Both are Bloud-owned
+shared trees, not either app's private state.
+
+| Tree | Mounted here | Mounted in Hermes | Access here |
+|---|---|---|---|
+| `shared-trees/hermes/workspace` | `/workspace` | `/workspace` | read-write |
+| `shared-trees/hermes/cache` | `/opt/data/cache` | `/opt/data/cache` | read-only |
+
+`HERMES_WEBUI_DEFAULT_WORKSPACE=/workspace` names the workspace, and
+`MEDIA_ALLOWED_ROOTS=/workspace:/opt/data/cache` allows `/api/media` to serve
+from both. The two settings are static, so they live in `metadata.yaml` beside
+the mounts rather than in the generated dotenv file.
+
+Hermes pins its own working directory to the same `/workspace` with
+`TERMINAL_CWD` and widens `HERMES_WRITE_SAFE_ROOT` to write there. See
+`apps/hermes/INTEGRATION.md` for why the path is `/workspace` and not a
+Bloud-chosen one.
+
+The workspace mount is read-write because this app's file browser and editor own
+the same files the agent edits. The cache mount is read-only because this app
+only reads it: `/api/file/delete`, `rename`, and `move` must not reach files the
+agent owns.
+
+`PreStart` widens the workspace to `0777`, with no sticky bit. The app resolves
+`HERMES_WEBUI_DEFAULT_WORKSPACE` only when the directory is writable, so a `0755`
+mount source owned by the host agent would make the app silently fall back to its
+own tree. It does not chmod the cache: this app only reads it.
+
+What still does not work, so a later reader does not rediscover it: a tool that
+writes a deliverable outside the two trees is unreachable. A skill that writes
+its own scratch directory under `$HOME`, for example
+`~/.config/browser-harness/tmp/shot.png`, is not covered and `/api/media`
+answers 403 for it. The built-in browser screenshot tool writes under
+`/opt/data/cache/screenshots`, which is shared.
 
 ## Icon
 
