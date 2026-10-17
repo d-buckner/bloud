@@ -16,6 +16,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/timezone"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 )
 
@@ -134,6 +135,9 @@ type Orchestrator struct {
 	settings       store.SettingsStoreInterface
 	externalApps   store.ExternalAppStoreInterface
 	onHostsChanged func()
+	// timezone is the live instance clock, read when a container spec is built.
+	// Nil means Bloud states no zone, which is the same as an empty one.
+	timezone *timezone.State
 
 	// sessionRevokes carries session-revoke requests from the drain phase to
 	// the convergence pass that performs them. See session_revoke.go.
@@ -216,6 +220,7 @@ func NewOrchestrator(
 		settings:        config.Stores.Settings,
 		externalApps:    config.Stores.ExternalApps,
 		onHostsChanged:  config.Hosts.OnHostsChanged,
+		timezone:        config.Runtime.Timezone,
 		queue:           NewIntentQueue(DefaultDebounce),
 		events:          config.Tuning.Events,
 		started:         make(chan struct{}),

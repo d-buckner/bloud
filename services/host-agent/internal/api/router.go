@@ -312,7 +312,7 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 		// events module reads the home module rather than a second builder.
 		events: NewEventsModule(deps.eventsBus, homeMod.GetLayout, logger),
 		settings: NewSettingsModule(deps.prefsStore, deps.sessionStore, deps.authentik,
-			deps.orchCaller, deps.authRef, cfg.Hosts, cfg.Settings, cfg.Port, logger),
+			deps.orchCaller, deps.authRef, cfg.Hosts, cfg.Settings, cfg.Timezone, cfg.Port, logger),
 		ai: &aiSettingsModule{
 			settingsStore: cfg.Settings,
 			secrets:       deps.secrets,

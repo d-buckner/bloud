@@ -8,6 +8,22 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
+// applyExternalAppIntent dispatches the three external-app intents to their
+// appliers. It exists so the drain switch carries one arm for the subsystem
+// rather than three: the external registry is a separate concern from the
+// lifecycle, and the drain loop should read as a list of concerns, not as a
+// list of every record type in the queue.
+func (o *Orchestrator) applyExternalAppIntent(intent Intent) {
+	switch i := intent.(type) {
+	case AddExternalAppIntent:
+		o.applyAddExternalAppIntent(i)
+	case UpdateExternalAppIntent:
+		o.applyUpdateExternalAppIntent(i)
+	case RemoveExternalAppIntent:
+		o.applyRemoveExternalAppIntent(i)
+	}
+}
+
 // applyAddExternalAppIntent persists a new external app and its credentials.
 //
 // That is the whole effect. There is no container to build, no route to emit,

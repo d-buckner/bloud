@@ -20,6 +20,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/timezone"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -66,6 +67,9 @@ type ServerConfig struct {
 	// derived); nil disables the address endpoints and URL resolution.
 	Hosts    *hostset.State
 	Settings store.SettingsStoreInterface
+	// Timezone is the live instance clock the address endpoints read and the
+	// reconciler builds containers from; nil reports and accepts no zone.
+	Timezone *timezone.State
 	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
 	// for host-agent API requests (e.g. QEMU slirp NAT gateway).
 	TrustedLocalNets []string

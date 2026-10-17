@@ -33,6 +33,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/timezone"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 )
 
@@ -86,6 +87,10 @@ type Input struct {
 	// SSOBaseURL/SSOAuthentikURL/SSOIssuerURL strings, so admin host
 	// changes take effect without a restart.
 	Hosts *hostset.State
+
+	// Timezone is the live instance clock. Every managed container gets it as
+	// TZ, so a change recreates them. Nil means Bloud states no zone.
+	Timezone *timezone.State
 
 	// AppsDir is the catalog directory on disk.
 	AppsDir string
@@ -253,6 +258,7 @@ func buildOrchestratorConfig(
 			TemplateVars: in.TemplateVars,
 			TraefikGen:   traefikgen.NewGenerator(traefikConfigPath),
 			TraefikPort:  in.TraefikPort,
+			Timezone:     in.Timezone,
 		},
 		Stores: orchestrator.StoresConfig{
 			AppStore:     in.AppStore,

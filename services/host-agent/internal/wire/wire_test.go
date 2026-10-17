@@ -19,6 +19,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/timezone"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -71,16 +72,19 @@ func baseInput(t *testing.T) Input {
 	appsDir := t.TempDir()
 
 	return Input{
-		Logger:            slog.New(slog.DiscardHandler),
-		DB:                db,
-		AppStore:          store.NewAppStore(db),
-		CatalogCache:      catalog.NewMemoryCache(),
-		Registry:          configurator.NewRegistry(slog.New(slog.DiscardHandler), configurator.Deps{}),
-		ContainerRuntime:  &recordingRuntime{},
-		EventsBus:         eventbus.New(),
-		Authentik:         authentik.NewClient("http://127.0.0.1:9999", "test-token"),
-		Settings:          store.NewSettingsStore(db),
-		Hosts:             hostset.NewState(hostset.Default()),
+		Logger:           slog.New(slog.DiscardHandler),
+		DB:               db,
+		AppStore:         store.NewAppStore(db),
+		CatalogCache:     catalog.NewMemoryCache(),
+		Registry:         configurator.NewRegistry(slog.New(slog.DiscardHandler), configurator.Deps{}),
+		ContainerRuntime: &recordingRuntime{},
+		EventsBus:        eventbus.New(),
+		Authentik:        authentik.NewClient("http://127.0.0.1:9999", "test-token"),
+		Settings:         store.NewSettingsStore(db),
+		Hosts:            hostset.NewState(hostset.Default()),
+		// An empty state, not nil: the clock is always wired in the product path,
+		// and the completeness guard must keep failing a build that forgot it.
+		Timezone:          timezone.NewState(""),
 		AppsDir:           appsDir,
 		DataDir:           t.TempDir(),
 		TraefikDynamicDir: t.TempDir(),
