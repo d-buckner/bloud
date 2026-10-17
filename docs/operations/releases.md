@@ -64,7 +64,7 @@ because the bodies live in the forge and not in git.
   add the section to each one and run again.
 - no pull request since the last tag carries an entry. A release with nothing to
   say is a release that should not exist yet.
-- the version already has a section.
+- the version already has a section, or is not newer than the newest one.
 
 Pick the bump by what changed:
 

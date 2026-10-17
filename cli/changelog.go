@@ -258,6 +258,27 @@ func parseCollectFlags(args []string) (changelogFlags, error) {
 	return flags, nil
 }
 
+// resolveCollectVersion decides which version `collect` cuts, and refuses one
+// the document cannot take.
+func resolveCollectVersion(doc *changelogDoc, flags changelogFlags) (string, error) {
+	version := flags.version
+	if version == "" {
+		return nextVersion(doc, flags.bump)
+	}
+	if !semverTagRe.MatchString(version) {
+		return "", fmt.Errorf("%q is not a release version (use the form v1.2.3)", version)
+	}
+	if _, taken := doc.find(version); taken {
+		return "", fmt.Errorf("%s already has a section for %s", changelogFile, version)
+	}
+	// A section below the newest one would sit under it and fail `--check`, so the
+	// run says so now rather than writing a document nobody can publish from.
+	if head, ok := doc.newest(); ok && !semverGreater(version, head.Version) {
+		return "", fmt.Errorf("%s is not newer than %s, the newest section (pass a higher version, or a different --bump)", version, head.Version)
+	}
+	return version, nil
+}
+
 // runChangelogCollect cuts the next release section from the pull requests
 // merged since the last tag and writes it into the changelog.
 func runChangelogCollect(args []string) int {
@@ -276,16 +297,9 @@ func runChangelogCollect(args []string) int {
 		errorf("%v", err)
 		return 1
 	}
-	version := flags.version
-	if version == "" {
-		version, err = nextVersion(doc, flags.bump)
-		if err != nil {
-			errorf("%v", err)
-			return 1
-		}
-	}
-	if _, taken := doc.find(version); taken {
-		errorf("%s already has a section for %s", changelogFile, version)
+	version, err := resolveCollectVersion(doc, flags)
+	if err != nil {
+		errorf("%v", err)
 		return 1
 	}
 	since := flags.since
