@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { test } from '@playwright/test';
+import { expect, request, test } from '@playwright/test';
 import type { BrowserContext, Page } from '@playwright/test';
 import {
   appHost,
+  appOrigin,
   assertForwardAuthGate,
   assertInstalledInCatalog,
   assertRunningTile,
+  CREDENTIALS,
   ensureInstalled,
   ensureSignedIn,
+  getAppSSOStrategy,
+  LDAP_ATTEMPT_TIMEOUT_MS,
+  LDAP_SETTLE_TIMEOUT_MS,
   openAppFromHome,
   signInThroughForwardAuth,
+  waitForLdapBackedAnswer,
 } from '@bloud/browser-harness';
 
 /**
@@ -41,6 +47,23 @@ export interface ForwardAuthRungs {
   title: RegExp;
   /** Rendered-content selector that proves the app's own UI mounted. */
   appShell: string;
+}
+
+/**
+ * The app-specific values the framework's LDAP rung needs. The mechanism is
+ * shared; only these values vary per app.
+ */
+export interface LdapBackedRungs {
+  /** Method that drives the app's LDAP-backed credential check. */
+  method: string;
+  /** Path requested with the Bloud account's own credential. */
+  path: string;
+  /** Headers the protocol needs. A DAV listing needs `Depth: 0`. */
+  headers?: Record<string, string>;
+  /** The status that proves the outpost verified the credential. */
+  expectedStatus: number;
+  /** Optional substring the settled body must carry. */
+  bodyContains?: string;
 }
 
 export interface DescribeAppOptions {
@@ -78,6 +101,21 @@ export interface DescribeAppOptions {
    * first and the app is proven reachable before the gate is exercised.
    */
   forwardAuth?: Omit<ForwardAuthRungs, 'label'>;
+  /**
+   * Register the standard rung for an app that verifies a Bloud account against
+   * the identity provider's LDAP outpost.
+   *
+   * The rung is an infrastructure rung, so it runs with the convergence rungs
+   * and before the app's own tests. It waits for the app's LDAP path to settle
+   * instead of sampling it once, which is the difference between a run that
+   * waits out an outpost restart and a run that reads a warm-up stall as a
+   * broken app.
+   *
+   * The rung also reads the app's declared strategy from the catalog and fails
+   * when the app no longer declares `ldap`. That keeps the option from staying
+   * switched on after a migration and quietly asserting nothing.
+   */
+  ldap?: LdapBackedRungs;
 }
 
 /**
@@ -109,6 +147,11 @@ export interface DescribeAppOptions {
  * A forward-auth app adds `forwardAuth: { title, appShell }` and gets the
  * two ingress rungs registered for it, instead of copying the same two
  * `test(...)` blocks into every spec.
+ *
+ * An app that verifies a Bloud account over LDAP adds `ldap: { method, path,
+ * expectedStatus }` and gets the one provider-readiness rung, so it waits for
+ * the outpost instead of sampling it once and reading a warm-up stall as a
+ * broken app.
  */
 export function describeApp(
   name: string,
@@ -135,6 +178,13 @@ export function describeApp(
     });
 
     registerConvergenceRungs(name, options, app);
+
+    // The LDAP rung sits with the infrastructure rungs and ahead of the app's
+    // own tests: it proves the provider path answers before any spec asserts a
+    // verdict about a credential through it.
+    if (options.ldap) {
+      registerLdapRungs(name, options.label, options.ldap);
+    }
 
     // App-specific rungs next: serial mode skips the auth rungs when the
     // install or the tile is broken, which is the failure it names.
@@ -181,6 +231,57 @@ function registerConvergenceRungs(
     test.setTimeout(60_000);
     await app.page.goto('/');
     await assertRunningTile(app.page, options.label);
+  });
+}
+
+/**
+ * The one rung every LDAP-backed app asserts: a Bloud account, verified against
+ * the identity provider's LDAP outpost, reaches its own tree. Registered by
+ * `describeApp`, never copied into a spec.
+ */
+function registerLdapRungs(
+  name: string,
+  label: string,
+  rungs: LdapBackedRungs,
+): void {
+  test('admits a Bloud account through the identity provider LDAP', async () => {
+    test.setTimeout(LDAP_SETTLE_TIMEOUT_MS + 60_000);
+
+    // The rung is only honest while the app still declares the strategy it
+    // exercises. A stale option would otherwise pass by asserting nothing.
+    const strategy = await getAppSSOStrategy(name);
+    expect(
+      strategy,
+      `${name} asks for the LDAP rung but the catalog declares strategy "${strategy}"`,
+    ).toBe('ldap');
+
+    // Credentials go on the context so the Basic challenge is answered the way
+    // a real client answers it, not pre-emptively on the first request.
+    const ctx = await request.newContext({
+      baseURL: appOrigin(name),
+      httpCredentials: {
+        username: CREDENTIALS.username,
+        password: CREDENTIALS.password,
+      },
+    });
+    try {
+      const res = await waitForLdapBackedAnswer(
+        `${label} ${rungs.method} ${rungs.path}`,
+        () =>
+          ctx.fetch(rungs.path, {
+            method: rungs.method,
+            headers: rungs.headers,
+            timeout: LDAP_ATTEMPT_TIMEOUT_MS,
+          }),
+        LDAP_SETTLE_TIMEOUT_MS,
+      );
+      expect(res.status()).toBe(rungs.expectedStatus);
+      if (rungs.bodyContains) {
+        expect(await res.text()).toContain(rungs.bodyContains);
+      }
+    } finally {
+      await ctx.dispose();
+    }
   });
 }
 
