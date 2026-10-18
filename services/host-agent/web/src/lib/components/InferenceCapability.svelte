@@ -1,111 +1,12 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
-	import { testAIEndpoint, type AIUpstream } from '$lib/clients/settingsClient';
-	import { aiView, commands, select } from '$lib/store';
-	import { draft, sameText } from '$lib/store/draft.svelte';
+	import { useAI } from '$lib/store';
 	import Button from '$lib/components/Button.svelte';
 
-	// No props. The chat base URL used to travel upward through a callback, which
-	// meant the parent kept a copy and an effect kept the copy current. The parent
-	// selects `aiView` instead, because the value is store shown.
-	const view = select(aiView);
-	const shown = $derived(view.current);
-
-	// The form holds one upstream (v1 is single-upstream; the shape is a list so
-	// adding a second later is not a redesign). Each edit falls back to the live
-	// value, so a save landing elsewhere cannot overwrite a field being typed.
-	const name = draft(() => shown.value?.upstreams[0]?.name || 'Default', sameText);
-	const baseUrl = draft(() => shown.value?.upstreams[0]?.baseUrl ?? '', sameText);
-	const defaultModel = draft(() => shown.value?.defaultModel ?? '', sameText);
-	// The key is write-only: the API never returns it, so blank means "keep".
-	let apiKey = $state('');
-
-	const hasApiKey = $derived(shown.value?.hasApiKey ?? false);
-	const servedTo = $derived(shown.confirmed?.servedTo ?? []);
-	const loading = $derived(
-		shown.phase === 'idle' ||
-			(shown.phase === 'loading' && shown.value === null)
-	);
-	const loadError = $derived(shown.phase === 'error' ? shown.error : '');
-
-	// The probe's answer, which is this form's own: it lists the models a
-	// candidate endpoint offers, and nothing else reads it.
-	let models = $state<string[]>([]);
-	let testing = $state(false);
-	let testResult = $state('');
-	let testOk = $state<boolean | null>(null);
-
-	// The stored list is the fallback, so a configured endpoint shows its models
-	// before anyone runs a test.
-	const modelOptions = $derived(
-		models.length > 0 ? models : (shown.value?.upstreams[0]?.models ?? [])
-	);
-
-	// Dirty against the value the user sees, so the claim makes the form clean and
-	// Save disables itself for the whole wait.
-	const dirty = $derived(
-		name.dirty || baseUrl.dirty || defaultModel.dirty || apiKey !== ''
-	);
-
-	onMount(() => {
-		void commands.loadAISettings();
-	});
-
-	async function handleTest() {
-		if (!baseUrl.value.trim()) return;
-		testing = true;
-		testResult = '';
-		testOk = null;
-		try {
-			const res = await testAIEndpoint(baseUrl.value.trim(), apiKey || undefined);
-			if (res.ok && res.models) {
-				models = res.models;
-				testOk = true;
-				testResult = `Reached it. ${res.models.length} model${res.models.length === 1 ? '' : 's'} available.`;
-			} else {
-				testOk = false;
-				testResult = res.error ?? 'Could not reach that endpoint.';
-			}
-		} catch (e) {
-			testOk = false;
-			testResult = e instanceof Error ? e.message : 'Test failed';
-		} finally {
-			testing = false;
-		}
-	}
-
-	function clearFields(): void {
-		name.clear();
-		baseUrl.clear();
-		defaultModel.clear();
-		apiKey = '';
-	}
-
-	/**
-	 * The store owns the claim, the reload and the wait. Clearing the edits at the
-	 * moment of submit hands the fields to the claim, so the typed values stay on
-	 * screen, the stored ones replace them, and a rejected save raises a toast and
-	 * falls back to the confirmed settings.
-	 */
-	function handleSave(): void {
-		const upstream: AIUpstream = {
-			id: shown.value?.upstreams[0]?.id ?? 'default',
-			name: name.value.trim() || 'Default',
-			baseUrl: baseUrl.value.trim(),
-			models: modelOptions,
-			enabled: true
-		};
-		const payload: Parameters<typeof commands.saveAISettings>[0] = {
-			upstreams: baseUrl.value.trim() ? [upstream] : [],
-			defaultModel: defaultModel.value.trim()
-		};
-		// Only include the key when it was typed. Omitting means "keep".
-		if (apiKey !== '') payload.apiKey = apiKey;
-
-		void commands.saveAISettings(payload);
-		clearFields();
-	}
+	// The platform owns the settings, the fields, the probe and the save. This
+	// component owns the markup, and the fill it offers to the other forms is read
+	// by their hooks instead of reported upward from here.
+	const ai = useAI();
 </script>
 
 <div class="capability">
@@ -114,10 +15,10 @@
 		Text generation
 	</p>
 
-	{#if loading}
+	{#if ai.loading}
 		<div class="loading-state"><p>Loading AI settings...</p></div>
 	{:else}
-		<form class="ai-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
+		<form class="ai-form" onsubmit={(e) => { e.preventDefault(); ai.save(); }}>
 			<div class="form-field">
 				<label for="ai-base-url">Base URL</label>
 				<input
@@ -127,8 +28,7 @@
 					inputmode="url"
 					autocomplete="off"
 					autocapitalize="none"
-					value={baseUrl.value}
-					oninput={(e) => baseUrl.set(e.currentTarget.value)}
+					bind:value={ai.baseUrl.value}
 					spellcheck="false"
 				/>
 			</div>
@@ -136,20 +36,19 @@
 			<div class="form-field">
 				<label for="ai-key">
 					API key
-					{#if hasApiKey}<span class="pill pill-success">stored</span>{/if}
+					{#if ai.hasApiKey}<span class="pill pill-success">stored</span>{/if}
 				</label>
 				<!-- new-password, not off: blank means "keep the stored key", so the
 				     last thing wanted is a manager autofilling the old one. -->
 				<input
 					id="ai-key"
 					type="password"
-					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
-					value={apiKey}
-					oninput={(e) => (apiKey = e.currentTarget.value)}
+					placeholder={ai.hasApiKey ? 'unchanged' : 'sk-...'}
+					bind:value={ai.apiKey.value}
 					autocomplete="new-password"
 				/>
 				<span class="hint">
-					{hasApiKey
+					{ai.hasApiKey
 						? 'Leave blank to keep the stored key.'
 						: 'Stored in the secrets manager.'}
 				</span>
@@ -161,21 +60,19 @@
 					<input
 						id="ai-name"
 						type="text"
-						value={name.value}
-						oninput={(e) => name.set(e.currentTarget.value)}
+						bind:value={ai.name.value}
 						autocomplete="off"
 					/>
 				</div>
 				<div class="form-field">
 					<label for="ai-model">Default model</label>
-					{#if modelOptions.length > 0}
+					{#if ai.models.length > 0}
 						<select
 							id="ai-model"
-							value={defaultModel.value}
-							onchange={(e) => defaultModel.set(e.currentTarget.value)}
+							bind:value={ai.defaultModel.value}
 						>
 							<option value="">(none)</option>
-							{#each modelOptions as model (model)}
+							{#each ai.models as model (model)}
 								<option value={model}>{model}</option>
 							{/each}
 						</select>
@@ -184,8 +81,7 @@
 							id="ai-model"
 							type="text"
 							placeholder="test the connection to list models"
-							value={defaultModel.value}
-							oninput={(e) => defaultModel.set(e.currentTarget.value)}
+							bind:value={ai.defaultModel.value}
 									autocomplete="off"
 							spellcheck="false"
 						/>
@@ -194,36 +90,36 @@
 			</div>
 
 			<div class="actions">
-				<Button variant="primary" type="submit" disabled={!dirty}>Save</Button>
+				<Button variant="primary" type="submit" disabled={!ai.dirty}>Save</Button>
 				<Button
 					variant="secondary"
 					type="button"
-					onclick={handleTest}
-					disabled={!baseUrl.value.trim() || testing}
+					onclick={() => ai.test()}
+					disabled={!ai.baseUrl.value.trim() || ai.testing}
 				>
-					{testing ? 'Testing…' : 'Test connection'}
+					{ai.testing ? 'Testing…' : 'Test connection'}
 				</Button>
 			</div>
 
-			{#if testResult}
+			{#if ai.testResult}
 				<!-- role=status: the test takes a second and the result lands wherever
 				     the pointer is, so it has to be announced rather than waited for. -->
-				<p class="test-result" class:ok={testOk === true} class:fail={testOk === false} role="status">
-					{testResult}
+				<p class="test-result" class:ok={ai.testOk === true} class:fail={ai.testOk === false} role="status">
+					{ai.testResult}
 				</p>
 			{/if}
 		</form>
 	{/if}
 
-	{#if loadError}
-		<div class="error-message" role="alert">{loadError}</div>
+	{#if ai.error}
+		<div class="error-message" role="alert">{ai.error}</div>
 	{/if}
 
-	{#if servedTo.length > 0}
+	{#if ai.servedTo.length > 0}
 		<div class="served-to">
 			<h3>Served to</h3>
 			<div class="served-list">
-				{#each servedTo as consumer (consumer.app)}
+				{#each ai.servedTo as consumer (consumer.app)}
 					<div class="served-row">
 						<span class="consumer-name">{consumer.app}</span>
 						<span

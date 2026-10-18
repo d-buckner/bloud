@@ -1,11 +1,9 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
-	import { discoverEndpointModels, type EndpointContract } from '$lib/clients/settingsClient';
-	import { buildSaveRequest } from '$lib/utils/endpointSave';
-	import { commands, endpointView, select } from '$lib/store';
-	import { draft, sameText } from '$lib/store/draft.svelte';
+	import { untrack } from 'svelte';
+	import { useEndpoint } from '$lib/store';
 	import Button from '$lib/components/Button.svelte';
+	import type { EndpointContract } from '$lib/clients/settingsClient';
 
 	interface Props {
 		/** Which single-endpoint contract this form reads and writes. */
@@ -18,113 +16,27 @@
 		defaultName: string;
 		/** Example address shown in the Base URL field. */
 		placeholder: string;
-		/**
-		 * The AI upstream address, offered as a one-click fill. Optional and
-		 * never a dependency: the parent may not have loaded it, and a missing
-		 * convenience is not a reason this form cannot be filled by hand.
-		 */
-		aiBaseUrl?: string;
 	}
 
-	let { contract, label, description, defaultName, placeholder, aiBaseUrl = '' }: Props = $props();
+	let { contract, label, description, defaultName, placeholder }: Props = $props();
 
-	// The confirmed endpoint, with the claim a pending save made over it.
-	const view = select((state) => endpointView(state, contract));
-	const shown = $derived(view.current);
-
-	// Three edits that fall back to the live value, and one that has no live
-	// value at all. The API never returns the credential, so a stale key can never
-	// be shown and a blank field means "keep the stored one".
-	const name = draft(() => shown.value?.name || defaultName, sameText);
-	const baseUrl = draft(() => shown.value?.baseUrl ?? '', sameText);
-	const model = draft(() => shown.value?.model ?? '', sameText);
-	let apiKey = $state('');
-
-	const dirty = $derived(name.dirty || baseUrl.dirty || model.dirty || apiKey !== '');
-	const configured = $derived(shown.value?.configured ?? false);
-	const hasApiKey = $derived(shown.value?.hasApiKey ?? false);
-	const servedTo = $derived(shown.confirmed?.servedTo ?? []);
-	const loading = $derived(
-		shown.phase === 'idle' ||
-			(shown.phase === 'loading' && shown.value === null)
-	);
-	const loadError = $derived(shown.phase === 'error' ? shown.error : '');
-
-	// The probe's answer, which is not store state: it belongs to this form and
-	// nothing else reads it.
-	let models = $state<string[]>([]);
-	let listing = $state(false);
-	let listResult = $state('');
-	let listOk = $state<boolean | null>(null);
-
-	onMount(() => {
-		void commands.loadEndpoint(contract);
-	});
-
-	async function handleListModels() {
-		if (!baseUrl.value.trim()) return;
-		listing = true;
-		listResult = '';
-		listOk = null;
-		try {
-			const res = await discoverEndpointModels(contract, baseUrl.value.trim(), apiKey || undefined);
-			if (res.ok && res.models) {
-				models = res.models;
-				listOk = true;
-				listResult = `Reached it. ${res.models.length} model${res.models.length === 1 ? '' : 's'} available.`;
-			} else {
-				listOk = false;
-				listResult = res.error ?? 'Could not reach that endpoint.';
-			}
-		} catch (e) {
-			listOk = false;
-			listResult = e instanceof Error ? e.message : 'Listing models failed';
-		} finally {
-			listing = false;
-		}
-	}
-
-	/**
-	 * Clear every edit at the moment the command starts, so the claim becomes the
-	 * value to show. The saved endpoint then replaces what was typed, and a
-	 * rejected save falls back to the confirmed one. A typed key is cleared with
-	 * the rest: the form never holds a credential for a write the server did not
-	 * accept, and the toast names the failure.
-	 */
-	function clearFields(): void {
-		name.clear();
-		baseUrl.clear();
-		model.clear();
-		apiKey = '';
-	}
-
-	function handleSave(): void {
-		const body = buildSaveRequest(
-			{ name: name.value, baseUrl: baseUrl.value, model: model.value, apiKey, defaultName },
-			false
-		);
-		void commands.saveEndpoint(contract, body);
-		clearFields();
-	}
-
-	function handleRemove(): void {
-		clearFields();
-		void commands.removeEndpoint(contract);
-	}
-
-	function useAIUpstream(): void {
-		if (aiBaseUrl) baseUrl.set(aiBaseUrl);
-	}
+	// The platform owns the endpoint, its fields, the probe, the save and the chat
+	// address offered as a fill. This component owns the markup.
+	//
+	// A contract and a default name are this component's identity, not reactive
+	// values: one instance serves one contract for its whole life. `untrack` says
+	// that on purpose instead of leaving a warning to guess at.
+	const ep = useEndpoint(untrack(() => contract), untrack(() => defaultName));
 </script>
 
 <div class="capability" data-contract={contract}>
 	<h3 class="capability-title">{label}</h3>
 	<p class="capability-description">{description}</p>
 
-	{#if loading}
+	{#if ep.loading}
 		<div class="loading-state"><p>Loading {label.toLowerCase()} settings...</p></div>
 	{:else}
-		<form class="capability-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
+		<form class="capability-form" onsubmit={(e) => { e.preventDefault(); ep.save(); }}>
 			<div class="form-field">
 				<label for="{contract}-base-url">Base URL</label>
 				<input
@@ -134,12 +46,11 @@
 					inputmode="url"
 					autocomplete="off"
 					autocapitalize="none"
-					value={baseUrl.value}
-					oninput={(e) => baseUrl.set(e.currentTarget.value)}
+					bind:value={ep.baseUrl.value}
 					spellcheck="false"
 				/>
-				{#if aiBaseUrl && aiBaseUrl !== baseUrl.value}
-					<button type="button" class="link-button" onclick={useAIUpstream}>
+				{#if ep.canUseAIUpstream}
+					<button type="button" class="link-button" onclick={() => ep.useAIUpstream()}>
 						Use my AI upstream
 					</button>
 				{/if}
@@ -148,20 +59,19 @@
 			<div class="form-field">
 				<label for="{contract}-key">
 					API key
-					{#if hasApiKey}<span class="pill pill-success">stored</span>{/if}
+					{#if ep.hasApiKey}<span class="pill pill-success">stored</span>{/if}
 				</label>
 				<!-- new-password, not off: blank means "keep the stored key", so the
 				     last thing wanted is a manager autofilling the old one. -->
 				<input
 					id="{contract}-key"
 					type="password"
-					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
-					value={apiKey}
-					oninput={(e) => (apiKey = e.currentTarget.value)}
+					placeholder={ep.hasApiKey ? 'unchanged' : 'sk-...'}
+					bind:value={ep.apiKey.value}
 					autocomplete="new-password"
 				/>
 				<span class="hint">
-					{hasApiKey
+					{ep.hasApiKey
 						? 'Leave blank to keep the stored key.'
 						: 'Stored in the secrets manager.'}
 				</span>
@@ -173,21 +83,19 @@
 					<input
 						id="{contract}-name"
 						type="text"
-						value={name.value}
-						oninput={(e) => name.set(e.currentTarget.value)}
+						bind:value={ep.name.value}
 						autocomplete="off"
 					/>
 				</div>
 				<div class="form-field">
 					<label for="{contract}-model">Model</label>
-					{#if models.length > 0}
+					{#if ep.models.length > 0}
 						<select
 						id="{contract}-model"
-						value={model.value}
-						onchange={(e) => model.set(e.currentTarget.value)}
+						bind:value={ep.model.value}
 					>
 							<option value="">(endpoint default)</option>
-							{#each models as entry (entry)}
+							{#each ep.models as entry (entry)}
 								<option value={entry}>{entry}</option>
 							{/each}
 						</select>
@@ -196,8 +104,7 @@
 							id="{contract}-model"
 							type="text"
 							placeholder="endpoint default"
-							value={model.value}
-							oninput={(e) => model.set(e.currentTarget.value)}
+							bind:value={ep.model.value}
 							autocomplete="off"
 							spellcheck="false"
 						/>
@@ -206,39 +113,39 @@
 			</div>
 
 			<div class="actions">
-				<Button variant="primary" type="submit" disabled={!dirty}>Save</Button>
+				<Button variant="primary" type="submit" disabled={!ep.dirty}>Save</Button>
 				<Button
 					variant="secondary"
 					type="button"
-					onclick={handleListModels}
-					disabled={!baseUrl.value.trim() || listing}
+					onclick={() => ep.test()}
+					disabled={!ep.baseUrl.value.trim() || ep.testing}
 				>
-					{listing ? 'Listing…' : 'List models'}
+					{ep.testing ? 'Listing…' : 'List models'}
 				</Button>
-				{#if configured}
-					<Button variant="secondary" type="button" onclick={handleRemove}>Remove</Button>
+				{#if ep.configured}
+					<Button variant="secondary" type="button" onclick={() => ep.remove()}>Remove</Button>
 				{/if}
 			</div>
 
-			{#if listResult}
+			{#if ep.testResult}
 				<!-- role=status: the listing takes a second and the result lands
 				     wherever the pointer is, so it has to be announced. -->
-				<p class="test-result" class:ok={listOk === true} class:fail={listOk === false} role="status">
-					{listResult}
+				<p class="test-result" class:ok={ep.testOk === true} class:fail={ep.testOk === false} role="status">
+					{ep.testResult}
 				</p>
 			{/if}
 		</form>
 	{/if}
 
-	{#if loadError}
-		<div class="error-message" role="alert">{loadError}</div>
+	{#if ep.error}
+		<div class="error-message" role="alert">{ep.error}</div>
 	{/if}
 
-	{#if servedTo.length > 0}
+	{#if ep.servedTo.length > 0}
 		<div class="served-to">
 			<h4>Served to</h4>
 			<div class="served-list">
-				{#each servedTo as consumer (consumer)}
+				{#each ep.servedTo as consumer (consumer)}
 					<div class="served-row">
 						<span class="consumer-name">{consumer}</span>
 					</div>

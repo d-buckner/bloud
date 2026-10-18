@@ -1,54 +1,11 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { commands, publicUrlView, select } from '$lib/store';
-	import { draft, sameText } from '$lib/store/draft.svelte';
+	import { usePublicUrl } from '$lib/store';
 
-	// The confirmed address, with the claim a pending save made projected over it.
-	const view = select(publicUrlView);
-	const shown = $derived(view.current);
-
-	// The field's edit, falling back to the live value. While the operator types,
-	// the live value is not read, so a save landing elsewhere cannot reach the
-	// field. See `draft.svelte.ts` for the whole rule.
-	const url = draft(() => shown.value ?? '', sameText);
-
-	// The acknowledgement is a fact about a value, not a flag to reset: the
-	// operator agreed to restart the apps on this exact address, not on whatever
-	// they type next.
-	let acknowledgedFor = $state<string | null>(null);
-	const acknowledged = $derived(acknowledgedFor === url.value.trim());
-
-	const saveBlocked = $derived(url.dirty && !acknowledged);
-	const loading = $derived(
-		shown.phase === 'idle' ||
-			(shown.phase === 'loading' && shown.value === null)
-	);
-	const loadError = $derived(shown.phase === 'error' ? shown.error : '');
-
-	onMount(() => {
-		void commands.loadPublicURL();
-	});
-
-	function acknowledge(checked: boolean) {
-		acknowledgedFor = checked ? url.value.trim() : null;
-	}
-
-	/**
-	 * The store owns the save: the request, the claim the user sees while the
-	 * orchestrator works, the wait until the stored origin matches, and the toast
-	 * when it does not. The component supplies the value and the words.
-	 *
-	 * `clear()` is what makes the form stop owning the value. From here the field
-	 * shows the claim, so Save is disabled for the whole wait, the canonical
-	 * origin replaces the typed text when the claim is refined, and a rejected
-	 * save falls back to the confirmed address with no rollback code.
-	 */
-	function handleSaveAddress() {
-		void commands.savePublicURL(url.value);
-		url.clear();
-	}
+	// The platform owns the store, the draft, the read state and the consent gate.
+	// This component owns the markup.
+	const url = usePublicUrl();
 </script>
 
 <section class="section address-section">
@@ -59,7 +16,7 @@
 		listens on internally.
 	</p>
 
-	{#if loading}
+	{#if url.loading}
 		<div class="loading-state"><p>Loading address...</p></div>
 	{:else}
 		<!-- The consequence used to be the last sentence of the paragraph above,
@@ -83,18 +40,14 @@
 						Nothing is deleted and nobody is signed out.
 					</p>
 					<label class="acknowledge">
-						<input
-							type="checkbox"
-							checked={acknowledged}
-							onchange={(e) => acknowledge(e.currentTarget.checked)}
-						/>
+						<input type="checkbox" bind:checked={url.acknowledged} />
 						I understand my apps will briefly restart.
 					</label>
 				</div>
 			</aside>
 		{/if}
 
-		<form class="address-form" onsubmit={(e) => { e.preventDefault(); handleSaveAddress(); }}>
+		<form class="address-form" onsubmit={(e) => { e.preventDefault(); url.save(); }}>
 			<input
 				type="text"
 				class="address-input"
@@ -106,21 +59,20 @@
 				autocapitalize="none"
 				spellcheck="false"
 				required
-				value={url.value}
-				oninput={(e) => url.set(e.currentTarget.value)}
+				bind:value={url.value}
 			/>
 			<button
 				class="btn btn-primary"
 				type="submit"
-				disabled={!url.dirty || !url.value.trim() || saveBlocked}
+				disabled={!url.dirty || !url.value.trim() || url.blocked}
 			>
 				Save
 			</button>
 		</form>
 	{/if}
 
-	{#if loadError}
-		<div class="error-message" role="alert">{loadError}</div>
+	{#if url.error}
+		<div class="error-message" role="alert">{url.error}</div>
 	{/if}
 </section>
 

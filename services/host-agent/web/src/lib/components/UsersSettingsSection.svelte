@@ -1,19 +1,19 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
 	import DeleteUserModal from './DeleteUserModal.svelte';
 	import Icon from './Icon.svelte';
-	import { commands, select, usersView } from '$lib/store';
+	import { select, useUsers } from '$lib/store';
 	import type { ManagedUser } from '$lib/clients/userClient';
 	import type { Role } from '$lib/types';
 	import { guardUserRow, demoteBlocked, deleteBlocked } from '$lib/utils/userGuard';
 
+	// The list, the read state and the three writes. A pending member carries id 0,
+	// so rows are keyed by username.
+	const users = useUsers();
 	const currentUser = select((s) => s.session.user);
-	// The confirmed list, with the claim an add, a delete or a role change made
-	// projected over it. A pending member carries id 0, so rows are keyed by
-	// username.
-	const users = select(usersView);
 
+	// The create form's fields derive from nothing, so they stay plain local state.
+	// The platform hook owns everything that is read from or written to the store.
 	let newUsername = $state('');
 	let newPassword = $state('');
 	let newRole = $state<Role>('member');
@@ -21,19 +21,8 @@
 	// the dialog has to name its target while it is still open.
 	let pendingDelete = $state<string | null>(null);
 
-	const list = $derived(users.current.value ?? []);
-	const loading = $derived(
-		users.current.phase === 'idle' ||
-			(users.current.phase === 'loading' && users.current.value === null)
-	);
-	const loadError = $derived(users.current.phase === 'error' ? users.current.error : '');
-
-	onMount(() => {
-		void commands.loadUsers();
-	});
-
-	function rowGuard(u: ManagedUser) {
-		return guardUserRow(u, list, currentUser.current?.username ?? null);
+	function rowGuard(user: ManagedUser) {
+		return guardUserRow(user, users.list, currentUser.current?.username ?? null);
 	}
 
 	/**
@@ -44,7 +33,7 @@
 	 */
 	function handleCreateUser() {
 		if (!newUsername || !newPassword) return;
-		void commands.createUser({ username: newUsername, password: newPassword, role: newRole });
+		users.create({ username: newUsername, password: newPassword, role: newRole });
 		newUsername = '';
 		newPassword = '';
 		newRole = 'member';
@@ -53,11 +42,11 @@
 	/** Close first, then let the claim remove the row. A failure is a toast. */
 	function handleDeleteUser(username: string) {
 		pendingDelete = null;
-		void commands.deleteUser(username);
+		users.remove(username);
 	}
 
 	function handleToggleRole(user: ManagedUser) {
-		void commands.setUserRole(user.username, user.is_admin ? 'member' : 'admin');
+		users.setRole(user.username, user.is_admin ? 'member' : 'admin');
 	}
 </script>
 
@@ -67,12 +56,12 @@
 		Manage users who can access this Bloud instance. Admins can install apps and manage settings.
 	</p>
 
-	{#if loading}
+	{#if users.loading}
 		<div class="loading-state"><p>Loading users...</p></div>
 	{:else}
-		{#if list.length > 0}
+		{#if users.list.length > 0}
 			<div class="users-list">
-				{#each list as u (u.username)}
+				{#each users.list as u (u.username)}
 					{@const guard = rowGuard(u)}
 					<div class="user-row">
 						<div class="user-line">
@@ -161,8 +150,8 @@
 		</div>
 	{/if}
 
-	{#if loadError}
-		<div class="error-message" role="alert">{loadError}</div>
+	{#if users.error}
+		<div class="error-message" role="alert">{users.error}</div>
 	{/if}
 </section>
 

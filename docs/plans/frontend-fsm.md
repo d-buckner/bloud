@@ -656,6 +656,35 @@ zone acknowledgement gates are a fact about a string (`acknowledgedFor ===
 value.trim()`) rather than a boolean reset by an effect, and the chat base URL is
 selected by `AISettingsSection` instead of reported upward through a callback.
 
+### Hooks: a component calls one function and gets a form
+
+The draft primitive is the mechanism. A component should not see it.
+`store/hooks/` holds one hook per settings surface, and each returns a form
+shaped like its markup:
+
+```ts
+const url = usePublicUrl();      // value, dirty, loading, error, save, consent
+const zone = useTimezone();      // the list, the offset, the suggestion, the gate
+const ai = useAI();              // three fields, the key, the probe, the save
+const ep = useEndpoint(contract, defaultName);
+const users = useUsers();
+```
+
+`bind:value={url.value}` and `bind:checked={url.acknowledged}` work because the
+fields are accessors, so a form is markup and nothing else. The component has no
+`$derived`, no `$effect`, no `select`, and no `.current`.
+
+Every rule a form would otherwise restate lives in `field.svelte.ts`. `loading`
+is true only until there is something to draw, so a refresh does not blank a
+form. `error` is a failed read, because a failed save is a toast. `save` clears
+the edit, so the pending claim is what shows. Consent is a fact about the string
+the operator agreed to, so an edit withdraws it with no effect.
+
+The split is the rule: **the platform owns everything that touches the store, and
+the component owns markup.** A form that needs a new store fact asks its hook for
+it, so the rule lands in one place and every form gets it. A read-only view still
+uses `select`; a writable one uses a hook.
+
 ## Optimistic state is an overlay, not a write
 
 **Landed for apps, settings and users.** `store/overlay.ts` holds one patch kind

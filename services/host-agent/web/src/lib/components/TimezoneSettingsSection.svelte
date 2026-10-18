@@ -1,71 +1,12 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { commands, select, timezoneView } from '$lib/store';
-	import { draft } from '$lib/store/draft.svelte';
-	import { browserZone, offsetLabel, supportedZones, zoneOptions } from '$lib/utils/timezone';
+	import { useTimezone } from '$lib/store';
 	import TimeZonePicker from './TimeZonePicker.svelte';
 
-	// The confirmed zone, with the claim a pending save made projected over it.
-	const view = select(timezoneView);
-	const shown = $derived(view.current);
-
-	// The field's edit, falling back to the live value. "" is a value rather than
-	// a missing value: it means Bloud states no zone, and the draft keeps it.
-	const zone = draft(() => shown.value ?? '');
-
-	// See the address section: the acknowledgement names the value it agreed to,
-	// so an edit withdraws it without an effect that resets a flag.
-	let acknowledgedFor = $state<string | null>(null);
-	const acknowledged = $derived(acknowledgedFor === zone.value.trim());
-
-	// The zone list comes from the browser, which is the only place that knows
-	// which zones exist without shipping a copy of the zone database. See
-	// `$lib/utils/timezone` for the fallback and the reason it may be short.
-	const zones = supportedZones();
-	const localZone = browserZone();
-
-	// A saved zone the browser does not list still has to be selectable, or the
-	// select would show the first option and a Save would change the zone the
-	// operator did not touch. The list needs the live value and the edit.
-	const options = $derived(zoneOptions(zones, [zone.value, shown.value ?? '', localZone]));
-
-	const saveBlocked = $derived(zone.dirty && !acknowledged);
-	const loading = $derived(
-		shown.phase === 'idle' ||
-			(shown.phase === 'loading' && shown.value === null)
-	);
-	const loadError = $derived(shown.phase === 'error' ? shown.error : '');
-
-	// The offset line is a fact about the zone, not a clock, so it needs no timer
-	// to stay true. See `offsetLabel` for why the form shows one at all.
-	const offset = $derived(offsetLabel(zone.value));
-	const suggestion = $derived(
-		!shown.value && localZone && zone.value !== localZone ? localZone : ''
-	);
-
-	onMount(() => {
-		void commands.loadTimezone();
-	});
-
-	function acknowledge(checked: boolean) {
-		acknowledgedFor = checked ? zone.value.trim() : null;
-	}
-
-	/**
-	 * The store owns the save, including the long wait. `clear()` hands the field
-	 * to the claim: the value stays on screen, the poll settles when the live
-	 * clock matches, and a rejected save falls back to the confirmed zone.
-	 */
-	function handleSaveTimezone() {
-		void commands.saveTimezone(zone.value);
-		zone.clear();
-	}
-
-	function useSuggestion() {
-		zone.set(suggestion);
-	}
+	// The platform owns the clock, its browser zone list, the offset line and the
+	// consent gate. This component owns the markup.
+	const zone = useTimezone();
 </script>
 
 <section class="section timezone-section">
@@ -75,13 +16,13 @@
 		scheduled jobs, log lines, and timestamps agree with each other.
 	</p>
 
-	{#if loading}
+	{#if zone.loading}
 		<div class="loading-state"><p>Loading time zone...</p></div>
 	{:else}
-		{#if suggestion}
+		{#if zone.suggestion}
 			<p class="suggestion">
-				Your browser is in <code>{suggestion}</code>.
-				<button class="link" type="button" onclick={useSuggestion}>
+				Your browser is in <code>{zone.suggestion}</code>.
+				<button class="link" type="button" onclick={() => zone.useSuggestion()}>
 					Use it
 				</button>
 			</p>
@@ -101,36 +42,32 @@
 						it. Nothing is deleted and nobody is signed out.
 					</p>
 					<label class="acknowledge">
-						<input
-							type="checkbox"
-							checked={acknowledged}
-							onchange={(e) => acknowledge(e.currentTarget.checked)}
-						/>
+						<input type="checkbox" bind:checked={zone.acknowledged} />
 						I understand my apps will briefly restart.
 					</label>
 				</div>
 			</aside>
 		{/if}
 
-		<form class="timezone-form" onsubmit={(e) => { e.preventDefault(); handleSaveTimezone(); }}>
+		<form class="timezone-form" onsubmit={(e) => { e.preventDefault(); zone.save(); }}>
 			<TimeZonePicker
-				zones={options}
+				zones={zone.options}
 				value={zone.value}
 				describedby={zone.dirty ? 'timezone-warning-title' : undefined}
-				onchange={(picked) => zone.set(picked)}
+				onchange={(picked) => (zone.value = picked)}
 			/>
-			<button class="btn btn-primary" type="submit" disabled={!zone.dirty || saveBlocked}>
+			<button class="btn btn-primary" type="submit" disabled={!zone.dirty || zone.blocked}>
 				Save
 			</button>
 		</form>
 
-		{#if offset}
-			<p class="preview">Right now that zone is <strong>{offset}</strong> from UTC.</p>
+		{#if zone.offset}
+			<p class="preview">Right now that zone is <strong>{zone.offset}</strong> from UTC.</p>
 		{/if}
 	{/if}
 
-	{#if loadError}
-		<div class="error-message" role="alert">{loadError}</div>
+	{#if zone.error}
+		<div class="error-message" role="alert">{zone.error}</div>
 	{/if}
 </section>
 
