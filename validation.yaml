@@ -48,6 +48,15 @@ tiers:
       - id: web-lint
         cwd: .
         run: npm run lint:web
+      # The browser harness is a standalone package with its own install, so
+      # these two run only where `npm --prefix harness ci` has been run. They
+      # cover the library the e2e suite and every ad-hoc agent check import.
+      - id: harness-check
+        cwd: harness
+        run: npm run check
+      - id: harness-unit
+        cwd: harness
+        run: npm test
       # The static bundle is the artifact host-agent actually serves
       # (invariant 11), so a broken production build is a real failure --
       # typecheck alone does not catch adapter/build-time errors.
@@ -163,10 +172,10 @@ inference:
       triggers: []
       riskAreas: [playwright]
     # The browser harness is shared with the e2e suite, so a harness change is a
-    # Playwright risk too. It has no fast-tier command of its own; the e2e
-    # matrix runs every app when a file outside the app directories changes.
+    # Playwright risk too. Its own package carries the checks: the typecheck of
+    # the library the suite imports, and the unit tests for the check contract.
     - pattern: "harness/**"
-      triggers: []
+      triggers: [harness-check, harness-unit]
       riskAreas: [playwright]
     # Root-level config and script files can break any check, so they trigger
     # the whole tier. A `*` trigger means "every command" (see triggeredCommands

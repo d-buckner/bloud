@@ -131,6 +131,7 @@ const isWeb = (f) => f.startsWith('services/host-agent/web/');
 const isHostAgent = (f) => f.startsWith('services/host-agent/') && !isWeb(f);
 const isApps = (f) => f.startsWith('apps/');
 const isCli = (f) => f.startsWith('cli/');
+const isHarness = (f) => f.startsWith('harness/');
 const isMarkdown = (f) => f.endsWith('.md');
 // What Vale can read. Mirrors the extension list the old lint:prose one-liner
 // passed to `git ls-files`.
@@ -259,6 +260,19 @@ const CHECKS = [
     id: 'test:ts',
     tiers: ['push'],
     run: (files) => (any(files, isWeb) ? { script: 'test:ts', args: [] } : null),
+  },
+  {
+    // The browser harness owns its own install: it is not a root workspace,
+    // because it carries its own Playwright. A checkout that never ran
+    // `npm --prefix harness ci` gets npm's own error, which names the fix.
+    id: 'check:harness',
+    tiers: ['push'],
+    run: (files) => (any(files, isHarness) ? { script: 'check:harness', args: [] } : null),
+  },
+  {
+    id: 'test:harness',
+    tiers: ['push'],
+    run: (files) => (any(files, isHarness) ? { script: 'test:harness', args: [] } : null),
   },
 ];
 
