@@ -39,6 +39,17 @@ function existingOnly(paths) {
   });
 }
 
+// workingFiles(patterns) is trackedFiles plus the files git does not know yet.
+//
+// A whole-tree check that reads only `git ls-files` cannot see a new file, so a
+// new component could import a client write function and pass the check until
+// someone commits it. That is the one window where the guard is worth nothing.
+export function workingFiles(patterns) {
+  const args = ['ls-files', '--cached', '--others', '--exclude-standard'];
+  if (patterns && patterns.length > 0) args.push('--', ...patterns);
+  return execFileSync('git', args, { encoding: 'utf8' }).split('\n').filter(Boolean);
+}
+
 // targetsFromArgs(explicit, patterns) resolves the list a check should use:
 // the caller's explicit paths when it passed any, else every tracked file
 // matching `patterns` (or every tracked file when patterns is empty).

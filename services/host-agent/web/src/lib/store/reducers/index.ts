@@ -13,6 +13,7 @@ import { launchers } from './launchers';
 import { layout } from './layout';
 import { progress } from './progress';
 import { session } from './session';
+import { settings } from './settings';
 import { toasts } from './toasts';
 
 export const rootReducer = combineReducers({
@@ -23,6 +24,7 @@ export const rootReducer = combineReducers({
 	launchers,
 	graph,
 	progress,
+	settings,
 	toasts,
 	commands
 });

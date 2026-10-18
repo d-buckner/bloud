@@ -10,7 +10,7 @@
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import Toasts from '$lib/components/Toasts.svelte';
 	import { applyTheme, theme, watchSystemTheme } from '$lib/theme.svelte';
-	import { select, startDashboard, stopTransport } from '$lib/store';
+	import { commands, select, stopTransport } from '$lib/store';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -39,7 +39,7 @@
 		// starts the listener that follows the operating system.
 		applyTheme(theme.resolved);
 		const stopWatchingSystem = watchSystemTheme();
-		startDashboard();
+		commands.startDashboard();
 		return () => {
 			stopWatchingSystem();
 			stopTransport();

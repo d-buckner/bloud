@@ -80,6 +80,13 @@ tiers:
       - id: no-component-timers
         cwd: .
         run: npm run check:no-component-timers
+      # Every write goes through src/lib/store/commands/, which owns the overlay,
+      # the settle rule and the toast. This fails a component that calls a
+      # mutating client function itself. The table of write functions prints on
+      # every run, and an entry that guards nothing fails the check.
+      - id: no-component-writes
+        cwd: .
+        run: npm run check:no-component-writes
       # The runes binding is the store's only component binding. One
       # `svelte/store` import would make the architecture optional, so the
       # exception table is empty and this check is absolute.
@@ -174,4 +181,4 @@ inference:
       # These ride the catch-all: any change can invalidate a doc, a link, an
       # image pin, or a file-length ceiling, and the matcher has no recursive
       # `**/*.md` form (see pathMatches in cli).
-      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, file-length, no-component-timers, no-legacy-store, depgraph-check, catalogdoc-check, ports-check]
+      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, file-length, no-component-timers, no-component-writes, no-legacy-store, depgraph-check, catalogdoc-check, ports-check]

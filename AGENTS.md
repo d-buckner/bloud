@@ -343,7 +343,7 @@ pruned to the newest 20).
 
 | Tier | Command | What happens |
 |---|---|---|
-| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate + nolintlint, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, file length ratchet, prose lint (Vale), em dash check, docs link check, generated-doc check (`depgraph --check` + `catalogdoc --check` + `ports --check`) |
+| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate + nolintlint, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, file length ratchet, write-path check (`check:no-component-writes`: no mutating client call outside `store/commands/`), prose lint (Vale), em dash check, docs link check, generated-doc check (`depgraph --check` + `catalogdoc --check` + `ports --check`) |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps. The `**` catch-all always runs the whole-tree checks, and a root config/script change triggers the full tier, so no file is ever unmapped. CI runs this tier (not `fast`) with the merge-base as the diff base on branches |
 | `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent and the integration test binary locally (no frontend build, see below); deploys them plus the app catalog to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) with `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install an app through the real API). `--test-run <regex>` narrows the suite to one app group, so CI runs one matrix leg per group in parallel |
 
@@ -791,9 +791,9 @@ combined with instance/SSH-target env vars). Instance overrides:
    A `headless: true` app is a different cut: it stays in the catalog and on
    every API read, and only the dashboard grid leaves it out, because there is
    no page for its tile to open. The flag reaches the browser on the installed
-   app payload (`installedAppResponse` and the home snapshot); the grid store
-   and `visibleApps` both skip it, and `appFacade` skips the optimistic tile
-   add so an install never flashes one.
+   app payload (`installedAppResponse` and the home snapshot); `gridApps`
+   skips it by the same `isGridApp` rule, so the optimistic record an install
+   adds never flashes a tile for it.
    Bootstrap (system infra: Traefik + deps) converges **before the API is
    usable**: the listener opens at process start but serves a static loading
    page (and 503 for `/api` and `/health`) until the orchestrator reports

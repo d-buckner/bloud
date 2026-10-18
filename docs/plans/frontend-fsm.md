@@ -1,6 +1,7 @@
 # Plan: One frontend store, modeled as state machines
 
-> Status: in progress
+> Status: in progress. Phase 4 is partly landed: settings are resources with an
+> optimistic overlay, and every write goes through one command module.
 
 Closes [#309](https://github.com/d-buckner/bloud/issues/309).
 
@@ -45,9 +46,21 @@ Not landed, and named so the next reader does not assume otherwise:
   never see. The slice adds the thing the component could not express: a failed
   poll keeps the last good payload and sets `stale`, so the page can say the
   picture has stopped moving instead of silently freezing it.
-- **Phases 3 to 5.** The widgets still own their timers, and settings still own
-  their convergence loops. Each is a row in the `EXCEPTIONS` table of
-  `scripts/no-component-timers.mjs`.
+- **The command module and the overlay (the first half of phase 4).**
+  `overlay.ts` (one `apply` and one `satisfied` per kind), `runner.ts` (dedupe,
+  supersede, refine, the convergence wait), `commands/` (named operations, the
+  only public surface), `reducers/settings.ts` (confirmed values only), and the
+  views in `selectors.ts` that project a pending claim over them. The four
+  settings forms and the users section lost their local convergence loops, their
+  `saving` booleans and their inline save errors. `check:no-component-writes`
+  fails a mutating client call outside `store/commands/`.
+- **The rest of phase 4.** The setup wizard still waits for Authentik on its own,
+  the route-level reads still run `onMount`, and the catalog and external app
+  reads are still component-local. The write-path check covers writes only,
+  because the wider rule needs those reads migrated first.
+- **Phase 5.** The widgets still own their timers (a row each in the `EXCEPTIONS`
+  table of `scripts/no-component-timers.mjs`), and the layout write has no
+  revision, so two tabs still clobber each other.
 - **`check:no-legacy-store`** is in, with an empty exception table: nothing in the
   tree imports `svelte/store`, and the check is what keeps it that way.
 - **`check:no-component-fetch` and `check:bundle-budget`.** The fetch check needs
@@ -617,7 +630,32 @@ smaller claim than replaying history, and the transport already provides it.
 
 ## Optimistic state is an overlay, not a write
 
-The grid is where this matters, and it is the case the first draft hand-waved.
+**Landed for apps, settings and users.** `store/overlay.ts` holds one patch kind
+per surface, and each kind supplies two functions: `apply` builds the value to
+show, and `satisfied` answers whether confirmed state already carries the claim.
+`store/selectors.ts` projects. Nothing writes a claim into a slice, so a failed
+command drops its patch and the confirmed value reappears.
+
+Five rules came out of building it, and they are the part a reviewer should
+check first:
+
+- **The settle predicate reads confirmed state.** It is called with `RootState`,
+  whose `settings` slice holds confirmed values only. A predicate that compared
+  the projected value would settle on its own claim in the same tick and flicker.
+- **A claim can be refined.** The address parser fills in a scheme and the time
+  zone save trims, so the typed value is not the stored value. A command replaces
+  its patch with what the response reported. Without that step the claim can never
+  match, and the wait runs to its cap over a save that already landed.
+- **Confirmed match drops the claim, not the response.** An install keeps its
+  tile after the 202, and a rename shows before the pass that stores it.
+- **The wait is long and backs off.** 500ms doubling to 5s, with a ten minute cap,
+  because a time zone save recreates every container. A failed read during the
+  wait is not a failed save. Hitting the cap drops the claim and raises one toast.
+- **A repeated save replaces the first.** The newest value wins, the older
+  command is superseded, and a superseded command raises no toast.
+
+The grid is the open case, and it is the part the first draft hand-waved. Its
+claim is a whole element list, and the write has no revision to guard it.
 `GridStackGrid` holds positions the server has not confirmed yet, `PUT
 /api/user/layout` replaces the whole set, and the next snapshot overwrites
 whatever the user just moved. So optimistic edits live in their own slice,
@@ -656,9 +694,10 @@ interface RootState {
                 orchestrator: OrchestratorStatus|null; lastPushAt: number };
   external:   { phase: Phase; byId: Record<string, ExternalApp>; order: string[] };
   settings:   { publicUrl: Resource<string>; ai: Resource<AISettings>; users: Resource<ManagedUser[]> };
-  commands:   { byKey: Record<string, { kind: string; target: string;
-                phase: 'pending'|'settled'|'failed'; settle: 'request'|'reread'|'convergence';
-                deadline?: number; error?: string; inverted?: Patch }> };
+  commands:   { byKey: Record<string, { key: string; kind: 'request'|'reread'|'convergence';
+                status: 'pending'|'settled'|'failed'|'superseded';
+                startedAt: number; settledAt: number; error: string;
+                optimistic?: OptimisticPatch }> };
   toasts:     { items: Toast[] };
   ui:         { sidebarCollapsed: boolean };
 }
@@ -686,7 +725,7 @@ writes. The target above is not a stretch goal to reach if time allows.
 | 1 | `session`, `connection`, `apps`, `layout`, `launchers`; `commands.bootstrap`; generated API types | `appEvents.ts`, `poller.ts`, `shouldEnableFallback`, `appFacade.initialized`, and every legacy `$store` import in a migrated component | L |
 | 2 | The mirror as reducers over the node/pull events; toasts; correction fixtures | `mergeSnapshot`'s settled heuristic, `lastStatuses` module memory | S |
 | 3 | Catalog (plus plans), graph as a store-owned poll, external providers, widget polls | The developer page's interval and `inflight`, the widget timers, `developer/+page.svelte`'s six `$state` | M |
-| 4 | Settings as resources with declared settle kinds, setup wizard, SvelteKit `load()` for route data, admin gate as state | Every `onMount` fetch, the address convergence loop, the AI save's fake success | M |
+| 4 | **Partly landed.** Settings and users are resources with declared settle kinds, the command module is the only write path, and the address, time zone, AI and endpoint loops are gone. Remaining: setup wizard, `load()` for route data, and the component-local reads | The address convergence loop and the AI save's fake success are deleted. The `saving` booleans and inline save errors went with them | M |
 | 5 | Layout as a versioned document (schema migration 10), optimistic overlay for grid edits, component test harness, bundle budget, docs | `gridElements`' direct-mutation API (`addApp`, `toggleWidget`), the last `fetch` allowlist entries | M |
 
 Three ordering notes, because these are the calls that look arbitrary:

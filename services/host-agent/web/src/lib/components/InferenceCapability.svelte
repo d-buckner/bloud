@@ -1,13 +1,8 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import { onMount } from 'svelte';
-	import {
-		fetchAISettings,
-		setAISettings,
-		testAIEndpoint,
-		type AISettings,
-		type AIUpstream
-	} from '$lib/clients/settingsClient';
+	import { testAIEndpoint, type AIUpstream } from '$lib/clients/settingsClient';
+	import { aiView, commands, select } from '$lib/store';
 	import Button from '$lib/components/Button.svelte';
 
 	interface Props {
@@ -21,15 +16,18 @@
 
 	let { onbaseUrl }: Props = $props();
 
-	let settings = $state<AISettings | null>(null);
-	let loading = $state(true);
-	let saving = $state(false);
-	let error = $state('');
-	let saved = $state(false);
+	// The confirmed AI settings, with the claim a pending save made over them.
+	const settings = select(aiView);
+
+	let loading = $derived(
+		settings.current.phase === 'idle' ||
+			(settings.current.phase === 'loading' && settings.current.value === null)
+	);
+	let loadError = $derived(settings.current.phase === 'error' ? settings.current.error : '');
 
 	// The form holds one upstream (v1 is single-upstream; the shape is a list so
-	// adding a second later is not a redesign). The API key is held separately
-	// and only sent when the operator typed one, so a save never blanks a stored
+	// adding a second later is not a redesign). The API key is held separately and
+	// only sent when the operator typed one, so a save never blanks a stored
 	// credential by omission.
 	let name = $state('Default');
 	let baseUrl = $state('');
@@ -40,41 +38,45 @@
 	let testResult = $state('');
 	let testOk = $state<boolean | null>(null);
 
+	// The form is seeded once, from the first confirmed value. A later confirmed
+	// value does not overwrite what the operator is typing; the claim handles the
+	// window between a save and the read that confirms it.
+	let seeded = false;
+	$effect(() => {
+		const confirmed = settings.current.confirmed;
+		if (!confirmed || seeded) return;
+		seeded = true;
+		const upstream = confirmed.upstreams[0];
+		name = upstream?.name ?? 'Default';
+		baseUrl = upstream?.baseUrl ?? '';
+		models = upstream?.models ?? [];
+		defaultModel = confirmed.defaultModel;
+	});
+
+	// Derived rather than read off the view in the markup: the `{#if loading}`
+	// branch does not narrow the reactive view for TypeScript.
+	let hasApiKey = $derived(settings.current.value?.hasApiKey ?? false);
+	let servedTo = $derived(settings.current.confirmed?.servedTo ?? []);
+
+	// Dirty against the value the user sees, so the claim counts as saved and Save
+	// disables itself for the whole wait.
 	let dirty = $derived(
-		name !== (settings?.upstreams[0]?.name ?? 'Default') ||
-			baseUrl !== (settings?.upstreams[0]?.baseUrl ?? '') ||
-			defaultModel !== (settings?.defaultModel ?? '') ||
+		name !== (settings.current.value?.upstreams[0]?.name ?? 'Default') ||
+			baseUrl !== (settings.current.value?.upstreams[0]?.baseUrl ?? '') ||
+			defaultModel !== (settings.current.value?.defaultModel ?? '') ||
 			apiKey !== ''
 	);
 
-	// Derived rather than read off `settings` in the markup: the `{#if loading}`
-	// branch does not narrow the reactive state for TypeScript, so a direct
-	// `settings.hasApiKey` inside it fails the typecheck.
-	let hasApiKey = $derived(settings?.hasApiKey ?? false);
-	let servedTo = $derived(settings?.servedTo ?? []);
-
-	// $effect rather than a call in onMount: the report has to re-run when a save
-	// reloads the settings, not only once after the first fetch.
+	// $effect rather than a call in onMount: the report has to re-run when the
+	// value changes, not only once after the first fetch.
 	$effect(() => {
-		if (!settings) return;
-		onbaseUrl?.(settings.upstreams.find((u) => u.enabled)?.baseUrl ?? '');
+		const value = settings.current.value;
+		if (!value) return;
+		onbaseUrl?.(value.upstreams.find((upstream) => upstream.enabled)?.baseUrl ?? '');
 	});
 
-	onMount(async () => {
-		try {
-			settings = await fetchAISettings();
-			const upstream = settings.upstreams[0];
-			if (upstream) {
-				name = upstream.name;
-				baseUrl = upstream.baseUrl;
-				models = upstream.models ?? [];
-			}
-			defaultModel = settings.defaultModel;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not load AI settings';
-		} finally {
-			loading = false;
-		}
+	onMount(() => {
+		void commands.loadAISettings();
 	});
 
 	async function handleTest() {
@@ -101,34 +103,24 @@
 	}
 
 	async function handleSave() {
-		saving = true;
-		error = '';
-		saved = false;
-		try {
-			const upstream: AIUpstream = {
-				id: settings?.upstreams[0]?.id ?? 'default',
-				name: name.trim() || 'Default',
-				baseUrl: baseUrl.trim(),
-				models,
-				enabled: true
-			};
-			const payload: Parameters<typeof setAISettings>[0] = {
-				upstreams: baseUrl.trim() ? [upstream] : [],
-				defaultModel: defaultModel.trim()
-			};
-			// Only include the key when it was typed. Omitting means "keep".
-			if (apiKey !== '') {
-				payload.apiKey = apiKey;
-			}
-			await setAISettings(payload);
-			saved = true;
-			apiKey = '';
-			settings = await fetchAISettings();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not save AI settings';
-		} finally {
-			saving = false;
-		}
+		const upstream: AIUpstream = {
+			id: settings.current.value?.upstreams[0]?.id ?? 'default',
+			name: name.trim() || 'Default',
+			baseUrl: baseUrl.trim(),
+			models,
+			enabled: true
+		};
+		const payload: Parameters<typeof commands.saveAISettings>[0] = {
+			upstreams: baseUrl.trim() ? [upstream] : [],
+			defaultModel: defaultModel.trim()
+		};
+		// Only include the key when it was typed. Omitting means "keep".
+		if (apiKey !== '') payload.apiKey = apiKey;
+
+		// The store owns the claim, the reload and the wait. A rejected save is a
+		// toast, so the only thing to do here is stop offering a key that is stored.
+		const result = await commands.saveAISettings(payload);
+		if (result.ok) apiKey = '';
 	}
 </script>
 
@@ -152,7 +144,6 @@
 					autocomplete="off"
 					autocapitalize="none"
 					bind:value={baseUrl}
-					disabled={saving}
 					spellcheck="false"
 				/>
 			</div>
@@ -169,7 +160,6 @@
 					type="password"
 					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
 					bind:value={apiKey}
-					disabled={saving}
 					autocomplete="new-password"
 				/>
 				<span class="hint">
@@ -182,12 +172,12 @@
 			<div class="form-row">
 				<div class="form-field">
 					<label for="ai-name">Name</label>
-					<input id="ai-name" type="text" bind:value={name} disabled={saving} autocomplete="off" />
+					<input id="ai-name" type="text" bind:value={name} autocomplete="off" />
 				</div>
 				<div class="form-field">
 					<label for="ai-model">Default model</label>
 					{#if models.length > 0}
-						<select id="ai-model" bind:value={defaultModel} disabled={saving}>
+						<select id="ai-model" bind:value={defaultModel}>
 							<option value="">(none)</option>
 							{#each models as model (model)}
 								<option value={model}>{model}</option>
@@ -199,8 +189,7 @@
 							type="text"
 							placeholder="test the connection to list models"
 							bind:value={defaultModel}
-							disabled={saving}
-							autocomplete="off"
+									autocomplete="off"
 							spellcheck="false"
 						/>
 					{/if}
@@ -208,9 +197,7 @@
 			</div>
 
 			<div class="actions">
-				<Button variant="primary" type="submit" disabled={!dirty || saving}>
-					{saving ? 'Applying…' : 'Save'}
-				</Button>
+				<Button variant="primary" type="submit" disabled={!dirty}>Save</Button>
 				<Button
 					variant="secondary"
 					type="button"
@@ -219,9 +206,6 @@
 				>
 					{testing ? 'Testing…' : 'Test connection'}
 				</Button>
-				{#if saved}
-					<span class="saved-note">Saved. Apps pick this up on their next pass.</span>
-				{/if}
 			</div>
 
 			{#if testResult}
@@ -234,8 +218,8 @@
 		</form>
 	{/if}
 
-	{#if error}
-		<div class="error-message" role="alert">{error}</div>
+	{#if loadError}
+		<div class="error-message" role="alert">{loadError}</div>
 	{/if}
 
 	{#if servedTo.length > 0}
@@ -408,10 +392,6 @@
 		flex-wrap: wrap;
 	}
 
-	.saved-note {
-		font-size: 0.8125rem;
-		color: var(--color-success);
-	}
 
 	.test-result {
 		margin: 0;

@@ -1,21 +1,27 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { fetchTimezone, setTimezone } from '$lib/clients/settingsClient';
-	import { pollUntil } from '$lib/store/effects/convergence';
+	import { commands, select, timezoneView } from '$lib/store';
 	import { browserZone, offsetLabel, supportedZones, zoneOptions } from '$lib/utils/timezone';
 	import TimeZonePicker from './TimeZonePicker.svelte';
 
-	// Time zone state. One IANA name in, one name out, and "" is a value rather
-	// than a missing value: it means Bloud states no zone.
-	let savedZone = $state('');
+	// The confirmed zone, with the claim a pending save made projected over it.
+	const zone = select(timezoneView);
+
+	// The draft belongs to the form. "" is a value rather than a missing value: it
+	// means Bloud states no zone.
 	let draftZone = $state('');
-	let loading = $state(true);
-	let error = $state('');
-	let saving = $state(false);
-	// The acknowledgement for a changed zone. It gates Save for the same reason
-	// the address section gates it: the change recreates every container.
+	let seeded = $state('');
+
+	// Re-seed when the live value changes, and only when the operator has not
+	// typed since the last seed. See the address section for the same rule.
+	$effect(() => {
+		const live = zone.current.value ?? '';
+		if (untrack(() => draftZone) === seeded) draftZone = live;
+		seeded = live;
+	});
+
 	let acknowledged = $state(false);
 
 	// The zone list comes from the browser, which is the only place that knows
@@ -27,10 +33,14 @@
 	// A saved zone the browser does not list still has to be selectable, or the
 	// select would show the first option and a Save would change the zone the
 	// operator did not touch.
-	const options = $derived(zoneOptions(zones, [draftZone, savedZone, localZone]));
+	const options = $derived(zoneOptions(zones, [draftZone, zone.current.value ?? '', localZone]));
 
-	const zoneDirty = $derived(draftZone !== savedZone);
+	const zoneDirty = $derived(draftZone !== (zone.current.value ?? ''));
 	const saveBlocked = $derived(zoneDirty && !acknowledged);
+	const loading = $derived(
+		zone.current.phase === 'idle' || (zone.current.phase === 'loading' && zone.current.value === null)
+	);
+	const loadError = $derived(zone.current.phase === 'error' ? zone.current.error : '');
 
 	// Any edit withdraws the acknowledgement. An operator who agreed to restart
 	// the apps on one zone has not agreed to the one they picked next.
@@ -43,71 +53,25 @@
 	// to stay true. See `offsetLabel` for why the form shows one at all.
 	const offset = $derived(offsetLabel(draftZone));
 	const suggestion = $derived(
-		!savedZone && localZone && draftZone !== localZone ? localZone : ''
+		!zone.current.value && localZone && draftZone !== localZone ? localZone : ''
 	);
 
-	// The window is wider than the address setting's on purpose. Every container
-	// on the instance is recreated here, in dependency order, and a stack with a
-	// database-heavy app in it takes minutes rather than seconds.
-	const POLL = { intervalMs: 500, timeoutMs: 60_000 };
-
-	onMount(loadTimezone);
-
-	async function loadTimezone() {
-		loading = true;
-		error = '';
-		try {
-			const res = await fetchTimezone();
-			savedZone = res.zone;
-			draftZone = res.zone;
-		} catch (err: unknown) {
-			error = errMessage(err, 'Failed to load the time zone');
-		} finally {
-			loading = false;
-		}
-	}
+	onMount(() => {
+		void commands.loadTimezone();
+	});
 
 	/**
-	 * The save is an intent: the API answers 202 and the orchestrator recreates
-	 * the containers so they come back on the new clock. Read until the live zone
-	 * is the one the save accepted, so a change that was dropped reads as a
-	 * failure instead of looking like it worked.
-	 *
-	 * `pollUntil` owns the timer. A component that decides when data changes is
-	 * what `scripts/no-component-timers.mjs` refuses, and the settings effects
-	 * module already carries that shape for every other intent save here.
+	 * The store owns the save, including the long wait: this change recreates
+	 * every container, so the window is minutes rather than the 60 seconds the
+	 * form used to allow. No `saving` flag: the claim makes the draft equal the
+	 * live value, and Save disables itself.
 	 */
-	async function handleSaveTimezone() {
-		error = '';
-		saving = true;
-		try {
-			const res = await setTimezone(draftZone);
-			const live = await pollUntil(fetchTimezone, (s) => s.zone === res.zone, POLL);
-			if (live.zone === res.zone) {
-				savedZone = live.zone;
-				draftZone = live.zone;
-			} else {
-				error =
-					live.zone === ''
-						? 'Saved, but no zone is in force yet. Check the host-agent logs.'
-						: `Saved, but the zone is still ${live.zone}. Check the host-agent logs.`;
-			}
-		} catch (err: unknown) {
-			error = errMessage(err, 'Failed to save the time zone');
-		} finally {
-			saving = false;
-		}
+	function handleSaveTimezone() {
+		void commands.saveTimezone(draftZone);
 	}
 
 	function useSuggestion() {
 		draftZone = suggestion;
-	}
-
-	function errMessage(err: unknown, fallback: string): string {
-		if (err && typeof err === 'object' && 'message' in err) {
-			return String((err as { message: unknown }).message);
-		}
-		return fallback;
 	}
 </script>
 
@@ -124,7 +88,7 @@
 		{#if suggestion}
 			<p class="suggestion">
 				Your browser is in <code>{suggestion}</code>.
-				<button class="link" type="button" onclick={useSuggestion} disabled={saving}>
+				<button class="link" type="button" onclick={useSuggestion}>
 					Use it
 				</button>
 			</p>
@@ -155,12 +119,11 @@
 			<TimeZonePicker
 				zones={options}
 				value={draftZone}
-				disabled={saving}
 				describedby={zoneDirty ? 'timezone-warning-title' : undefined}
 				onchange={(zone) => (draftZone = zone)}
 			/>
-			<button class="btn btn-primary" type="submit" disabled={!zoneDirty || saving || saveBlocked}>
-				{saving ? 'Applying…' : 'Save'}
+			<button class="btn btn-primary" type="submit" disabled={!zoneDirty || saveBlocked}>
+				Save
 			</button>
 		</form>
 
@@ -169,8 +132,8 @@
 		{/if}
 	{/if}
 
-	{#if error}
-		<div class="error-message" role="alert">{error}</div>
+	{#if loadError}
+		<div class="error-message" role="alert">{loadError}</div>
 	{/if}
 </section>
 

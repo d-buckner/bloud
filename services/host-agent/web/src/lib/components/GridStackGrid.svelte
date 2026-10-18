@@ -3,7 +3,7 @@
 	import { onMount, onDestroy, mount, unmount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { GridStack } from 'gridstack';
-	import { removeWidget, saveLayout, select } from '$lib/store';
+	import { commands, select } from '$lib/store';
 	import type { GridElement } from '$lib/types';
 
 	const gridElements = select((s) => s.layout.elements);
@@ -92,7 +92,7 @@
 		if (!widget) return null;
 		return mount(WidgetWrapper, {
 			target,
-			props: { widget, onRemove: () => removeWidget(element.id) },
+			props: { widget, onRemove: () => commands.removeWidget(element.id) },
 		});
 	}
 
@@ -239,7 +239,7 @@
 		});
 
 		if (settled.length === 0) return;
-		saveLayout(settled);
+		commands.saveLayout(settled);
 	}
 
 	/**

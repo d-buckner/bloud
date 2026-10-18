@@ -1,95 +1,63 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { fetchPublicURL, setPublicURL } from '$lib/clients/settingsClient';
+	import { commands, publicUrlView, select } from '$lib/store';
 
-	// Address state. One URL in, one URL out: the scheme, the host, and the
-	// port the proxy is dialed on all live in the string the operator types,
-	// so there is nothing else to hold.
-	let savedUrl = $state('');
-	let draftUrl = $state('');
-	let loading = $state(true);
-	let error = $state('');
-	let saving = $state(false);
+	// The confirmed address, with the claim a pending save made projected over it.
+	// `value` is what to show; `confirmed` is the server's answer.
+	const address = select(publicUrlView);
+
+	// The draft is the field's own state, not the store's. A form edit is not
+	// shared state, and the store should not see every keystroke.
+	//
+	// `untrack` reads the draft without subscribing to it: typing must not re-run
+	// the effect, and a value that lands while the operator is mid-sentence must
+	// not overwrite the sentence.
+	let draft = $state('');
+	let seeded = $state('');
+
+	$effect(() => {
+		const live = address.current.value ?? '';
+		if (untrack(() => draft) === seeded) draft = live;
+		seeded = live;
+	});
+
 	// The acknowledgement for a changed address. It is a real gate on Save, not a
 	// decoration: see the callout in the markup for why.
 	let acknowledged = $state(false);
 
-	const addressDirty = $derived(draftUrl.trim() !== savedUrl);
+	const addressDirty = $derived(draft.trim() !== (address.current.value ?? ''));
 	const saveBlocked = $derived(addressDirty && !acknowledged);
+	const loading = $derived(
+		address.current.phase === 'idle' ||
+			(address.current.phase === 'loading' && address.current.value === null)
+	);
+	const loadError = $derived(address.current.phase === 'error' ? address.current.error : '');
 
 	// Any edit to the draft withdraws the acknowledgement. A user who agreed to
 	// restart the apps on one address has not agreed to whatever they typed next.
 	$effect(() => {
-		draftUrl;
+		draft;
 		acknowledged = false;
 	});
 
-	const POLL_INTERVAL = 500;
-	const APPLY_TIMEOUT = 20_000;
-
-	onMount(loadAddress);
-
-	async function loadAddress() {
-		loading = true;
-		error = '';
-		try {
-			const res = await fetchPublicURL();
-			savedUrl = res.url;
-			draftUrl = res.url;
-		} catch (err: unknown) {
-			error = errMessage(err, 'Failed to load the address');
-		} finally {
-			loading = false;
-		}
-	}
+	onMount(() => {
+		void commands.loadPublicURL();
+	});
 
 	/**
-	 * The save is an intent: the API answers 202 and the orchestrator applies
-	 * it, re-provisioning SSO behind the scenes. Poll until the live address is
-	 * the canonical one the save reported, so a change that was dropped or never
-	 * landed gets reported instead of looking like it worked.
+	 * The store owns the save: the request, the claim the user sees while the
+	 * orchestrator works, the wait until the stored origin matches, and the toast
+	 * when it does not. The component only supplies the value and the words.
 	 *
-	 * The loop condition is the whole exit story: keep going while the address
-	 * still differs and the apply window is open. Both outcomes fall out of the
-	 * loop into the same if/else, so "it matched" and "it timed out" are read off
-	 * the final value rather than tracked through breaks.
-	 *
-	 * The comparison is against the canonical origin the PUT returned rather
-	 * than the raw typed string, because "bloud.example.com" is stored as
-	 * "http://bloud.example.com" and the parser is not duplicated here.
+	 * There is no `saving` flag on purpose. The claim makes the draft equal the
+	 * live value, so `addressDirty` is false for the whole wait and Save disables
+	 * itself. Typing again makes it dirty again, and a second save supersedes the
+	 * first.
 	 */
-	async function handleSaveAddress() {
-		error = '';
-		saving = true;
-		try {
-			const res = await setPublicURL(draftUrl.trim());
-			const wanted = res.url;
-			const deadline = Date.now() + APPLY_TIMEOUT;
-			let live = await fetchPublicURL();
-			while (live.url !== wanted && Date.now() < deadline) {
-				await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-				live = await fetchPublicURL();
-			}
-			if (live.url === wanted) {
-				savedUrl = live.url;
-				draftUrl = live.url;
-			} else {
-				error = `Saved, but the address is still ${live.url}. Check the host-agent logs.`;
-			}
-		} catch (err: unknown) {
-			error = errMessage(err, 'Failed to save the address');
-		} finally {
-			saving = false;
-		}
-	}
-
-	function errMessage(err: unknown, fallback: string): string {
-		if (err && typeof err === 'object' && 'message' in err) {
-			return String((err as { message: unknown }).message);
-		}
-		return fallback;
+	function handleSaveAddress() {
+		void commands.savePublicURL(draft);
 	}
 </script>
 
@@ -144,21 +112,20 @@
 				autocapitalize="none"
 				spellcheck="false"
 				required
-				disabled={saving}
-				bind:value={draftUrl}
+				bind:value={draft}
 			/>
 			<button
 				class="btn btn-primary"
 				type="submit"
-				disabled={!addressDirty || saving || !draftUrl.trim() || saveBlocked}
+				disabled={!addressDirty || !draft.trim() || saveBlocked}
 			>
-				{saving ? 'Applying…' : 'Save'}
+				Save
 			</button>
 		</form>
 	{/if}
 
-	{#if error}
-		<div class="error-message" role="alert">{error}</div>
+	{#if loadError}
+		<div class="error-message" role="alert">{loadError}</div>
 	{/if}
 </section>
 

@@ -34,7 +34,7 @@ const BOOTSTRAP_KEY = commandKey('bootstrap', 'session');
  * stream. Safe to call twice: the command layer dedupes on the key.
  */
 export function bootstrapSession(): Promise<void> {
-	return runCommand({ key: BOOTSTRAP_KEY, kind: 'request', run: readSession }).then(() => undefined);
+	return runCommand({ key: BOOTSTRAP_KEY, run: readSession }).then(() => undefined);
 }
 
 async function readSession(): Promise<void> {

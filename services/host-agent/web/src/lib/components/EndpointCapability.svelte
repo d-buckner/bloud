@@ -1,16 +1,14 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import {
 		discoverEndpointModels,
-		fetchEndpointSettings,
-		setEndpointSettings,
 		type EndpointContract,
 		type EndpointSettings
 	} from '$lib/clients/settingsClient';
-	import { appliedTo, buildSaveRequest, SAVE_WINDOW } from '$lib/utils/endpointSave';
+	import { buildSaveRequest } from '$lib/utils/endpointSave';
+	import { commands, endpointView, select } from '$lib/store';
 	import Button from '$lib/components/Button.svelte';
-	import { pollUntil } from '$lib/store/effects/convergence';
 
 	interface Props {
 		/** Which single-endpoint contract this form reads and writes. */
@@ -33,16 +31,18 @@
 
 	let { contract, label, description, defaultName, placeholder, aiBaseUrl = '' }: Props = $props();
 
-	let settings = $state<EndpointSettings | null>(null);
-	let loading = $state(true);
-	let saving = $state(false);
-	let removing = $state(false);
-	let error = $state('');
-	let saved = $state(false);
+	// The confirmed endpoint, with the claim a pending save made over it.
+	const settings = select((state) => endpointView(state, contract));
+
+	let loading = $derived(
+		settings.current.phase === 'idle' ||
+			(settings.current.phase === 'loading' && settings.current.value === null)
+	);
+	let loadError = $derived(settings.current.phase === 'error' ? settings.current.error : '');
 
 	// Seeded in onMount rather than from `defaultName` here: a $state initialized
 	// from a prop captures only its initial value, and the field is re-seeded
-	// from the server on every load and every save anyway.
+	// from the store on every load and every save anyway.
 	let name = $state('');
 	let baseUrl = $state('');
 	let apiKey = $state('');
@@ -52,29 +52,39 @@
 	let listResult = $state('');
 	let listOk = $state<boolean | null>(null);
 
-	let dirty = $derived(
-		name !== (settings?.name ?? defaultName) ||
-			baseUrl !== (settings?.baseUrl ?? '') ||
-			model !== (settings?.model ?? '') ||
-			apiKey !== ''
-	);
-	let configured = $derived(settings?.configured ?? false);
-	let hasApiKey = $derived(settings?.hasApiKey ?? false);
-	let servedTo = $derived(settings?.servedTo ?? []);
+	// The value the form was last filled from. The form re-seeds when the shown
+	// value changes and the operator has not edited since the last seed, so a
+	// Remove empties the fields and a converged save adopts what the server stored,
+	// while an edit in progress is never overwritten.
+	let lastFilled: EndpointSettings | null = null;
 
-	onMount(async () => {
-		try {
-			settings = await fetchEndpointSettings(contract);
-			name = settings.name || defaultName;
-			baseUrl = settings.baseUrl;
-			model = settings.model;
-			// The stored list is not returned (there is none: the endpoint owns
-			// its models), so the picker starts empty until the operator lists.
-		} catch (e) {
-			error = e instanceof Error ? e.message : `Could not load ${label.toLowerCase()} settings`;
-		} finally {
-			loading = false;
-		}
+	$effect(() => {
+		const value = settings.current.value;
+		if (!value) return;
+		if (untrack(() => lastFilled) === null || untrack(() => matches(lastFilled))) fill(value);
+		lastFilled = value;
+	});
+
+	function matches(value: EndpointSettings | null): boolean {
+		if (!value) return false;
+		return (
+			name === (value.name || defaultName) && baseUrl === value.baseUrl && model === value.model
+		);
+	}
+
+	function fill(value: EndpointSettings): void {
+		name = value.name || defaultName;
+		baseUrl = value.baseUrl;
+		model = value.model;
+	}
+
+	let dirty = $derived(!matches(settings.current.value));
+	let configured = $derived(settings.current.value?.configured ?? false);
+	let hasApiKey = $derived(settings.current.value?.hasApiKey ?? false);
+	let servedTo = $derived(settings.current.confirmed?.servedTo ?? []);
+
+	onMount(() => {
+		void commands.loadEndpoint(contract);
 	});
 
 	async function handleListModels() {
@@ -87,7 +97,7 @@
 			if (res.ok && res.models) {
 				models = res.models;
 				listOk = true;
-				listResult = `Reached it. ${res.models.length} model${res.models.length === 1 ? '' : 's'} offered.`;
+				listResult = `Reached it. ${res.models.length} model${res.models.length === 1 ? '' : 's'} available.`;
 			} else {
 				listOk = false;
 				listResult = res.error ?? 'Could not reach that endpoint.';
@@ -100,52 +110,27 @@
 		}
 	}
 
-	async function save(payload: { baseUrl?: string; remove?: boolean }) {
-		saving = true;
-		error = '';
-		saved = false;
-		try {
-			const body = buildSaveRequest(
-				{ name, baseUrl, model, apiKey, defaultName },
-				payload.remove === true
-			);
-			const accepted = await setEndpointSettings(contract, body);
-			// The save is an intent: the 202 is a receipt, not a result. Wait for the
-			// stored state to reach what the save reported, so a write the orchestrator
-			// dropped is an error on screen rather than a page that looks configured.
-			const applied = appliedTo(accepted, body.apiKey);
-			settings = await pollUntil(fetchEndpointSettings.bind(null, contract), applied, SAVE_WINDOW);
-			if (!applied(settings)) {
-				throw new Error(`Saved, but the endpoint is still ${settings.baseUrl || 'unset'}. Check the logs.`);
-			}
-			// Re-seed the fields from what the server now holds rather than from what
-			// was typed: the parser may have rewritten the address, and a Remove has
-			// to empty the input instead of leaving the removed address on screen.
-			name = settings.name || defaultName;
-			baseUrl = settings.baseUrl;
-			model = settings.model;
-			apiKey = '';
-			saved = true;
-		} catch (e) {
-			error = e instanceof Error ? e.message : `Could not save ${label.toLowerCase()} settings`;
-		} finally {
-			saving = false;
-		}
+	/**
+	 * The store owns the save: the claim, the wait for the stored state, and the
+	 * toast when the write never lands. A blank key field is omitted rather than
+	 * sent blank, because omitting means "keep the stored key".
+	 */
+	async function save(): Promise<void> {
+		const body = buildSaveRequest({ name, baseUrl, model, apiKey, defaultName }, false);
+		const result = await commands.saveEndpoint(contract, body);
+		if (result.ok) apiKey = '';
 	}
 
 	function handleSave() {
-		save({});
+		void save();
 	}
 
 	function handleRemove() {
-		removing = true;
-		save({ remove: true }).finally(() => (removing = false));
+		void commands.removeEndpoint(contract);
 	}
 
 	function useAIUpstream() {
-		if (aiBaseUrl) {
-			baseUrl = aiBaseUrl;
-		}
+		if (aiBaseUrl) baseUrl = aiBaseUrl;
 	}
 </script>
 
@@ -167,11 +152,10 @@
 					autocomplete="off"
 					autocapitalize="none"
 					bind:value={baseUrl}
-					disabled={saving}
 					spellcheck="false"
 				/>
 				{#if aiBaseUrl && aiBaseUrl !== baseUrl}
-					<button type="button" class="link-button" onclick={useAIUpstream} disabled={saving}>
+					<button type="button" class="link-button" onclick={useAIUpstream}>
 						Use my AI upstream
 					</button>
 				{/if}
@@ -189,7 +173,6 @@
 					type="password"
 					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
 					bind:value={apiKey}
-					disabled={saving}
 					autocomplete="new-password"
 				/>
 				<span class="hint">
@@ -202,12 +185,12 @@
 			<div class="form-row">
 				<div class="form-field">
 					<label for="{contract}-name">Name</label>
-					<input id="{contract}-name" type="text" bind:value={name} disabled={saving} autocomplete="off" />
+					<input id="{contract}-name" type="text" bind:value={name} autocomplete="off" />
 				</div>
 				<div class="form-field">
 					<label for="{contract}-model">Model</label>
 					{#if models.length > 0}
-						<select id="{contract}-model" bind:value={model} disabled={saving}>
+						<select id="{contract}-model" bind:value={model}>
 							<option value="">(endpoint default)</option>
 							{#each models as entry (entry)}
 								<option value={entry}>{entry}</option>
@@ -219,7 +202,6 @@
 							type="text"
 							placeholder="endpoint default"
 							bind:value={model}
-							disabled={saving}
 							autocomplete="off"
 							spellcheck="false"
 						/>
@@ -228,9 +210,7 @@
 			</div>
 
 			<div class="actions">
-				<Button variant="primary" type="submit" disabled={!dirty || saving}>
-					{saving ? 'Applying…' : 'Save'}
-				</Button>
+				<Button variant="primary" type="submit" disabled={!dirty}>Save</Button>
 				<Button
 					variant="secondary"
 					type="button"
@@ -240,12 +220,7 @@
 					{listing ? 'Listing…' : 'List models'}
 				</Button>
 				{#if configured}
-					<Button variant="secondary" type="button" onclick={handleRemove} disabled={saving || removing}>
-						{removing ? 'Removing…' : 'Remove'}
-					</Button>
-				{/if}
-				{#if saved}
-					<span class="saved-note">Saved. Apps pick this up on their next pass.</span>
+					<Button variant="secondary" type="button" onclick={handleRemove}>Remove</Button>
 				{/if}
 			</div>
 
@@ -259,8 +234,8 @@
 		</form>
 	{/if}
 
-	{#if error}
-		<div class="error-message" role="alert">{error}</div>
+	{#if loadError}
+		<div class="error-message" role="alert">{loadError}</div>
 	{/if}
 
 	{#if servedTo.length > 0}
@@ -394,10 +369,6 @@
 		flex-wrap: wrap;
 	}
 
-	.saved-note {
-		font-size: 0.875rem;
-		color: var(--color-text-muted);
-	}
 
 	.test-result {
 		margin: 0;
