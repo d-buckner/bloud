@@ -112,15 +112,22 @@ test.describe('podly transcription settings (Settings -> AI)', () => {
       await page.waitForLoadState('domcontentloaded');
       const section = page.locator('[data-contract="transcription"]');
       await expect(section).toBeVisible({ timeout: 15_000 });
-
-      await section.locator('#transcription-model').fill('whisper-1');
-      await section.getByRole('button', { name: /^Save$/ }).click();
-      await expect(page.getByText('Saved. Apps pick this up on their next pass.')).toBeVisible({
+      // Seed before editing: an empty base URL would submit a removal.
+      await expect(section.locator('#transcription-base-url')).toHaveValue(ENDPOINT, {
         timeout: 15_000,
       });
 
+      await section.locator('#transcription-model').fill('whisper-1');
+      await section.getByRole('button', { name: /^Save$/ }).click();
+
+      // The setting is written by an intent, and the form shows its claim before
+      // the orchestrator applies it. So the field is not the completion signal:
+      // wait for the applied value, which is what this test is about.
+      await expect
+        .poll(async () => (await apiLib.getTranscriptionSettings()).model, { timeout: 60_000 })
+        .toBe('whisper-1');
+
       const live = await apiLib.getTranscriptionSettings();
-      expect(live.model).toBe('whisper-1');
       expect(live.hasApiKey, 'editing another field dropped the stored key').toBe(true);
     } finally {
       await restore(apiLib, before);
@@ -138,15 +145,23 @@ test.describe('podly transcription settings (Settings -> AI)', () => {
     const section = page.locator('[data-contract="transcription"]');
     await expect(section).toBeVisible({ timeout: 15_000 });
 
+    // Seed before removing, so Remove is the button for this endpoint.
+    await expect(section.locator('#transcription-base-url')).toHaveValue(ENDPOINT, {
+      timeout: 15_000,
+    });
     await section.getByRole('button', { name: /^Remove$/ }).click();
-    await expect(section.locator('#transcription-base-url')).toHaveValue('', { timeout: 15_000 });
 
-    const live = await apiLib.getTranscriptionSettings();
-    expect(live.configured).toBe(false);
-    expect(
-      live.hasApiKey,
-      'a key left behind under a removed endpoint is a credential nothing owns',
-    ).toBe(false);
+    // The field empties at once, because it shows the claim. The removal is real
+    // when the applied setting and its credential are both gone.
+    await expect
+      .poll(
+        async () => {
+          const live = await apiLib.getTranscriptionSettings();
+          return { configured: live.configured, hasApiKey: live.hasApiKey };
+        },
+        { timeout: 60_000 }
+      )
+      .toEqual({ configured: false, hasApiKey: false });
   });
 });
 
