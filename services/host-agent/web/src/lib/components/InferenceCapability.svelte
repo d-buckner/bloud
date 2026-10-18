@@ -3,89 +3,62 @@
 	import { onMount } from 'svelte';
 	import { testAIEndpoint, type AIUpstream } from '$lib/clients/settingsClient';
 	import { aiView, commands, select } from '$lib/store';
+	import { draft, sameText } from '$lib/store/draft.svelte';
 	import Button from '$lib/components/Button.svelte';
 
-	interface Props {
-		/**
-		 * Reports the enabled chat base URL upward. The section hands it to the
-		 * transcription and embeddings forms as a one-click fill, and this is the
-		 * only component that knows when it changes.
-		 */
-		onbaseUrl?: (url: string) => void;
-	}
-
-	let { onbaseUrl }: Props = $props();
-
-	// The confirmed AI settings, with the claim a pending save made over them.
-	const settings = select(aiView);
-
-	let loading = $derived(
-		settings.current.phase === 'idle' ||
-			(settings.current.phase === 'loading' && settings.current.value === null)
-	);
-	let loadError = $derived(settings.current.phase === 'error' ? settings.current.error : '');
+	// No props. The chat base URL used to travel upward through a callback, which
+	// meant the parent kept a copy and an effect kept the copy current. The parent
+	// selects `aiView` instead, because the value is store shown.
+	const view = select(aiView);
+	const shown = $derived(view.current);
 
 	// The form holds one upstream (v1 is single-upstream; the shape is a list so
-	// adding a second later is not a redesign). The API key is held separately and
-	// only sent when the operator typed one, so a save never blanks a stored
-	// credential by omission.
-	let name = $state('Default');
-	let baseUrl = $state('');
+	// adding a second later is not a redesign). Each edit falls back to the live
+	// value, so a save landing elsewhere cannot overwrite a field being typed.
+	const name = draft(() => shown.value?.upstreams[0]?.name || 'Default', sameText);
+	const baseUrl = draft(() => shown.value?.upstreams[0]?.baseUrl ?? '', sameText);
+	const defaultModel = draft(() => shown.value?.defaultModel ?? '', sameText);
+	// The key is write-only: the API never returns it, so blank means "keep".
 	let apiKey = $state('');
-	let defaultModel = $state('');
+
+	const hasApiKey = $derived(shown.value?.hasApiKey ?? false);
+	const servedTo = $derived(shown.confirmed?.servedTo ?? []);
+	const loading = $derived(
+		shown.phase === 'idle' ||
+			(shown.phase === 'loading' && shown.value === null)
+	);
+	const loadError = $derived(shown.phase === 'error' ? shown.error : '');
+
+	// The probe's answer, which is this form's own: it lists the models a
+	// candidate endpoint offers, and nothing else reads it.
 	let models = $state<string[]>([]);
 	let testing = $state(false);
 	let testResult = $state('');
 	let testOk = $state<boolean | null>(null);
 
-	// The form is seeded once, from the first confirmed value. A later confirmed
-	// value does not overwrite what the operator is typing; the claim handles the
-	// window between a save and the read that confirms it.
-	let seeded = false;
-	$effect(() => {
-		const confirmed = settings.current.confirmed;
-		if (!confirmed || seeded) return;
-		seeded = true;
-		const upstream = confirmed.upstreams[0];
-		name = upstream?.name ?? 'Default';
-		baseUrl = upstream?.baseUrl ?? '';
-		models = upstream?.models ?? [];
-		defaultModel = confirmed.defaultModel;
-	});
-
-	// Derived rather than read off the view in the markup: the `{#if loading}`
-	// branch does not narrow the reactive view for TypeScript.
-	let hasApiKey = $derived(settings.current.value?.hasApiKey ?? false);
-	let servedTo = $derived(settings.current.confirmed?.servedTo ?? []);
-
-	// Dirty against the value the user sees, so the claim counts as saved and Save
-	// disables itself for the whole wait.
-	let dirty = $derived(
-		name !== (settings.current.value?.upstreams[0]?.name ?? 'Default') ||
-			baseUrl !== (settings.current.value?.upstreams[0]?.baseUrl ?? '') ||
-			defaultModel !== (settings.current.value?.defaultModel ?? '') ||
-			apiKey !== ''
+	// The stored list is the fallback, so a configured endpoint shows its models
+	// before anyone runs a test.
+	const modelOptions = $derived(
+		models.length > 0 ? models : (shown.value?.upstreams[0]?.models ?? [])
 	);
 
-	// $effect rather than a call in onMount: the report has to re-run when the
-	// value changes, not only once after the first fetch.
-	$effect(() => {
-		const value = settings.current.value;
-		if (!value) return;
-		onbaseUrl?.(value.upstreams.find((upstream) => upstream.enabled)?.baseUrl ?? '');
-	});
+	// Dirty against the value the user sees, so the claim makes the form clean and
+	// Save disables itself for the whole wait.
+	const dirty = $derived(
+		name.dirty || baseUrl.dirty || defaultModel.dirty || apiKey !== ''
+	);
 
 	onMount(() => {
 		void commands.loadAISettings();
 	});
 
 	async function handleTest() {
-		if (!baseUrl.trim()) return;
+		if (!baseUrl.value.trim()) return;
 		testing = true;
 		testResult = '';
 		testOk = null;
 		try {
-			const res = await testAIEndpoint(baseUrl.trim(), apiKey || undefined);
+			const res = await testAIEndpoint(baseUrl.value.trim(), apiKey || undefined);
 			if (res.ok && res.models) {
 				models = res.models;
 				testOk = true;
@@ -102,25 +75,36 @@
 		}
 	}
 
-	async function handleSave() {
+	function clearFields(): void {
+		name.clear();
+		baseUrl.clear();
+		defaultModel.clear();
+		apiKey = '';
+	}
+
+	/**
+	 * The store owns the claim, the reload and the wait. Clearing the edits at the
+	 * moment of submit hands the fields to the claim, so the typed values stay on
+	 * screen, the stored ones replace them, and a rejected save raises a toast and
+	 * falls back to the confirmed settings.
+	 */
+	function handleSave(): void {
 		const upstream: AIUpstream = {
-			id: settings.current.value?.upstreams[0]?.id ?? 'default',
-			name: name.trim() || 'Default',
-			baseUrl: baseUrl.trim(),
-			models,
+			id: shown.value?.upstreams[0]?.id ?? 'default',
+			name: name.value.trim() || 'Default',
+			baseUrl: baseUrl.value.trim(),
+			models: modelOptions,
 			enabled: true
 		};
 		const payload: Parameters<typeof commands.saveAISettings>[0] = {
-			upstreams: baseUrl.trim() ? [upstream] : [],
-			defaultModel: defaultModel.trim()
+			upstreams: baseUrl.value.trim() ? [upstream] : [],
+			defaultModel: defaultModel.value.trim()
 		};
 		// Only include the key when it was typed. Omitting means "keep".
 		if (apiKey !== '') payload.apiKey = apiKey;
 
-		// The store owns the claim, the reload and the wait. A rejected save is a
-		// toast, so the only thing to do here is stop offering a key that is stored.
-		const result = await commands.saveAISettings(payload);
-		if (result.ok) apiKey = '';
+		void commands.saveAISettings(payload);
+		clearFields();
 	}
 </script>
 
@@ -143,7 +127,8 @@
 					inputmode="url"
 					autocomplete="off"
 					autocapitalize="none"
-					bind:value={baseUrl}
+					value={baseUrl.value}
+					oninput={(e) => baseUrl.set(e.currentTarget.value)}
 					spellcheck="false"
 				/>
 			</div>
@@ -159,7 +144,8 @@
 					id="ai-key"
 					type="password"
 					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
-					bind:value={apiKey}
+					value={apiKey}
+					oninput={(e) => (apiKey = e.currentTarget.value)}
 					autocomplete="new-password"
 				/>
 				<span class="hint">
@@ -172,14 +158,24 @@
 			<div class="form-row">
 				<div class="form-field">
 					<label for="ai-name">Name</label>
-					<input id="ai-name" type="text" bind:value={name} autocomplete="off" />
+					<input
+						id="ai-name"
+						type="text"
+						value={name.value}
+						oninput={(e) => name.set(e.currentTarget.value)}
+						autocomplete="off"
+					/>
 				</div>
 				<div class="form-field">
 					<label for="ai-model">Default model</label>
-					{#if models.length > 0}
-						<select id="ai-model" bind:value={defaultModel}>
+					{#if modelOptions.length > 0}
+						<select
+							id="ai-model"
+							value={defaultModel.value}
+							onchange={(e) => defaultModel.set(e.currentTarget.value)}
+						>
 							<option value="">(none)</option>
-							{#each models as model (model)}
+							{#each modelOptions as model (model)}
 								<option value={model}>{model}</option>
 							{/each}
 						</select>
@@ -188,7 +184,8 @@
 							id="ai-model"
 							type="text"
 							placeholder="test the connection to list models"
-							bind:value={defaultModel}
+							value={defaultModel.value}
+							oninput={(e) => defaultModel.set(e.currentTarget.value)}
 									autocomplete="off"
 							spellcheck="false"
 						/>
@@ -202,7 +199,7 @@
 					variant="secondary"
 					type="button"
 					onclick={handleTest}
-					disabled={!baseUrl.trim() || testing}
+					disabled={!baseUrl.value.trim() || testing}
 				>
 					{testing ? 'Testing…' : 'Test connection'}
 				</Button>

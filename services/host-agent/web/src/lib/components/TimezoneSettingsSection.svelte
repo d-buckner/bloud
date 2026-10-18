@@ -1,28 +1,24 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount, untrack } from 'svelte';
+	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
 	import { commands, select, timezoneView } from '$lib/store';
+	import { draft } from '$lib/store/draft.svelte';
 	import { browserZone, offsetLabel, supportedZones, zoneOptions } from '$lib/utils/timezone';
 	import TimeZonePicker from './TimeZonePicker.svelte';
 
 	// The confirmed zone, with the claim a pending save made projected over it.
-	const zone = select(timezoneView);
+	const view = select(timezoneView);
+	const shown = $derived(view.current);
 
-	// The draft belongs to the form. "" is a value rather than a missing value: it
-	// means Bloud states no zone.
-	let draftZone = $state('');
-	let seeded = $state('');
+	// The field's edit, falling back to the live value. "" is a value rather than
+	// a missing value: it means Bloud states no zone, and the draft keeps it.
+	const zone = draft(() => shown.value ?? '');
 
-	// Re-seed when the live value changes, and only when the operator has not
-	// typed since the last seed. See the address section for the same rule.
-	$effect(() => {
-		const live = zone.current.value ?? '';
-		if (untrack(() => draftZone) === seeded) draftZone = live;
-		seeded = live;
-	});
-
-	let acknowledged = $state(false);
+	// See the address section: the acknowledgement names the value it agreed to,
+	// so an edit withdraws it without an effect that resets a flag.
+	let acknowledgedFor = $state<string | null>(null);
+	const acknowledged = $derived(acknowledgedFor === zone.value.trim());
 
 	// The zone list comes from the browser, which is the only place that knows
 	// which zones exist without shipping a copy of the zone database. See
@@ -32,46 +28,43 @@
 
 	// A saved zone the browser does not list still has to be selectable, or the
 	// select would show the first option and a Save would change the zone the
-	// operator did not touch.
-	const options = $derived(zoneOptions(zones, [draftZone, zone.current.value ?? '', localZone]));
+	// operator did not touch. The list needs the live value and the edit.
+	const options = $derived(zoneOptions(zones, [zone.value, shown.value ?? '', localZone]));
 
-	const zoneDirty = $derived(draftZone !== (zone.current.value ?? ''));
-	const saveBlocked = $derived(zoneDirty && !acknowledged);
+	const saveBlocked = $derived(zone.dirty && !acknowledged);
 	const loading = $derived(
-		zone.current.phase === 'idle' || (zone.current.phase === 'loading' && zone.current.value === null)
+		shown.phase === 'idle' ||
+			(shown.phase === 'loading' && shown.value === null)
 	);
-	const loadError = $derived(zone.current.phase === 'error' ? zone.current.error : '');
-
-	// Any edit withdraws the acknowledgement. An operator who agreed to restart
-	// the apps on one zone has not agreed to the one they picked next.
-	$effect(() => {
-		draftZone;
-		acknowledged = false;
-	});
+	const loadError = $derived(shown.phase === 'error' ? shown.error : '');
 
 	// The offset line is a fact about the zone, not a clock, so it needs no timer
 	// to stay true. See `offsetLabel` for why the form shows one at all.
-	const offset = $derived(offsetLabel(draftZone));
+	const offset = $derived(offsetLabel(zone.value));
 	const suggestion = $derived(
-		!zone.current.value && localZone && draftZone !== localZone ? localZone : ''
+		!shown.value && localZone && zone.value !== localZone ? localZone : ''
 	);
 
 	onMount(() => {
 		void commands.loadTimezone();
 	});
 
+	function acknowledge(checked: boolean) {
+		acknowledgedFor = checked ? zone.value.trim() : null;
+	}
+
 	/**
-	 * The store owns the save, including the long wait: this change recreates
-	 * every container, so the window is minutes rather than the 60 seconds the
-	 * form used to allow. No `saving` flag: the claim makes the draft equal the
-	 * live value, and Save disables itself.
+	 * The store owns the save, including the long wait. `clear()` hands the field
+	 * to the claim: the value stays on screen, the poll settles when the live
+	 * clock matches, and a rejected save falls back to the confirmed zone.
 	 */
 	function handleSaveTimezone() {
-		void commands.saveTimezone(draftZone);
+		void commands.saveTimezone(zone.value);
+		zone.clear();
 	}
 
 	function useSuggestion() {
-		draftZone = suggestion;
+		zone.set(suggestion);
 	}
 </script>
 
@@ -94,7 +87,7 @@
 			</p>
 		{/if}
 
-		{#if zoneDirty}
+		{#if zone.dirty}
 			<aside class="callout" aria-labelledby="timezone-warning-title">
 				<span class="callout-icon" aria-hidden="true">
 					<Icon name="warning" size={16} />
@@ -108,7 +101,11 @@
 						it. Nothing is deleted and nobody is signed out.
 					</p>
 					<label class="acknowledge">
-						<input type="checkbox" bind:checked={acknowledged} />
+						<input
+							type="checkbox"
+							checked={acknowledged}
+							onchange={(e) => acknowledge(e.currentTarget.checked)}
+						/>
 						I understand my apps will briefly restart.
 					</label>
 				</div>
@@ -118,11 +115,11 @@
 		<form class="timezone-form" onsubmit={(e) => { e.preventDefault(); handleSaveTimezone(); }}>
 			<TimeZonePicker
 				zones={options}
-				value={draftZone}
-				describedby={zoneDirty ? 'timezone-warning-title' : undefined}
-				onchange={(zone) => (draftZone = zone)}
+				value={zone.value}
+				describedby={zone.dirty ? 'timezone-warning-title' : undefined}
+				onchange={(picked) => zone.set(picked)}
 			/>
-			<button class="btn btn-primary" type="submit" disabled={!zoneDirty || saveBlocked}>
+			<button class="btn btn-primary" type="submit" disabled={!zone.dirty || saveBlocked}>
 				Save
 			</button>
 		</form>

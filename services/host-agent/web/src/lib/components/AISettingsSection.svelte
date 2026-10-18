@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 	import EndpointCapability from '$lib/components/EndpointCapability.svelte';
 	import InferenceCapability from '$lib/components/InferenceCapability.svelte';
-
-	let chatBaseUrl = $state('');
+	import { aiView, select } from '$lib/store';
 
 	// Held as constants rather than inline attributes: each one names what the form
 	// is for, and wrapping it inside a tag would bury it.
@@ -12,13 +11,12 @@
 	const EMBEDDINGS_DESCRIPTION =
 		'Text to vectors. Changing the model later will not match stored vectors.';
 
-	// The chat form owns its own state. It reports the one fact the other two
-	// forms use: the address worth offering as a one-click fill, because one
-	// gateway serving every capability is the common case and a server that
-	// answers chat is not known to answer either other route.
-	function onbaseUrl(url: string) {
-		chatBaseUrl = url;
-	}
+	// One gateway serving every capability is the common case, so the chat
+	// upstream address is offered to the other two forms as a one-click fill. It is
+	// store state, so this section selects it instead of receiving a report from a
+	// child and keeping a copy current with an effect.
+	const ai = select(aiView);
+	const chatBaseUrl = $derived(ai.current.value?.upstreams.find((upstream) => upstream.enabled)?.baseUrl ?? '');
 </script>
 
 <section class="section ai-section">
@@ -28,7 +26,7 @@
 	</p>
 
 	<div class="ai-capabilities">
-		<InferenceCapability {onbaseUrl} />
+		<InferenceCapability />
 
 		<EndpointCapability
 			contract="transcription"

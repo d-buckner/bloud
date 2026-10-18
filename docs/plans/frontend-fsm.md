@@ -52,8 +52,10 @@ Not landed, and named so the next reader does not assume otherwise:
   only public surface), `reducers/settings.ts` (confirmed values only), and the
   views in `selectors.ts` that project a pending claim over them. The four
   settings forms and the users section lost their local convergence loops, their
-  `saving` booleans and their inline save errors. `check:no-component-writes`
-  fails a mutating client call outside `store/commands/`.
+  `saving` booleans and their inline save errors. `draft.svelte.ts` holds the
+  editable value, so no form copies store state into local state with an effect.
+  `check:no-component-writes` fails a mutating client call outside
+  `store/commands/`.
 - **The rest of phase 4.** The setup wizard still waits for Authentik on its own,
   the route-level reads still run `onMount`, and the catalog and external app
   reads are still component-local. The write-path check covers writes only,
@@ -627,6 +629,32 @@ smaller claim than replaying history, and the transport already provides it.
   server holds the facts, the snapshot contract refills the store in one request,
   and a client-side cache of them would be a second source of truth with worse
   latency than the first.
+
+### An editable value falls back to the live one
+
+`store/draft.svelte.ts` is the other half of the binding. A form shows a value the
+store owns and holds an edit the operator has not submitted. Keeping the second
+as a copy of the first grows a sync effect, then a latch to stop that effect
+overwriting a keystroke, then a second latch for the day the copy has to be
+reset. The primitive replaces all three. `value` is the edit when one is present
+and the live value otherwise, `dirty` compares them, and `set` and `clear` are
+the only writers.
+
+Two properties follow from the shape, and neither is a rule someone has to
+remember. While an edit is present the live value is not read at all, so a store
+update cannot reach the field. With no edit, `dirty` does not read the live value
+either, so an untouched form does not subscribe through it.
+
+The one rule the caller owes is: **call `clear()` when the command starts, not
+when it finishes.** From that moment the pending claim is the value to show. The
+field keeps the submitted text, adopts the server's canonical form when the claim
+is refined, and falls back to the confirmed value when the command fails. The
+form stops owning the value the instant it asks for a change.
+
+That rule is why the settings page has no sync effects left. The address and time
+zone acknowledgement gates are a fact about a string (`acknowledgedFor ===
+value.trim()`) rather than a boolean reset by an effect, and the chat base URL is
+selected by `AISettingsSection` instead of reported upward through a callback.
 
 ## Optimistic state is an overlay, not a write
 

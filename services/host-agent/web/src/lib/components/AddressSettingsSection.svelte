@@ -1,63 +1,53 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount, untrack } from 'svelte';
+	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
 	import { commands, publicUrlView, select } from '$lib/store';
+	import { draft, sameText } from '$lib/store/draft.svelte';
 
 	// The confirmed address, with the claim a pending save made projected over it.
-	// `value` is what to show; `confirmed` is the server's answer.
-	const address = select(publicUrlView);
+	const view = select(publicUrlView);
+	const shown = $derived(view.current);
 
-	// The draft is the field's own state, not the store's. A form edit is not
-	// shared state, and the store should not see every keystroke.
-	//
-	// `untrack` reads the draft without subscribing to it: typing must not re-run
-	// the effect, and a value that lands while the operator is mid-sentence must
-	// not overwrite the sentence.
-	let draft = $state('');
-	let seeded = $state('');
+	// The field's edit, falling back to the live value. While the operator types,
+	// the live value is not read, so a save landing elsewhere cannot reach the
+	// field. See `draft.svelte.ts` for the whole rule.
+	const url = draft(() => shown.value ?? '', sameText);
 
-	$effect(() => {
-		const live = address.current.value ?? '';
-		if (untrack(() => draft) === seeded) draft = live;
-		seeded = live;
-	});
+	// The acknowledgement is a fact about a value, not a flag to reset: the
+	// operator agreed to restart the apps on this exact address, not on whatever
+	// they type next.
+	let acknowledgedFor = $state<string | null>(null);
+	const acknowledged = $derived(acknowledgedFor === url.value.trim());
 
-	// The acknowledgement for a changed address. It is a real gate on Save, not a
-	// decoration: see the callout in the markup for why.
-	let acknowledged = $state(false);
-
-	const addressDirty = $derived(draft.trim() !== (address.current.value ?? ''));
-	const saveBlocked = $derived(addressDirty && !acknowledged);
+	const saveBlocked = $derived(url.dirty && !acknowledged);
 	const loading = $derived(
-		address.current.phase === 'idle' ||
-			(address.current.phase === 'loading' && address.current.value === null)
+		shown.phase === 'idle' ||
+			(shown.phase === 'loading' && shown.value === null)
 	);
-	const loadError = $derived(address.current.phase === 'error' ? address.current.error : '');
-
-	// Any edit to the draft withdraws the acknowledgement. A user who agreed to
-	// restart the apps on one address has not agreed to whatever they typed next.
-	$effect(() => {
-		draft;
-		acknowledged = false;
-	});
+	const loadError = $derived(shown.phase === 'error' ? shown.error : '');
 
 	onMount(() => {
 		void commands.loadPublicURL();
 	});
 
+	function acknowledge(checked: boolean) {
+		acknowledgedFor = checked ? url.value.trim() : null;
+	}
+
 	/**
 	 * The store owns the save: the request, the claim the user sees while the
 	 * orchestrator works, the wait until the stored origin matches, and the toast
-	 * when it does not. The component only supplies the value and the words.
+	 * when it does not. The component supplies the value and the words.
 	 *
-	 * There is no `saving` flag on purpose. The claim makes the draft equal the
-	 * live value, so `addressDirty` is false for the whole wait and Save disables
-	 * itself. Typing again makes it dirty again, and a second save supersedes the
-	 * first.
+	 * `clear()` is what makes the form stop owning the value. From here the field
+	 * shows the claim, so Save is disabled for the whole wait, the canonical
+	 * origin replaces the typed text when the claim is refined, and a rejected
+	 * save falls back to the confirmed address with no rollback code.
 	 */
 	function handleSaveAddress() {
-		void commands.savePublicURL(draft);
+		void commands.savePublicURL(url.value);
+		url.clear();
 	}
 </script>
 
@@ -79,7 +69,7 @@
 		     actually changed, states the blast radius, and has to be acknowledged
 		     before Save works. The input is described by it, so the warning is read
 		     with the field rather than hoping the user scrolled past it. -->
-		{#if addressDirty}
+		{#if url.dirty}
 			<aside class="callout" aria-labelledby="address-warning-title">
 				<span class="callout-icon" aria-hidden="true">
 					<Icon name="warning" size={16} />
@@ -93,7 +83,11 @@
 						Nothing is deleted and nobody is signed out.
 					</p>
 					<label class="acknowledge">
-						<input type="checkbox" bind:checked={acknowledged} />
+						<input
+							type="checkbox"
+							checked={acknowledged}
+							onchange={(e) => acknowledge(e.currentTarget.checked)}
+						/>
 						I understand my apps will briefly restart.
 					</label>
 				</div>
@@ -106,18 +100,19 @@
 				class="address-input"
 				placeholder="https://bloud.example.com"
 				aria-label="Public address"
-				aria-describedby={addressDirty ? 'address-warning-title' : undefined}
+				aria-describedby={url.dirty ? 'address-warning-title' : undefined}
 				inputmode="url"
 				autocomplete="off"
 				autocapitalize="none"
 				spellcheck="false"
 				required
-				bind:value={draft}
+				value={url.value}
+				oninput={(e) => url.set(e.currentTarget.value)}
 			/>
 			<button
 				class="btn btn-primary"
 				type="submit"
-				disabled={!addressDirty || !draft.trim() || saveBlocked}
+				disabled={!url.dirty || !url.value.trim() || saveBlocked}
 			>
 				Save
 			</button>

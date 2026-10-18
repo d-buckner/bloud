@@ -1,13 +1,10 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-	import { onMount, untrack } from 'svelte';
-	import {
-		discoverEndpointModels,
-		type EndpointContract,
-		type EndpointSettings
-	} from '$lib/clients/settingsClient';
+	import { onMount } from 'svelte';
+	import { discoverEndpointModels, type EndpointContract } from '$lib/clients/settingsClient';
 	import { buildSaveRequest } from '$lib/utils/endpointSave';
 	import { commands, endpointView, select } from '$lib/store';
+	import { draft, sameText } from '$lib/store/draft.svelte';
 	import Button from '$lib/components/Button.svelte';
 
 	interface Props {
@@ -32,68 +29,45 @@
 	let { contract, label, description, defaultName, placeholder, aiBaseUrl = '' }: Props = $props();
 
 	// The confirmed endpoint, with the claim a pending save made over it.
-	const settings = select((state) => endpointView(state, contract));
+	const view = select((state) => endpointView(state, contract));
+	const shown = $derived(view.current);
 
-	let loading = $derived(
-		settings.current.phase === 'idle' ||
-			(settings.current.phase === 'loading' && settings.current.value === null)
-	);
-	let loadError = $derived(settings.current.phase === 'error' ? settings.current.error : '');
-
-	// Seeded in onMount rather than from `defaultName` here: a $state initialized
-	// from a prop captures only its initial value, and the field is re-seeded
-	// from the store on every load and every save anyway.
-	let name = $state('');
-	let baseUrl = $state('');
+	// Three edits that fall back to the live value, and one that has no live
+	// value at all. The API never returns the credential, so a stale key can never
+	// be shown and a blank field means "keep the stored one".
+	const name = draft(() => shown.value?.name || defaultName, sameText);
+	const baseUrl = draft(() => shown.value?.baseUrl ?? '', sameText);
+	const model = draft(() => shown.value?.model ?? '', sameText);
 	let apiKey = $state('');
-	let model = $state('');
+
+	const dirty = $derived(name.dirty || baseUrl.dirty || model.dirty || apiKey !== '');
+	const configured = $derived(shown.value?.configured ?? false);
+	const hasApiKey = $derived(shown.value?.hasApiKey ?? false);
+	const servedTo = $derived(shown.confirmed?.servedTo ?? []);
+	const loading = $derived(
+		shown.phase === 'idle' ||
+			(shown.phase === 'loading' && shown.value === null)
+	);
+	const loadError = $derived(shown.phase === 'error' ? shown.error : '');
+
+	// The probe's answer, which is not store state: it belongs to this form and
+	// nothing else reads it.
 	let models = $state<string[]>([]);
 	let listing = $state(false);
 	let listResult = $state('');
 	let listOk = $state<boolean | null>(null);
-
-	// The value the form was last filled from. The form re-seeds when the shown
-	// value changes and the operator has not edited since the last seed, so a
-	// Remove empties the fields and a converged save adopts what the server stored,
-	// while an edit in progress is never overwritten.
-	let lastFilled: EndpointSettings | null = null;
-
-	$effect(() => {
-		const value = settings.current.value;
-		if (!value) return;
-		if (untrack(() => lastFilled) === null || untrack(() => matches(lastFilled))) fill(value);
-		lastFilled = value;
-	});
-
-	function matches(value: EndpointSettings | null): boolean {
-		if (!value) return false;
-		return (
-			name === (value.name || defaultName) && baseUrl === value.baseUrl && model === value.model
-		);
-	}
-
-	function fill(value: EndpointSettings): void {
-		name = value.name || defaultName;
-		baseUrl = value.baseUrl;
-		model = value.model;
-	}
-
-	let dirty = $derived(!matches(settings.current.value));
-	let configured = $derived(settings.current.value?.configured ?? false);
-	let hasApiKey = $derived(settings.current.value?.hasApiKey ?? false);
-	let servedTo = $derived(settings.current.confirmed?.servedTo ?? []);
 
 	onMount(() => {
 		void commands.loadEndpoint(contract);
 	});
 
 	async function handleListModels() {
-		if (!baseUrl.trim()) return;
+		if (!baseUrl.value.trim()) return;
 		listing = true;
 		listResult = '';
 		listOk = null;
 		try {
-			const res = await discoverEndpointModels(contract, baseUrl.trim(), apiKey || undefined);
+			const res = await discoverEndpointModels(contract, baseUrl.value.trim(), apiKey || undefined);
 			if (res.ok && res.models) {
 				models = res.models;
 				listOk = true;
@@ -111,26 +85,35 @@
 	}
 
 	/**
-	 * The store owns the save: the claim, the wait for the stored state, and the
-	 * toast when the write never lands. A blank key field is omitted rather than
-	 * sent blank, because omitting means "keep the stored key".
+	 * Clear every edit at the moment the command starts, so the claim becomes the
+	 * value to show. The saved endpoint then replaces what was typed, and a
+	 * rejected save falls back to the confirmed one. A typed key is cleared with
+	 * the rest: the form never holds a credential for a write the server did not
+	 * accept, and the toast names the failure.
 	 */
-	async function save(): Promise<void> {
-		const body = buildSaveRequest({ name, baseUrl, model, apiKey, defaultName }, false);
-		const result = await commands.saveEndpoint(contract, body);
-		if (result.ok) apiKey = '';
+	function clearFields(): void {
+		name.clear();
+		baseUrl.clear();
+		model.clear();
+		apiKey = '';
 	}
 
-	function handleSave() {
-		void save();
+	function handleSave(): void {
+		const body = buildSaveRequest(
+			{ name: name.value, baseUrl: baseUrl.value, model: model.value, apiKey, defaultName },
+			false
+		);
+		void commands.saveEndpoint(contract, body);
+		clearFields();
 	}
 
-	function handleRemove() {
+	function handleRemove(): void {
+		clearFields();
 		void commands.removeEndpoint(contract);
 	}
 
-	function useAIUpstream() {
-		if (aiBaseUrl) baseUrl = aiBaseUrl;
+	function useAIUpstream(): void {
+		if (aiBaseUrl) baseUrl.set(aiBaseUrl);
 	}
 </script>
 
@@ -151,10 +134,11 @@
 					inputmode="url"
 					autocomplete="off"
 					autocapitalize="none"
-					bind:value={baseUrl}
+					value={baseUrl.value}
+					oninput={(e) => baseUrl.set(e.currentTarget.value)}
 					spellcheck="false"
 				/>
-				{#if aiBaseUrl && aiBaseUrl !== baseUrl}
+				{#if aiBaseUrl && aiBaseUrl !== baseUrl.value}
 					<button type="button" class="link-button" onclick={useAIUpstream}>
 						Use my AI upstream
 					</button>
@@ -172,7 +156,8 @@
 					id="{contract}-key"
 					type="password"
 					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
-					bind:value={apiKey}
+					value={apiKey}
+					oninput={(e) => (apiKey = e.currentTarget.value)}
 					autocomplete="new-password"
 				/>
 				<span class="hint">
@@ -185,12 +170,22 @@
 			<div class="form-row">
 				<div class="form-field">
 					<label for="{contract}-name">Name</label>
-					<input id="{contract}-name" type="text" bind:value={name} autocomplete="off" />
+					<input
+						id="{contract}-name"
+						type="text"
+						value={name.value}
+						oninput={(e) => name.set(e.currentTarget.value)}
+						autocomplete="off"
+					/>
 				</div>
 				<div class="form-field">
 					<label for="{contract}-model">Model</label>
 					{#if models.length > 0}
-						<select id="{contract}-model" bind:value={model}>
+						<select
+						id="{contract}-model"
+						value={model.value}
+						onchange={(e) => model.set(e.currentTarget.value)}
+					>
 							<option value="">(endpoint default)</option>
 							{#each models as entry (entry)}
 								<option value={entry}>{entry}</option>
@@ -201,7 +196,8 @@
 							id="{contract}-model"
 							type="text"
 							placeholder="endpoint default"
-							bind:value={model}
+							value={model.value}
+							oninput={(e) => model.set(e.currentTarget.value)}
 							autocomplete="off"
 							spellcheck="false"
 						/>
@@ -215,7 +211,7 @@
 					variant="secondary"
 					type="button"
 					onclick={handleListModels}
-					disabled={!baseUrl.trim() || listing}
+					disabled={!baseUrl.value.trim() || listing}
 				>
 					{listing ? 'Listing…' : 'List models'}
 				</Button>
