@@ -31,10 +31,11 @@
  */
 
 import type { App } from '$lib/types';
-import type { AISettings, EndpointSettings } from '$lib/clients/settingsClient';
+import type { AISettings, EndpointContract, EndpointSettings } from '$lib/clients/settingsClient';
 import type { ManagedUser } from '$lib/clients/userClient';
 import type { AppsState } from './reducers/apps';
 import type { CommandsState } from './reducers/commands';
+import type { RootState } from './reducers';
 
 /**
  * The key of a setting that exists once per instance.
@@ -49,6 +50,7 @@ export const INSTANCE_KEY = 'instance';
 export type OverlayKind =
 	| 'apps.record'
 	| 'apps.patch'
+	| 'apps.removed'
 	| 'settings.publicUrl'
 	| 'settings.timezone'
 	| 'settings.ai'
@@ -61,10 +63,12 @@ export interface OverlayValues {
 	'apps.record': { record: App };
 	/** One app's fields, for a status change or a rename. */
 	'apps.patch': { catalogId: string; patch: Partial<App> };
+	/** An app leaving the list. */
+	'apps.removed': { catalogId: string };
 	'settings.publicUrl': { url: string };
 	'settings.timezone': { zone: string };
 	'settings.ai': { settings: AISettings };
-	'settings.endpoint': { settings: EndpointSettings };
+	'settings.endpoint': { contract: EndpointContract; settings: EndpointSettings };
 	'settings.users': { users: ManagedUser[] };
 }
 
@@ -72,6 +76,7 @@ export interface OverlayValues {
 export interface OverlayTargets {
 	'apps.record': AppsState;
 	'apps.patch': AppsState;
+	'apps.removed': AppsState;
 	'settings.publicUrl': string | null;
 	'settings.timezone': string | null;
 	'settings.ai': AISettings | null;
@@ -144,8 +149,7 @@ const SPECS: { [K in OverlayKind]: OverlaySpec<OverlayValues[K], OverlayTargets[
 		}
 	},
 	'apps.patch': {
-		// An app that left the snapshot satisfies every claim about it: an
-		// uninstall is done when the record is gone, not when its status changed.
+		// An app that left the snapshot satisfies every claim about it.
 		satisfied: (current, value) => {
 			const app = current.byId[value.catalogId];
 			if (!app) return true;
@@ -157,6 +161,17 @@ const SPECS: { [K in OverlayKind]: OverlaySpec<OverlayValues[K], OverlayTargets[
 			const app = current.byId[value.catalogId];
 			if (!app) return current;
 			return { ...current, byId: { ...current.byId, [value.catalogId]: { ...app, ...value.patch } } };
+		}
+	},
+	'apps.removed': {
+		// An uninstall is done when the record is gone, not when its status says
+		// it is leaving. That is why removal is its own claim.
+		satisfied: (current, value) => current.byId[value.catalogId] === undefined,
+		apply: (current, value) => {
+			if (!current.byId[value.catalogId]) return current;
+			const byId = { ...current.byId };
+			delete byId[value.catalogId];
+			return { ...current, byId, order: current.order.filter((id) => id !== value.catalogId) };
 		}
 	},
 	'settings.publicUrl': {
@@ -199,6 +214,39 @@ export function satisfied<K extends OverlayKind>(
 	current: OverlayTargets[K]
 ): boolean {
 	return SPECS[kind].satisfied(current, value);
+}
+
+/**
+ * Is the claim already true of confirmed state?
+ *
+ * This is the settle rule for every convergence command: a command is done when
+ * the claim it showed is true of the confirmed slice. The mapping from a kind to
+ * its confirmed value lives here, so a command never states the comparison and
+ * the two cannot drift.
+ */
+export function overlayReady(patch: OptimisticPatch, confirmed: RootState): boolean {
+	switch (patch.kind) {
+		case 'apps.record':
+			return satisfied('apps.record', patch.value, confirmed.apps);
+		case 'apps.patch':
+			return satisfied('apps.patch', patch.value, confirmed.apps);
+		case 'apps.removed':
+			return satisfied('apps.removed', patch.value, confirmed.apps);
+		case 'settings.publicUrl':
+			return satisfied('settings.publicUrl', patch.value, confirmed.settings.publicUrl.value);
+		case 'settings.timezone':
+			return satisfied('settings.timezone', patch.value, confirmed.settings.timezone.value);
+		case 'settings.ai':
+			return satisfied('settings.ai', patch.value, confirmed.settings.ai.value);
+		case 'settings.endpoint':
+			return satisfied(
+				'settings.endpoint',
+				patch.value,
+				confirmed.settings.endpoints[patch.value.contract].value
+			);
+		case 'settings.users':
+			return satisfied('settings.users', patch.value, confirmed.settings.users.value);
+	}
 }
 
 /**

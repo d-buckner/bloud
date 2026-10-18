@@ -51,6 +51,9 @@ const resolvedApps = memo<AppsState, RootState>(
 			if (patch.kind === 'apps.record') resolved = project('apps.record', patch.value, resolved);
 		}
 		for (const patch of patches) {
+			if (patch.kind === 'apps.removed') resolved = project('apps.removed', patch.value, resolved);
+		}
+		for (const patch of patches) {
 			if (patch.kind === 'apps.patch') resolved = project('apps.patch', patch.value, resolved);
 		}
 		return resolved;

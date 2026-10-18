@@ -45,17 +45,16 @@ export function installApp(name: string): Promise<CommandResult<App>> {
 			value: { record: entry }
 		}),
 		read: streamIsTheRead,
-		window: SNAPSHOT_WINDOW,
-		settled: (confirmed, entry) => confirmed.apps.byId[entry.catalog_id] !== undefined
+		window: SNAPSHOT_WINDOW
 	});
 }
 
 /**
  * Uninstall an app, removing its tile at once.
  *
- * The claim is a status patch, not a deletion: the record stays until the
- * snapshot drops it, and `isGridApp` already hides an app that is uninstalling.
- * The overlay is satisfied when the app is gone from the snapshot.
+ * The claim is a removal, so the tile goes now and the command is done when the
+ * snapshot no longer has the record. That is the same rule as every other
+ * convergence command: a command settles when its own claim is true.
  */
 export function uninstallApp(name: string): Promise<CommandResult<IntentResponse>> {
 	return runCommand({
@@ -63,14 +62,9 @@ export function uninstallApp(name: string): Promise<CommandResult<IntentResponse
 		failure: `Could not uninstall ${name}`,
 		unconfirmed: `${name} is still installed`,
 		run: () => apiUninstall(name),
-		optimistic: {
-			kind: 'apps.patch',
-			key: name,
-			value: { catalogId: name, patch: { status: 'uninstalling' } }
-		},
+		optimistic: { kind: 'apps.removed', key: name, value: { catalogId: name } },
 		read: streamIsTheRead,
-		window: SNAPSHOT_WINDOW,
-		settled: (confirmed) => confirmed.apps.byId[name] === undefined
+		window: SNAPSHOT_WINDOW
 	});
 }
 
@@ -87,8 +81,7 @@ export function renameApp(name: string, displayName: string): Promise<CommandRes
 			value: { catalogId: name, patch: { display_name: displayName } }
 		},
 		read: streamIsTheRead,
-		window: SNAPSHOT_WINDOW,
-		settled: (confirmed) => confirmed.apps.byId[name]?.display_name === displayName
+		window: SNAPSHOT_WINDOW
 	});
 }
 

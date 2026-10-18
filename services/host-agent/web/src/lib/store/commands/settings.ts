@@ -43,7 +43,7 @@ import type { IntentResponse } from '$lib/types';
 import { settingsLoaded, settingsReadFailed, settingsReadStarted } from '../actions';
 import type { SettingsField, SettingsLoadedPayload } from '../reducers/settings';
 import { dispatch, getState } from '../kernel';
-import { INSTANCE_KEY, satisfied } from '../overlay';
+import { INSTANCE_KEY } from '../overlay';
 import { commandKey } from '../reducers/commands';
 import { messageOf, runCommand } from '../runner';
 import type { CommandResult } from '../runner';
@@ -136,7 +136,6 @@ export function savePublicURL(url: string): Promise<CommandResult<SetPublicURLRe
 		run: () => setPublicURL(typed),
 		refine: (res) => ({ kind: 'settings.publicUrl', key: INSTANCE_KEY, value: { url: res.url } }),
 		read: refreshPublicUrl,
-		settled: (confirmed, res) => confirmed.settings.publicUrl.value === res.url
 	});
 }
 
@@ -152,7 +151,6 @@ export function saveTimezone(zone: string): Promise<CommandResult<SetTimezoneRes
 		run: () => setTimezone(trimmed),
 		refine: (res) => ({ kind: 'settings.timezone', key: INSTANCE_KEY, value: { zone: res.zone } }),
 		read: refreshTimezone,
-		settled: (confirmed, res) => confirmed.settings.timezone.value === res.zone
 	});
 }
 
@@ -182,7 +180,6 @@ export function saveAISettings(input: SetAIRequest): Promise<CommandResult<Inten
 		unconfirmed: 'The AI settings are not live yet',
 		run: () => setAISettings(input),
 		read: refreshAI,
-		settled: (confirmed) => satisfied('settings.ai', { settings: claim }, confirmed.settings.ai.value)
 	});
 }
 
@@ -250,26 +247,20 @@ export function saveEndpoint(
 	return runCommand({
 		key: commandKey('settings', contract),
 		repeat: 'replace',
-		optimistic: { kind: 'settings.endpoint', key: contract, value: { settings: claim } },
+		optimistic: { kind: 'settings.endpoint', key: contract, value: { contract, settings: claim } },
 		failure: `Could not save the ${contract} settings`,
 		unconfirmed: `The ${contract} endpoint is not live yet`,
 		run: () => setEndpointSettings(contract, input),
 		refine: (res) => ({
 			kind: 'settings.endpoint',
 			key: contract,
-			value: { settings: refinedEndpoint(res, claim, input.apiKey) }
+			value: { contract, settings: refinedEndpoint(res, claim, input.apiKey) }
 		}),
 		read: () =>
 			readInto(
 				() => fetchEndpointSettings(contract),
 				(res) => ({ field: contract, value: res, at: Date.now() })
 			).then(() => undefined),
-		settled: (confirmed, res) =>
-			satisfied(
-				'settings.endpoint',
-				{ settings: refinedEndpoint(res, claim, input.apiKey) },
-				confirmed.settings.endpoints[contract].value
-			)
 	});
 }
 
@@ -287,7 +278,7 @@ export function removeEndpoint(contract: EndpointContract): Promise<CommandResul
 	return runCommand({
 		key: commandKey('settings', contract),
 		repeat: 'replace',
-		optimistic: { kind: 'settings.endpoint', key: contract, value: { settings: claim } },
+		optimistic: { kind: 'settings.endpoint', key: contract, value: { contract, settings: claim } },
 		failure: `Could not remove the ${contract} endpoint`,
 		unconfirmed: `The ${contract} endpoint is still configured`,
 		run: () => setEndpointSettings(contract, { baseUrl: '', name: claim.name, model: '' }),
@@ -296,7 +287,5 @@ export function removeEndpoint(contract: EndpointContract): Promise<CommandResul
 				() => fetchEndpointSettings(contract),
 				(res) => ({ field: contract, value: res, at: Date.now() })
 			).then(() => undefined),
-		settled: (confirmed) =>
-			satisfied('settings.endpoint', { settings: claim }, confirmed.settings.endpoints[contract].value)
 	});
 }

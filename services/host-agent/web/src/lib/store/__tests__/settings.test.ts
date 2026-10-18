@@ -132,7 +132,7 @@ describe('the settings views', () => {
 		claim(commandKey('settings', 'embeddings'), {
 			kind: 'settings.endpoint',
 			key: 'embeddings',
-			value: { settings: after }
+			value: { contract: 'embeddings', settings: after }
 		});
 
 		expect(endpointView(getState(), 'embeddings').value?.baseUrl).toBe('https://embed.example/v1');

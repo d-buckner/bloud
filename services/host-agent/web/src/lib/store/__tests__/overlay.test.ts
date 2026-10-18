@@ -12,11 +12,14 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { project, satisfied } from '../overlay';
+import { overlayReady, project, satisfied } from '../overlay';
 import type { AppsState } from '../reducers/apps';
 import type { AISettings, EndpointSettings } from '$lib/clients/settingsClient';
 import type { ManagedUser } from '$lib/clients/userClient';
 import { app } from './harness';
+import { createStore } from 'redux';
+import { rootReducer } from '../reducers';
+import { homeSnapshot, settingsLoaded } from '../actions';
 
 function appsState(...apps: ReturnType<typeof app>[]): AppsState {
 	return {
@@ -128,6 +131,54 @@ describe('apps.patch', () => {
 	});
 });
 
+describe('apps.removed', () => {
+	const claim = { catalogId: 'immich' };
+
+	it('hides the app while the claim is pending', () => {
+		const shown = project('apps.removed', claim, appsState(app('immich'), app('jellyfin')));
+
+		expect(shown.byId['immich']).toBeUndefined();
+		expect(shown.order).toEqual(['jellyfin']);
+	});
+
+	it('is satisfied only when the record is gone', () => {
+		expect(satisfied('apps.removed', claim, appsState(app('immich')))).toBe(false);
+		expect(satisfied('apps.removed', claim, EMPTY_APPS)).toBe(true);
+	});
+
+	it('is a no-op when the app is not there', () => {
+		expect(project('apps.removed', claim, EMPTY_APPS)).toBe(EMPTY_APPS);
+	});
+});
+
+describe('overlayReady, the settle rule', () => {
+	it('asks confirmed state, not the projection', () => {
+		const store = createStore(rootReducer);
+		store.dispatch(
+			settingsLoaded({ field: 'publicUrl', value: 'https://confirmed.example', at: 1 })
+		);
+
+		const claim = { kind: 'settings.publicUrl', key: 'instance', value: { url: 'https://wanted.example' } } as const;
+		expect(overlayReady(claim, store.getState())).toBe(false);
+
+		store.dispatch(
+			settingsLoaded({ field: 'publicUrl', value: 'https://wanted.example', at: 2 })
+		);
+		expect(overlayReady(claim, store.getState())).toBe(true);
+	});
+
+	it('waits for a removed app to leave the snapshot', () => {
+		const store = createStore(rootReducer);
+		store.dispatch(homeSnapshot({ apps: [app('immich')], widgets: [] }));
+
+		const claim = { kind: 'apps.removed', key: 'immich', value: { catalogId: 'immich' } } as const;
+		expect(overlayReady(claim, store.getState())).toBe(false);
+
+		store.dispatch(homeSnapshot({ apps: [], widgets: [] }));
+		expect(overlayReady(claim, store.getState())).toBe(true);
+	});
+});
+
 describe('settings.publicUrl and settings.timezone', () => {
 	it('shows the claim until the confirmed value equals it', () => {
 		expect(project('settings.publicUrl', { url: 'https://new.example' }, 'https://old.example')).toBe(
@@ -168,7 +219,7 @@ describe('settings.ai', () => {
 });
 
 describe('settings.endpoint', () => {
-	const claim = { settings: ENDPOINT };
+	const claim = { contract: 'transcription' as const, settings: ENDPOINT };
 
 	it('compares the five fields the API echoes back', () => {
 		expect(satisfied('settings.endpoint', claim, ENDPOINT)).toBe(true);

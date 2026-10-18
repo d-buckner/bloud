@@ -14,9 +14,11 @@
 		collapsed?: boolean;
 		/** Mobile drawer open. The layout owns the value and the scrim. */
 		open?: boolean;
+		/** Called when a destination is chosen, so the layout can close the drawer. */
+		onclose?: () => void;
 	}
 
-	let { collapsed = $bindable(false), open = $bindable(false) }: Props = $props();
+	let { collapsed = $bindable(false), open = false, onclose }: Props = $props();
 
 	const STORAGE_KEY = 'bloud.sidebar.collapsed';
 
@@ -82,7 +84,7 @@
 			class="close-toggle"
 			type="button"
 			aria-label="Close navigation"
-			onclick={() => (open = false)}
+			onclick={() => onclose?.()}
 		>
 			<Icon name="close" size={18} />
 		</button>
@@ -96,6 +98,7 @@
 					class:active={activePath === item.href}
 					aria-current={activePath === item.href ? 'page' : undefined}
 					title={item.label}
+					onclick={() => onclose?.()}
 				>
 					<span class="nav-icon">
 						<Icon name={item.icon} size={20} />

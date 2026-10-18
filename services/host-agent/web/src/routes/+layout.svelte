@@ -15,17 +15,17 @@
 	let { children }: { children: Snippet } = $props();
 
 	let sidebarCollapsed = $state(false);
+	const currentPath = $derived(page.url.pathname);
+
 	// The mobile drawer. It is a separate state from `sidebarCollapsed`: below the
 	// breakpoint the rail is off-canvas and always labelled, so a persisted
 	// collapsed desktop rail must not strip a phone's navigation names.
-	let mobileNavOpen = $state(false);
-
-	const currentPath = $derived(page.url.pathname);
-	// Any navigation closes the drawer. Reading the path is the trigger.
-	$effect(() => {
-		currentPath;
-		mobileNavOpen = false;
-	});
+	//
+	// The drawer is open *for a path*, so navigating closes it. That is a fact
+	// about the path rather than a flag an effect has to reset, which is the same
+	// shape the consent gates use.
+	let drawerFor = $state<string | null>(null);
+	const mobileNavOpen = $derived(drawerFor === currentPath);
 
 	// The session read and the stream are the store's business now. This page only
 	// says when the dashboard starts and stops, and renders the four states the
@@ -79,21 +79,25 @@
 				type="button"
 				aria-label="Open navigation"
 				aria-expanded={mobileNavOpen}
-				onclick={() => (mobileNavOpen = true)}
+				onclick={() => (drawerFor = currentPath)}
 			>
 				<Icon name="menu" size={22} />
 			</button>
 			<span class="mobile-title">Bloud</span>
 		</header>
 
-		<Sidebar bind:collapsed={sidebarCollapsed} bind:open={mobileNavOpen} />
+		<Sidebar
+			bind:collapsed={sidebarCollapsed}
+			open={mobileNavOpen}
+			onclose={() => (drawerFor = null)}
+		/>
 
 		{#if mobileNavOpen}
 			<button
 				class="scrim"
 				type="button"
 				aria-label="Close navigation"
-				onclick={() => (mobileNavOpen = false)}
+				onclick={() => (drawerFor = null)}
 			></button>
 		{/if}
 

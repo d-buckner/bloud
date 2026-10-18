@@ -2,10 +2,10 @@
 /**
  * The command lifecycle, against the real store.
  *
- * Each case is named after the trap it guards. The engine is the subject: dedupe,
- * supersede, refine, the convergence wait, and what a terminal status leaves
- * behind. The store is the singleton because the point is the interaction between
- * a command and the state it waits on, and a mock store would test the mock.
+ * The settle rule is one sentence: a command that shows a claim is done when
+ * confirmed state carries that claim. These cases hold that rule to its two
+ * consequences. The claim cannot confirm itself, and the claim the predicate
+ * waits for is the one the user saw, refined once.
  *
  * Time is fake wherever the wait is the subject, so a ten minute cap costs
  * milliseconds and the backoff schedule can be asserted rather than inferred.
@@ -21,6 +21,9 @@ import { commandsAbandoned, settingsLoaded } from '../actions';
 import { resetStore, toastMessages } from './harness';
 
 const URL_KEY = commandKey('settings', 'publicUrl');
+
+const CLAIM = (url: string) =>
+	({ kind: 'settings.publicUrl', key: 'instance', value: { url } }) as const;
 
 /** The confirmed address, as a read would have stored it. */
 function confirmed(url: string): void {
@@ -93,18 +96,14 @@ describe('a repeated save', () => {
 			key: URL_KEY,
 			repeat: 'replace',
 			run: () => new Promise<string>((resolve) => (releaseFirst = resolve)),
-			optimistic: { kind: 'settings.publicUrl', key: 'instance', value: { url: 'https://first' } }
+			optimistic: CLAIM('https://first')
 		});
 
 		const second = runCommand({
 			key: URL_KEY,
 			repeat: 'replace',
 			run: () => Promise.resolve('second'),
-			optimistic: { kind: 'settings.publicUrl', key: 'instance', value: { url: 'https://second' } },
-			refine: () => ({ kind: 'settings.publicUrl', key: 'instance', value: { url: 'https://second' } }),
-			read: async () => undefined,
-			settled: () => true,
-			window: { firstMs: 10, maxMs: 10, capMs: 100 }
+			optimistic: CLAIM('https://second')
 		});
 
 		// The first command is superseded at once, before the second starts.
@@ -113,7 +112,6 @@ describe('a repeated save', () => {
 			url: 'https://second'
 		});
 
-		await vi.advanceTimersByTimeAsync(10);
 		expect(await second).toEqual({ ok: true, value: 'second' });
 
 		releaseFirst('first');
@@ -143,32 +141,56 @@ describe('a repeated save', () => {
 	});
 });
 
-describe('the overlay', () => {
-	it('is replaced by what the server stored', async () => {
-		confirmed('https://old.example');
-
+describe('the claim', () => {
+	it('is replaced by what the server stored, and the wait follows the refined one', async () => {
 		const promise = runCommand({
 			key: URL_KEY,
 			repeat: 'replace',
 			run: () => Promise.resolve({ url: 'http://bloud.example.com' }),
-			optimistic: { kind: 'settings.publicUrl', key: 'instance', value: { url: 'bloud.example.com' } },
-			refine: (res) => ({ kind: 'settings.publicUrl', key: 'instance', value: { url: res.url } }),
-			read: async () => undefined,
-			settled: (state) => state.settings.publicUrl.value === 'http://bloud.example.com',
+			optimistic: CLAIM('bloud.example.com'),
+			refine: (res) => CLAIM(res.url),
+			read: () => Promise.resolve(),
 			window: { firstMs: 10, maxMs: 10, capMs: 100 }
 		});
 
-		// The typed string is shown first, then the canonical origin the parser stored.
 		await vi.advanceTimersByTimeAsync(0);
 		expect(pendingOverlay(getState().commands, 'settings.publicUrl', 'instance')?.value).toEqual({
 			url: 'http://bloud.example.com'
 		});
+
+		// The typed value is not the claim any more, so it does not end the wait.
+		confirmed('bloud.example.com');
+		await vi.advanceTimersByTimeAsync(10);
+		expect(getState().commands.byKey[URL_KEY].status).toBe('pending');
 
 		confirmed('http://bloud.example.com');
 		await vi.advanceTimersByTimeAsync(10);
 
 		expect(await promise).toEqual({ ok: true, value: { url: 'http://bloud.example.com' } });
 		expect(pendingOverlay(getState().commands, 'settings.publicUrl', 'instance')).toBeNull();
+	});
+
+	it('does not settle on the value the command shows', async () => {
+		confirmed('https://confirmed.example');
+
+		const promise = runCommand({
+			key: URL_KEY,
+			repeat: 'replace',
+			run: () => Promise.resolve({ url: 'https://wanted.example' }),
+			optimistic: CLAIM('https://wanted.example'),
+			read: () => Promise.resolve(),
+			window: { firstMs: 100, maxMs: 100, capMs: 1_000 }
+		});
+
+		// The user sees the claim. The command must not accept it as proof.
+		expect(publicUrlView(getState()).value).toBe('https://wanted.example');
+		await vi.advanceTimersByTimeAsync(300);
+		expect(getState().commands.byKey[URL_KEY].status).toBe('pending');
+
+		confirmed('https://wanted.example');
+		await vi.advanceTimersByTimeAsync(100);
+
+		expect(await promise).toEqual({ ok: true, value: { url: 'https://wanted.example' } });
 	});
 
 	it('drops at a terminal status, so a failed save shows the confirmed value again', async () => {
@@ -190,7 +212,7 @@ describe('the overlay', () => {
 			key: URL_KEY,
 			repeat: 'replace',
 			run: () => new Promise<string>(() => undefined),
-			optimistic: { kind: 'settings.publicUrl', key: 'instance', value: { url: 'https://pending' } }
+			optimistic: CLAIM('https://pending')
 		});
 
 		expect(publicUrlView(getState()).value).toBe('https://pending');
@@ -204,44 +226,37 @@ describe('the overlay', () => {
 	});
 });
 
-describe('the convergence wait', () => {
-	it('checks the confirmed slice, never the value the command shows', async () => {
-		confirmed('https://confirmed.example');
-		let seen: string | null = null;
+describe('the reread shape', () => {
+	it('reads once and settles, with no claim to wait for', async () => {
+		let reads = 0;
 
-		const promise = runCommand({
-			key: URL_KEY,
-			repeat: 'replace',
-			run: () => Promise.resolve({ url: 'https://wanted.example' }),
-			optimistic: { kind: 'settings.publicUrl', key: 'instance', value: { url: 'https://wanted.example' } },
-			read: async () => undefined,
-			settled: (state) => {
-				seen = state.settings.publicUrl.value;
-				return true;
-			},
-			window: { firstMs: 10, maxMs: 10, capMs: 100 }
+		const result = await runCommand({
+			key: commandKey('read', 'settings:publicUrl'),
+			run: () => Promise.resolve('ok'),
+			read: async () => {
+				reads += 1;
+			}
 		});
 
-		// The user sees the claim. The predicate must not.
-		expect(publicUrlView(getState()).value).toBe('https://wanted.example');
-		await vi.advanceTimersByTimeAsync(10);
-		await promise;
-
-		expect(seen).toBe('https://confirmed.example');
+		expect(result).toEqual({ ok: true, value: 'ok' });
+		expect(reads).toBe(1);
+		expect(getState().commands.byKey['read:settings:publicUrl'].kind).toBe('reread');
 	});
+});
 
+describe('the convergence wait', () => {
 	it('tolerates a read that fails, because the deadline is the only failure', async () => {
 		let reads = 0;
 		const promise = runCommand({
 			key: URL_KEY,
 			repeat: 'replace',
 			run: () => Promise.resolve({ url: 'https://wanted.example' }),
+			optimistic: CLAIM('https://wanted.example'),
 			read: async () => {
 				reads += 1;
 				if (reads < 3) throw new Error('network blip');
 				confirmed('https://wanted.example');
 			},
-			settled: (state) => state.settings.publicUrl.value === 'https://wanted.example',
 			window: { firstMs: 100, maxMs: 1_000, capMs: 10_000 }
 		});
 
@@ -260,10 +275,10 @@ describe('the convergence wait', () => {
 			key: URL_KEY,
 			repeat: 'replace',
 			run: () => Promise.resolve({ url: 'https://never.example' }),
+			optimistic: CLAIM('https://never.example'),
 			read: async () => {
 				reads += 1;
 			},
-			settled: () => false,
 			window: { firstMs: 500, maxMs: 5_000, capMs: 60_000 }
 		});
 
@@ -281,7 +296,6 @@ describe('the convergence wait', () => {
 		await vi.advanceTimersByTimeAsync(5_000);
 		expect(reads).toBe(6);
 	});
-
 });
 
 describe('the convergence deadline', () => {
@@ -291,13 +305,13 @@ describe('the convergence deadline', () => {
 			key: URL_KEY,
 			repeat: 'replace',
 			run: () => Promise.resolve({ url: 'https://never.example' }),
-			optimistic: { kind: 'settings.publicUrl', key: 'instance', value: { url: 'https://never.example' } },
+			optimistic: CLAIM('https://never.example'),
 			unconfirmed: 'The new address is not live yet',
-			read: async () => undefined,
-			settled: () => false,
+			read: () => Promise.resolve(),
 			window: { firstMs: 10, maxMs: 10, capMs: 35 }
 		});
 
+		// Assert before the toast's 5s lifetime would run out.
 		await vi.advanceTimersByTimeAsync(40);
 		const result = await promise;
 

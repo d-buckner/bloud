@@ -215,24 +215,20 @@ Rules, each replacing something hand-rolled today:
   write").
 - **Every command is cancellable by an effect teardown.** Route-scoped reads
   cancel with the route; HMR dispose cancels everything in flight.
-- **A command declares how it settles.** Three settle kinds, and the third is
-  the one the current code cannot express:
-  - `request`: the HTTP response is the whole story (rename, user role change).
-  - `reread`: the response means "stored", and settling means re-reading the
-    resource. `UsersSettingsSection` hand-rolls this as an explicit
-    `await loadUsers()` after each of its three mutations.
-  - `convergence`: the response is an acknowledgement carrying an `intentId`,
-    and the command is not done until the orchestrator agrees. The address save
-    is exactly this, hand-rolled as a 500 ms poll with a 20 s deadline inside
-    `AddressSettingsSection.handleSaveAddress`. Install is this too, and the
-    install modal infers it from progress events instead of from a declared
-    predicate.
+- **A command settles on its own claim.** The rule is one sentence: a command
+  that shows a claim is done when confirmed state carries that claim. The
+  overlay decides what "carries" means, so a command never states the comparison
+  and the two cannot drift. The shapes that fall out of it:
+  - `request`: no read. The HTTP response is the whole story.
+  - `reread`: a read and no claim. The response means "stored", and the read
+    that shows it ends the command.
+  - `convergence`: a read and a claim. The command is not done until the
+    orchestrator agrees, and `overlayReady` is the only predicate.
 
-  The predicate never lives in state: a function in a reducer's input breaks
-  devtools and makes a reducer swap surprising. A command module registers
-  `settlesBy(kind, predicate, deadline)` and an effect evaluates it against each
-  new state. The store holds only the facts: `deadline`, `settledBy`, and the
-  observed value that ended the wait.
+  This replaced a `settled` closure per command. The closure had to recompute
+  the claim the response reported, so `refine` and `settled` could disagree
+  about what was being waited for. Now `refine` runs once and its result is both
+  what the user sees and what the wait checks.
 
 **One settings write currently reports the wrong completion.** `setAISettings`
 returns an `IntentResponse` (`clients/settingsClient.ts:69`), so the save is an

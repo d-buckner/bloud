@@ -22,7 +22,7 @@ import type { ManagedUser } from '$lib/clients/userClient';
 import type { Role } from '$lib/types';
 import { settingsLoaded, settingsReadFailed, settingsReadStarted } from '../actions';
 import { dispatch, getState } from '../kernel';
-import { INSTANCE_KEY, satisfied } from '../overlay';
+import { INSTANCE_KEY } from '../overlay';
 import { commandKey } from '../reducers/commands';
 import { messageOf, runCommand } from '../runner';
 import type { CommandResult } from '../runner';
@@ -84,8 +84,6 @@ export function createUser(input: { username: string; password: string; role: Ro
 		unconfirmed: `${username} was created but is not in the list yet`,
 		run: () => apiCreate({ username, password: input.password, role: input.role }),
 		read: refreshUsers,
-		settled: (confirmed) =>
-			satisfied('settings.users', claim(next), confirmed.settings.users.value)
 	});
 }
 
@@ -98,8 +96,6 @@ export function deleteUser(username: string): Promise<CommandResult<void>> {
 		unconfirmed: `${username} is still in the list`,
 		run: () => apiDelete(username),
 		read: refreshUsers,
-		settled: (confirmed) =>
-			satisfied('settings.users', claim(next), confirmed.settings.users.value)
 	});
 }
 
@@ -114,7 +110,5 @@ export function setUserRole(username: string, role: Role): Promise<CommandResult
 		unconfirmed: `The role for ${username} is not live yet`,
 		run: () => apiSetRole(username, role),
 		read: refreshUsers,
-		settled: (confirmed) =>
-			satisfied('settings.users', claim(next), confirmed.settings.users.value)
 	});
 }

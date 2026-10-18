@@ -18,10 +18,10 @@
  *  - **The optimistic overlay.** A command declares the value to show. It lives
  *    in the command record, so it exists exactly while the command is pending,
  *    and a terminal status drops it.
- *  - **A completion that is not the response.** `settled` is a predicate over
- *    confirmed state. It is checked against `state`, never against a projection
- *    of the overlay, so a command cannot confirm itself with the value it just
- *    invented. That rule is why `settings` holds confirmed values only.
+ *  - **A completion that is not the response.** A command that shows a claim is
+ *    done when confirmed state carries that claim, and the overlay decides what
+ *    "carries" means. The check reads the confirmed slices, never the projection,
+ *    so a command cannot confirm itself with the value it just invented.
  *
  * Nothing here throws. The outcome is the return value, and the store holds the
  * record either way.
@@ -36,9 +36,9 @@ import {
 	commandSuperseded,
 	toastPushed
 } from './actions';
+import { overlayReady } from './overlay';
 import type { OptimisticPatch } from './overlay';
 import type { CommandKey, SettleKind } from './reducers/commands';
-import type { RootState } from './reducers';
 
 export type { CommandKey, SettleKind };
 
@@ -85,11 +85,13 @@ export interface CommandSpec<T> {
 	 * match, and the poll runs to its cap over a save that already landed.
 	 */
 	refine?: (result: T) => OptimisticPatch | null;
-	/** A read that refreshes the confirmed slice `settled` looks at. */
+	/**
+	 * A read that refreshes the confirmed slice. With a claim this marks a
+	 * convergence command, which polls until the claim is true. Without one it is
+	 * a reread: one read, then done.
+	 */
 	read?: () => Promise<unknown>;
-	/** Has reality caught up? A predicate over confirmed state, never over a view. */
-	settled?: (confirmed: RootState, result: T) => boolean;
-	/** Only meaningful with `settled`. */
+	/** How the wait spends its time. Only meaningful with a claim and `read`. */
 	window?: PollWindow;
 	/** The toast a rejected write raises. No string means the caller shows it. */
 	failure?: string;
@@ -97,11 +99,14 @@ export interface CommandSpec<T> {
 	unconfirmed?: string;
 }
 
-/** Which settle kind a spec describes. Derived, so a spec cannot contradict itself. */
+/**
+ * Which settle kind a spec describes, for the record and for a reader of the
+ * log. A claim plus a read converges, a read alone re-reads, and no read is the
+ * response itself.
+ */
 function kindOf<T>(spec: CommandSpec<T>): SettleKind {
-	if (spec.settled) return 'convergence';
-	if (spec.read) return 'reread';
-	return 'request';
+	if (!spec.read) return 'request';
+	return spec.optimistic || spec.refine ? 'convergence' : 'reread';
 }
 
 interface Execution {
@@ -177,9 +182,16 @@ async function execute<T>(spec: CommandSpec<T>, isCancelled: () => boolean): Pro
 		const value = await spec.run();
 		if (isCancelled()) return SUPERSEDED;
 
-		if (spec.refine) dispatch(commandRefined({ key: spec.key, patch: spec.refine(value) }));
+		// The claim is the settle condition as well as what the user sees. It is
+		// refined once, here, so a command cannot wait for a different value than
+		// the one it showed.
+		let claim = spec.optimistic ?? null;
+		if (spec.refine) {
+			claim = spec.refine(value);
+			dispatch(commandRefined({ key: spec.key, patch: claim }));
+		}
 
-		const outcome = await settle(spec, value, isCancelled);
+		const outcome = await settle(spec, claim, isCancelled);
 		if (outcome === 'superseded') return SUPERSEDED;
 		if (outcome === 'unconfirmed') {
 			reportFailure(spec, `${spec.key} was accepted but the server never applied it`, spec.unconfirmed);
@@ -198,19 +210,23 @@ async function execute<T>(spec: CommandSpec<T>, isCancelled: () => boolean): Pro
 }
 
 /**
- * Wait for the settle condition the spec declared.
+ * Wait for the claim the command showed.
  *
- * The response is enough for a `request` command, the follow-up read ends a
- * `reread`, and a `convergence` command polls until confirmed state agrees.
+ * The response is the whole answer when there is no read. A read without a claim
+ * is a reread: the response stored something, and the read that shows it ends
+ * the command. A read with a claim is a convergence command, and it is done when
+ * confirmed state carries the claim.
  */
 function settle<T>(
 	spec: CommandSpec<T>,
-	result: T,
+	claim: OptimisticPatch | null,
 	isCancelled: () => boolean
 ): Promise<'settled' | 'unconfirmed' | 'superseded'> {
-	if (spec.settled) return awaitConvergence(spec, result, isCancelled);
 	if (!spec.read) return Promise.resolve(isCancelled() ? 'superseded' : 'settled');
-	return spec.read().then(() => (isCancelled() ? 'superseded' : 'settled'));
+	if (!claim) {
+		return spec.read().then(() => (isCancelled() ? 'superseded' : 'settled'));
+	}
+	return awaitConvergence(claim, spec.read, spec.window, isCancelled);
 }
 
 function reportFailure<T>(spec: CommandSpec<T>, error: string, toast: string | undefined): void {
@@ -223,31 +239,36 @@ type ConvergenceOutcome = 'settled' | 'unconfirmed' | 'superseded';
 /**
  * Wait for reality to agree.
  *
- * The loop reads only to refresh the confirmed slice, and it checks `settled`
- * against that slice. A failed read is not a failed save: the wait has its own
- * deadline, and the next read is the retry. That is why a network blip during a
- * ten minute wait cannot turn a healthy save into a toast.
+ * The condition is the claim itself: `overlayReady` asks the overlay whether
+ * confirmed state carries it. That is the same rule the selector uses to decide
+ * whether to keep showing the claim, so the two cannot drift.
+ *
+ * The loop reads only to refresh the confirmed slice. A failed read is not a
+ * failed save: the wait has its own deadline, and the next read is the retry.
+ * That is why a network blip during a ten minute wait cannot turn a healthy save
+ * into a toast.
  */
-async function awaitConvergence<T>(
-	spec: CommandSpec<T>,
-	result: T,
+async function awaitConvergence(
+	claim: OptimisticPatch,
+	read: () => Promise<unknown>,
+	window: PollWindow | undefined,
 	isCancelled: () => boolean
 ): Promise<ConvergenceOutcome> {
-	const window = spec.window ?? SAVE_WINDOW;
-	const deadline = Date.now() + window.capMs;
-	let wait = window.firstMs;
-	let confirmed = spec.settled!(getState(), result);
+	const budget = window ?? SAVE_WINDOW;
+	const deadline = Date.now() + budget.capMs;
+	let wait = budget.firstMs;
+	let ready = overlayReady(claim, getState());
 
-	while (!confirmed && Date.now() < deadline) {
+	while (!ready && Date.now() < deadline) {
 		if (isCancelled()) return 'superseded';
 		await delay(wait);
-		wait = Math.min(wait * 2, window.maxMs);
+		wait = Math.min(wait * 2, budget.maxMs);
 		if (isCancelled()) return 'superseded';
-		await spec.read!().catch(() => undefined);
-		confirmed = spec.settled!(getState(), result);
+		await read().catch(() => undefined);
+		ready = overlayReady(claim, getState());
 	}
 
-	if (confirmed) return 'settled';
+	if (ready) return 'settled';
 	return isCancelled() ? 'superseded' : 'unconfirmed';
 }
 
