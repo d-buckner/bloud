@@ -50,18 +50,99 @@ function apiToken(): Promise<string> {
   return tokenPromise;
 }
 
-interface InstalledApp {
+/**
+ * The live operation the orchestrator is running for an app, when it runs one.
+ *
+ * A caller reads this to answer "why is this app not running" without reading
+ * the host-agent log: `cause` carries the recorded reason, and `phase` says how
+ * far the attempt got.
+ */
+export interface AppOperation {
+  node: string;
+  type: string;
+  phase: string;
+  status: string;
+  retryable?: boolean;
+  cause?: string;
+}
+
+export interface InstalledApp {
   catalog_id: string;
+  display_name: string;
   status: string;
   /** Set by the orchestrator when the app hits a terminal error. */
   last_error?: string;
-  display_name: string;
+  /** The operation in flight or the last one that ran, when there is one. */
+  operation?: AppOperation | null;
+  port?: number;
   is_system: boolean;
+}
+
+/** One catalog entry, as `GET /api/apps` reports it (camelCase, unlike the
+ * installed list). A check reads the SSO strategy from here to decide which
+ * sign-in a page should show. */
+export interface CatalogApp {
+  catalogId: string;
+  displayName: string;
+  description?: string;
+  category?: string;
+  port?: number;
+  isSystem?: boolean;
+  sso?: { strategy?: string };
 }
 
 async function getApp(name: string): Promise<InstalledApp | null> {
   const body = await fetchJSON<{ apps: InstalledApp[] }>('/api/apps/installed');
   return body.apps.find((a) => a.catalog_id === name) ?? null;
+}
+
+/** Every installed app, system apps included. */
+export async function listInstalledApps(): Promise<InstalledApp[]> {
+  const body = await fetchJSON<{ apps: InstalledApp[] }>('/api/apps/installed');
+  return body.apps;
+}
+
+/** Every app the catalog offers. */
+export async function listCatalogApps(): Promise<CatalogApp[]> {
+  const body = await fetchJSON<{ apps: CatalogApp[] }>('/api/apps');
+  return body.apps;
+}
+
+/**
+ * The instance health: `ok`, or `unhealthy` when the database or the intent loop
+ * is down. A 200 means the bootstrap gate is open, not that the system is well;
+ * this reads the same check the endpoint runs.
+ */
+export async function getHealth(): Promise<{ status: string }> {
+  return fetchJSON<{ status: string }>('/api/health');
+}
+
+/**
+ * Whether the instance is provisioned and whether the identity provider answers.
+ *
+ * `authentikReady` is a live probe of the provider, so this is the read that
+ * separates "the API is up" from "a user could actually sign in".
+ */
+export async function getSetupStatus(): Promise<{
+  setupRequired: boolean;
+  authentikReady: boolean;
+  authReady: boolean;
+}> {
+  return fetchJSON<{
+    setupRequired: boolean;
+    authentikReady: boolean;
+    authReady: boolean;
+  }>('/api/setup/status');
+}
+
+/**
+ * The host-versus-container DNS report the API offers as a system warning.
+ *
+ * A podman sandbox that captured stale resolver upstreams at boot shows up here
+ * before it shows up as an app that cannot reach its OIDC issuer.
+ */
+export async function getSystemDiagnostics(): Promise<Record<string, unknown>> {
+  return fetchJSON<Record<string, unknown>>('/api/system/diagnostics');
 }
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
@@ -77,6 +158,35 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`${init?.method ?? 'GET'} ${path} → ${resp.status}`);
   }
   return resp.json() as Promise<T>;
+}
+
+/** One raw call to the host-agent API, with the status and the body as text. */
+export interface ApiResponse {
+  method: string;
+  path: string;
+  status: number;
+  ok: boolean;
+  body: string;
+}
+
+/**
+ * Call any host-agent endpoint and hand back what came back.
+ *
+ * The typed helpers above are what a test asserts on. This is the escape hatch
+ * for a one-off look at an endpoint the harness has not wrapped yet, and for an
+ * endpoint whose answer is not JSON.
+ */
+export async function request(method = 'GET', path: string, body?: string): Promise<ApiResponse> {
+  const sendsBody = body !== undefined && !['GET', 'HEAD'].includes(method.toUpperCase());
+  const resp = await fetch(`${BASE_URL}${path}`, {
+    method,
+    body: sendsBody ? body : undefined,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${await apiToken()}`,
+    },
+  });
+  return { method, path, status: resp.status, ok: resp.ok, body: await resp.text() };
 }
 
 /** The address setting as the API reports it. */
@@ -279,6 +389,42 @@ export interface TranscriptionSettings {
 
 export async function getTranscriptionSettings(): Promise<TranscriptionSettings> {
   return fetchJSON<TranscriptionSettings>('/api/settings/transcription');
+}
+
+/**
+ * One read of the whole instance: health, provisioning, the settings, and every
+ * app. A field that could not be read carries `{ error }` instead of throwing,
+ * because the reason one read failed is the thing a reader needs most.
+ */
+export interface StatusSnapshot {
+  health: { status: string } | { error: string };
+  setup: { setupRequired: boolean; authentikReady: boolean; authReady: boolean } | { error: string };
+  publicUrl: string | { error: string };
+  timezone: string | { error: string };
+  transcription: TranscriptionSettings | { error: string };
+  diagnostics: Record<string, unknown> | { error: string };
+  apps: InstalledApp[] | { error: string };
+}
+
+async function attempt<T>(read: () => Promise<T>): Promise<T | { error: string }> {
+  try {
+    return await read();
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function collectStatus(): Promise<StatusSnapshot> {
+  const [health, setup, url, zone, transcription, diagnostics, apps] = await Promise.all([
+    attempt(getHealth),
+    attempt(getSetupStatus),
+    attempt(async () => (await getPublicURL()).url),
+    attempt(async () => (await getTimezone()).zone),
+    attempt(getTranscriptionSettings),
+    attempt(getSystemDiagnostics),
+    attempt(listInstalledApps),
+  ]);
+  return { health, setup, publicUrl: url, timezone: zone, transcription, diagnostics, apps };
 }
 
 /**

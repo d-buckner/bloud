@@ -3,109 +3,133 @@
 //
 // The agentic entry to the browser harness.
 //
-// An agent or a person runs one observation against a live Bloud instance
-// without writing a Playwright spec:
+// An agent or a person runs one observation, or one small written check, against
+// a live Bloud instance without writing a Playwright spec:
 //
-//   node harness/bin/browser.mjs shot jellyfin            screenshot an app
-//   node harness/bin/browser.mjs shot bloud --full        full dashboard shot
-//   node harness/bin/browser.mjs review immich            url, text, problems
-//   node harness/bin/browser.mjs verify jellyfin          fail on page errors
-//   node harness/bin/browser.mjs review https://x --anon  anonymous look
+//   node harness/bin/browser.mjs review immich          what does this page show
+//   node harness/bin/browser.mjs verify jellyfin        fail on a page problem
+//   node harness/bin/browser.mjs status                 what is running, and why not
+//   node harness/bin/browser.mjs run app-health jellyfin
+//   node harness/bin/browser.mjs run ./my-check.mjs     run a check you wrote
 //
-// The launcher only translates arguments into the environment the recipe spec
-// reads, then runs that spec through this package's own Playwright. It is plain
+// The launcher only turns arguments into the environment the recipe spec reads,
+// then runs that spec through this package's own Playwright. It is plain
 // JavaScript on purpose: the recipe needs the TypeScript transform, and the
-// Playwright runner already provides it.
+// Playwright runner already provides it. Argument parsing lives in cli/args.mjs
+// so it can be tested without a browser.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseArgv, USAGE } from '../cli/args.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = resolve(here, '..');
 const repoRoot = resolve(pkgDir, '..');
+const checksDir = join(pkgDir, 'checks');
 
-const RECIPES = new Set(['shot', 'review', 'verify']);
+/** The built-in checks this package ships, as `name -> absolute path`. */
+function builtinChecks() {
+  if (!existsSync(checksDir)) return {};
+  const found = {};
+  for (const file of readdirSync(checksDir).sort()) {
+    if (file.endsWith('.mjs')) found[file.replace(/\.mjs$/, '')] = join(checksDir, file);
+  }
+  return found;
+}
 
-const USAGE = `Bloud browser harness
+/**
+ * Turn the `run` argument into a file to load.
+ *
+ * A name with no path and no extension is a built-in, so the common case is
+ * `run app-health`. A path is the caller's own file, resolved against the
+ * directory they ran from. A miss lists what exists, because the alternative is
+ * an agent guessing names.
+ */
+function resolveCheck(name) {
+  const builtins = builtinChecks();
+  const looksLikePath = name.endsWith('.mjs') || name.endsWith('.js') || name.endsWith('.ts') || name.includes('/');
+  if (!looksLikePath) {
+    const builtin = builtins[name];
+    if (builtin) return builtin;
+    const list = Object.keys(builtins).join(', ') || '(none)';
+    return { error: `no built-in check "${name}". Available: ${list}. Or name a file: run ./my-check.mjs` };
+  }
+  const file = resolve(process.cwd(), name);
+  if (!existsSync(file)) return { error: `no check file at ${file}` };
+  return file;
+}
 
-  node harness/bin/browser.mjs <recipe> [target] [options]
+/** Print the built-in checks with the line each one declares. */
+async function listChecks() {
+  const builtins = builtinChecks();
+  const names = Object.keys(builtins);
+  if (names.length === 0) {
+    console.log(`no built-in checks in ${checksDir}`);
+    return 0;
+  }
+  const rows = [];
+  for (const name of names) {
+    let description = '';
+    let target = '';
+    try {
+      const mod = await import(pathToFileURL(builtins[name]).href);
+      description = mod.description ?? '';
+      const declared = mod.options?.target ?? mod.default?.options?.target;
+      target = declared ? ` [${declared}]` : '';
+    } catch (err) {
+      description = `failed to load: ${err.message}`;
+    }
+    rows.push([name + target, description]);
+  }
+  const width = Math.max(...rows.map((r) => r[0].length));
+  console.log(`built-in checks (${checksDir})\n`);
+  for (const [name, description] of rows) {
+    console.log(`  ${name.padEnd(width)}  ${description}`);
+  }
+  console.log('\nrun one: node harness/bin/browser.mjs run <name> [target]');
+  return 0;
+}
 
-Recipes
-  shot      capture a screenshot and print its path
-  review    print the page url, title, visible text, and problems
-  verify    the same review, but exit nonzero when the page reports a problem
+const parsed = parseArgv(process.argv.slice(2));
 
-Target
-  bloud            the dashboard (default)
-  <app id>         an app's origin, e.g. jellyfin
-  <url>            any http(s) url
-
-Options
-  --anon           do not sign in
-  --full           full-page screenshot (shot only)
-  --json           review output as JSON (review only)
-  --settle <ms>    wait this long after navigation (default 1500)
-  --out <dir>      screenshot directory (default .bloud/screenshots)
-  -h, --help       show this help
-
-Environment
-  BLOUD_URL, BLOUD_API_URL, BLOUD_E2E_USERNAME, BLOUD_E2E_PASSWORD
-`;
-
-function fail(message) {
-  console.error(message);
+if (parsed.help) {
+  console.log(USAGE);
+  process.exit(parsed.error ? 1 : 0);
+}
+if (parsed.error) {
+  console.error(`${parsed.error}\n\n${USAGE}`);
   process.exit(2);
 }
 
-const argv = process.argv.slice(2);
-if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help') {
-  console.log(USAGE);
-  process.exit(argv.length === 0 ? 1 : 0);
+if (parsed.recipe === 'checks') {
+  process.exit(await listChecks());
 }
 
-const [recipe, ...rest] = argv;
-if (!RECIPES.has(recipe)) {
-  fail(`unknown recipe "${recipe}"\n\n${USAGE}`);
-}
+const env = { ...process.env, BLOUD_HARNESS_RECIPE: parsed.recipe };
+// Only a target the caller named is passed down. A check file can name its own,
+// and it cannot do that if the launcher always fills in the default.
+if (parsed.targetGiven) env.BLOUD_HARNESS_TARGET = parsed.target;
+if (parsed.options.anon) env.BLOUD_HARNESS_SIGNED_IN = 'false';
+if (parsed.options.full) env.BLOUD_HARNESS_FULL = 'true';
+if (parsed.options.json) env.BLOUD_HARNESS_JSON = 'true';
+if (parsed.options.settleMs !== undefined) env.BLOUD_HARNESS_SETTLE_MS = String(parsed.options.settleMs);
+if (parsed.options.timeoutMs !== undefined) env.BLOUD_HARNESS_TIMEOUT_MS = String(parsed.options.timeoutMs);
+if (parsed.expects.length) env.BLOUD_HARNESS_EXPECTS = JSON.stringify(parsed.expects);
+if (parsed.api) env.BLOUD_HARNESS_API = JSON.stringify(parsed.api);
 
-const env = { ...process.env, BLOUD_HARNESS_RECIPE: recipe };
-let target = 'bloud';
-
-for (let i = 0; i < rest.length; i++) {
-  const arg = rest[i];
-  const value = () => {
-    const next = rest[++i];
-    if (next === undefined) fail(`${arg} needs a value`);
-    return next;
-  };
-  switch (arg) {
-    case '--anon':
-      env.BLOUD_HARNESS_SIGNED_IN = 'false';
-      break;
-    case '--full':
-      env.BLOUD_HARNESS_FULL = 'true';
-      break;
-    case '--json':
-      env.BLOUD_HARNESS_JSON = 'true';
-      break;
-    case '--settle':
-      env.BLOUD_HARNESS_SETTLE_MS = value();
-      break;
-    case '--out':
-      env.BLOUD_HARNESS_OUT = resolve(process.cwd(), value());
-      break;
-    default:
-      if (arg.startsWith('-')) fail(`unknown option "${arg}"\n\n${USAGE}`);
-      if (target !== 'bloud') fail(`unexpected extra argument "${arg}"`);
-      target = arg;
+if (parsed.recipe === 'run') {
+  const file = resolveCheck(parsed.script);
+  if (file.error) {
+    console.error(file.error);
+    process.exit(2);
   }
+  env.BLOUD_HARNESS_SCRIPT = file;
+  env.BLOUD_HARNESS_ARGS = JSON.stringify(parsed.args);
 }
-env.BLOUD_HARNESS_TARGET = target;
 
-if (!env.BLOUD_HARNESS_OUT) {
-  env.BLOUD_HARNESS_OUT = join(repoRoot, '.bloud', 'screenshots');
-}
+env.BLOUD_HARNESS_OUT ??= join(repoRoot, '.bloud', 'screenshots');
+if (parsed.options.out) env.BLOUD_HARNESS_OUT = resolve(process.cwd(), parsed.options.out);
 mkdirSync(env.BLOUD_HARNESS_OUT, { recursive: true });
 
 const playwrightBin = join(pkgDir, 'node_modules', '.bin', 'playwright');

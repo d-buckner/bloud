@@ -5,9 +5,13 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
+    // `cli/args.mjs` is plain JavaScript on purpose: the launcher runs it with no
+    // transform. AllowJs lets TypeScript read it; checkJs stays off, so the file
+    // is inferred and not policed.
+    "allowJs": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "cli/**/*.ts"]
+  "include": ["src/**/*.ts", "cli/**/*.ts", "test/**/*.ts"]
 }
