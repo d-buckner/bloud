@@ -52,9 +52,9 @@
 		<form class="timezone-form" onsubmit={(e) => { e.preventDefault(); zone.save(); }}>
 			<TimeZonePicker
 				zones={zone.options}
-				value={zone.value}
+				value={zone.edit}
 				describedby={zone.dirty ? 'timezone-warning-title' : undefined}
-				onchange={(picked) => (zone.value = picked)}
+				onchange={(picked) => (zone.edit = picked)}
 			/>
 			<button class="btn btn-primary" type="submit" disabled={!zone.dirty || zone.blocked}>
 				Save

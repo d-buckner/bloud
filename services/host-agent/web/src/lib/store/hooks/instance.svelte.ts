@@ -59,11 +59,11 @@ class TimezoneState implements TimezoneSetting {
 
 	constructor(private readonly base: GuardedSetting) {}
 
-	get value(): string {
-		return this.base.value;
+	get edit(): string {
+		return this.base.edit;
 	}
-	set value(next: string) {
-		this.base.value = next;
+	set edit(next: string) {
+		this.base.edit = next;
 	}
 	get dirty(): boolean {
 		return this.base.dirty;
@@ -97,15 +97,15 @@ class TimezoneState implements TimezoneSetting {
 		// A saved zone the browser does not list still has to be selectable, or the
 		// select would show the first option and a Save would change the zone the
 		// operator did not touch.
-		return zoneOptions(this.zones, [this.base.value, this.base.confirmed ?? '', this.local]);
+		return zoneOptions(this.zones, [this.base.edit, this.base.confirmed ?? '', this.local]);
 	}
 
 	get offset(): string {
-		return offsetLabel(this.base.value);
+		return offsetLabel(this.base.edit);
 	}
 
 	get suggestion(): string {
-		if (this.base.confirmed || !this.local || this.base.value === this.local) return '';
+		if (this.base.confirmed || !this.local || this.base.edit === this.local) return '';
 		return this.local;
 	}
 
@@ -116,7 +116,7 @@ class TimezoneState implements TimezoneSetting {
 		this.base.reset();
 	}
 	useSuggestion(): void {
-		if (this.suggestion) this.base.value = this.suggestion;
+		if (this.suggestion) this.base.edit = this.suggestion;
 	}
 }
 

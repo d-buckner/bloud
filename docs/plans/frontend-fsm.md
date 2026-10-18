@@ -670,9 +670,30 @@ const ep = useEndpoint(contract, defaultName);
 const users = useUsers();
 ```
 
-`bind:value={url.value}` and `bind:checked={url.acknowledged}` work because the
+`bind:value={url.edit}` and `bind:checked={url.acknowledged}` work because the
 fields are accessors, so a form is markup and nothing else. The component has no
 `$derived`, no `$effect`, no `select`, and no `.current`.
+
+The writable field is `edit`, not `value`, and that name is the rule. It is the
+form's own text and never the store's. A property that looked like the setting
+would invite a writer to believe it wrote one. A store write is a command, and a
+command is a method.
+
+The same split governs actions. A component never imports the command module. It
+imports the action hook its own job needs, so the catalog can install and the
+grid cannot:
+
+```ts
+const appActions = useAppActions();        // install, uninstall, rename
+const gridActions = useGridActions();      // saveLayout, toggleWidget, removeWidget
+const externalActions = useExternalAppActions();
+useDashboard();                            // starts the session and the stream
+```
+
+`store/index.ts` does not export `commands`, and `check:no-component-commands`
+fails a component that reaches the internal path. The scope is the point: a
+settings form has no way to install an app, not by convention but because the
+import does not exist.
 
 Every rule a form would otherwise restate lives in `field.svelte.ts`. `loading`
 is true only until there is something to draw, so a refresh does not blank a

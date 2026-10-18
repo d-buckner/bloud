@@ -59,12 +59,12 @@
 				autocapitalize="none"
 				spellcheck="false"
 				required
-				bind:value={url.value}
+				bind:value={url.edit}
 			/>
 			<button
 				class="btn btn-primary"
 				type="submit"
-				disabled={!url.dirty || !url.value.trim() || url.blocked}
+				disabled={!url.dirty || !url.edit.trim() || url.blocked}
 			>
 				Save
 			</button>

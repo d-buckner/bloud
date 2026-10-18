@@ -28,7 +28,7 @@
 					inputmode="url"
 					autocomplete="off"
 					autocapitalize="none"
-					bind:value={ai.baseUrl.value}
+					bind:value={ai.baseUrl.edit}
 					spellcheck="false"
 				/>
 			</div>
@@ -44,7 +44,7 @@
 					id="ai-key"
 					type="password"
 					placeholder={ai.hasApiKey ? 'unchanged' : 'sk-...'}
-					bind:value={ai.apiKey.value}
+					bind:value={ai.apiKey.edit}
 					autocomplete="new-password"
 				/>
 				<span class="hint">
@@ -60,7 +60,7 @@
 					<input
 						id="ai-name"
 						type="text"
-						bind:value={ai.name.value}
+						bind:value={ai.name.edit}
 						autocomplete="off"
 					/>
 				</div>
@@ -69,7 +69,7 @@
 					{#if ai.models.length > 0}
 						<select
 							id="ai-model"
-							bind:value={ai.defaultModel.value}
+							bind:value={ai.defaultModel.edit}
 						>
 							<option value="">(none)</option>
 							{#each ai.models as model (model)}
@@ -81,7 +81,7 @@
 							id="ai-model"
 							type="text"
 							placeholder="test the connection to list models"
-							bind:value={ai.defaultModel.value}
+							bind:value={ai.defaultModel.edit}
 									autocomplete="off"
 							spellcheck="false"
 						/>
@@ -95,7 +95,7 @@
 					variant="secondary"
 					type="button"
 					onclick={() => ai.test()}
-					disabled={!ai.baseUrl.value.trim() || ai.testing}
+					disabled={!ai.baseUrl.edit.trim() || ai.testing}
 				>
 					{ai.testing ? 'Testing…' : 'Test connection'}
 				</Button>

@@ -106,30 +106,30 @@ class AIState implements AIForm {
 	save(): void {
 		const candidate: AIUpstream = {
 			id: this.upstream()?.id ?? 'default',
-			name: this.name.value.trim() || 'Default',
-			baseUrl: this.baseUrl.value.trim(),
+			name: this.name.edit.trim() || 'Default',
+			baseUrl: this.baseUrl.edit.trim(),
 			models: this.models,
 			enabled: true
 		};
 		const payload: SetAIRequest = {
-			upstreams: this.baseUrl.value.trim() ? [candidate] : [],
-			defaultModel: this.defaultModel.value.trim()
+			upstreams: this.baseUrl.edit.trim() ? [candidate] : [],
+			defaultModel: this.defaultModel.edit.trim()
 		};
 		// Only include the key when it was typed. Omitting means "keep".
-		if (this.apiKey.value !== '') payload.apiKey = this.apiKey.value;
+		if (this.apiKey.edit !== '') payload.apiKey = this.apiKey.edit;
 
 		void commands.saveAISettings(payload);
 		this.reset();
 	}
 
 	async test(): Promise<void> {
-		const base = this.baseUrl.value.trim();
+		const base = this.baseUrl.edit.trim();
 		if (!base) return;
 		this.probing = true;
 		this.probeResult = '';
 		this.probeOk = null;
 		try {
-			const res = await testAIEndpoint(base, this.apiKey.value || undefined);
+			const res = await testAIEndpoint(base, this.apiKey.edit || undefined);
 			if (res.ok && res.models) {
 				this.probed = res.models;
 				this.probeOk = true;

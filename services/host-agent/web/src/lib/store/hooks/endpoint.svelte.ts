@@ -118,16 +118,16 @@ class EndpointState implements EndpointForm {
 
 	get canUseAIUpstream(): boolean {
 		const offered = this.aiBaseUrl;
-		return offered !== '' && offered !== this.baseUrl.value;
+		return offered !== '' && offered !== this.baseUrl.edit;
 	}
 
 	save(): void {
 		const body = buildSaveRequest(
 			{
-				name: this.name.value,
-				baseUrl: this.baseUrl.value,
-				model: this.model.value,
-				apiKey: this.apiKey.value,
+				name: this.name.edit,
+				baseUrl: this.baseUrl.edit,
+				model: this.model.edit,
+				apiKey: this.apiKey.edit,
 				defaultName: this.defaultName
 			},
 			false
@@ -142,13 +142,13 @@ class EndpointState implements EndpointForm {
 	}
 
 	async test(): Promise<void> {
-		const base = this.baseUrl.value.trim();
+		const base = this.baseUrl.edit.trim();
 		if (!base) return;
 		this.listing = true;
 		this.listResult = '';
 		this.listOk = null;
 		try {
-			const res = await discoverEndpointModels(this.contract, base, this.apiKey.value || undefined);
+			const res = await discoverEndpointModels(this.contract, base, this.apiKey.edit || undefined);
 			if (res.ok && res.models) {
 				this.probed = res.models;
 				this.listOk = true;
@@ -168,7 +168,7 @@ class EndpointState implements EndpointForm {
 
 	useAIUpstream(): void {
 		const offered = this.aiBaseUrl;
-		if (offered) this.baseUrl.value = offered;
+		if (offered) this.baseUrl.edit = offered;
 	}
 
 	private reset(): void {

@@ -1,7 +1,7 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 	import Button from './Button.svelte';
-	import { commands } from '$lib/store';
+	import { useExternalAppActions } from '$lib/store';
 	import {
 		fetchExternalProviders,
 		type ExternalProviderOption
@@ -13,6 +13,8 @@
 		missingProviderInputs,
 		type ProviderFieldValues
 	} from '$lib/utils/providerInputs';
+
+	const externalActions = useExternalAppActions();
 
 	interface Props {
 		/**
@@ -96,7 +98,7 @@
 		error = '';
 		try {
 			const payload = buildProviderPayload(inputs, fieldValues);
-			const result = await commands.addProvider({
+			const result = await externalActions.addProvider({
 				app: selected,
 				name: name.trim(),
 				url: url.trim(),

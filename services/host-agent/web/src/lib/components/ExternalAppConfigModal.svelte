@@ -13,7 +13,7 @@
 	import Modal from './Modal.svelte';
 	import CloseButton from './CloseButton.svelte';
 	import Button from './Button.svelte';
-	import { commands } from '$lib/store';
+	import { useExternalAppActions } from '$lib/store';
 	import {
 		fetchExternalProviders,
 		type ExternalApp,
@@ -29,6 +29,8 @@
 		readProviderInput,
 		type ProviderFieldValues
 	} from '$lib/utils/providerInputs';
+
+	const externalActions = useExternalAppActions();
 
 	interface Props {
 		app: ExternalApp | null;
@@ -185,7 +187,7 @@
 				values: mergeTypedValues(app.values, typed.values),
 				secrets: typed.secrets
 			};
-			const result = await commands.updateExternalApp(
+			const result = await externalActions.update(
 				app.id,
 				isProvider ? providerPatch(form) : launcherPatch(form)
 			);

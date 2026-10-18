@@ -46,7 +46,7 @@
 					inputmode="url"
 					autocomplete="off"
 					autocapitalize="none"
-					bind:value={ep.baseUrl.value}
+					bind:value={ep.baseUrl.edit}
 					spellcheck="false"
 				/>
 				{#if ep.canUseAIUpstream}
@@ -67,7 +67,7 @@
 					id="{contract}-key"
 					type="password"
 					placeholder={ep.hasApiKey ? 'unchanged' : 'sk-...'}
-					bind:value={ep.apiKey.value}
+					bind:value={ep.apiKey.edit}
 					autocomplete="new-password"
 				/>
 				<span class="hint">
@@ -83,7 +83,7 @@
 					<input
 						id="{contract}-name"
 						type="text"
-						bind:value={ep.name.value}
+						bind:value={ep.name.edit}
 						autocomplete="off"
 					/>
 				</div>
@@ -92,7 +92,7 @@
 					{#if ep.models.length > 0}
 						<select
 						id="{contract}-model"
-						bind:value={ep.model.value}
+						bind:value={ep.model.edit}
 					>
 							<option value="">(endpoint default)</option>
 							{#each ep.models as entry (entry)}
@@ -104,7 +104,7 @@
 							id="{contract}-model"
 							type="text"
 							placeholder="endpoint default"
-							bind:value={ep.model.value}
+							bind:value={ep.model.edit}
 							autocomplete="off"
 							spellcheck="false"
 						/>
@@ -118,7 +118,7 @@
 					variant="secondary"
 					type="button"
 					onclick={() => ep.test()}
-					disabled={!ep.baseUrl.value.trim() || ep.testing}
+					disabled={!ep.baseUrl.edit.trim() || ep.testing}
 				>
 					{ep.testing ? 'Listing…' : 'List models'}
 				</Button>

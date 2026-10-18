@@ -6,13 +6,14 @@
  * the next feature from wiring itself to a reducer, or to a raw `getState()`,
  * instead of to a selector and a command.
  *
- * Two exports answer everything a component does: `commands` for every write,
- * and `select` over a selector for every read.
+ * Two kinds of export answer everything a component does. `select` and the views
+ * cover reads. The hooks cover a form, and the action hooks cover the writes a
+ * component owns. The command module itself is not exported: a component reaches
+ * a write through the hook that owns it, so no component can call a command from
+ * another domain by accident.
  */
 
 export { select } from './bindings.svelte';
-export { commands } from './commands';
-export type { Commands } from './commands';
 export {
 	aiView,
 	allApps,
@@ -30,9 +31,28 @@ export {
 	timezoneView,
 	usersView
 } from './selectors';
-export { useAI, useEndpoint, usePublicUrl, useTimezone, useUsers } from './hooks';
-export type { AIForm, EndpointForm, TimezoneSetting, UsersList } from './hooks';
-export { stopTransport } from './effects/connection';
+export {
+	useAI,
+	useAppActions,
+	useDashboard,
+	useEndpoint,
+	useExternalAppActions,
+	useGridActions,
+	usePublicUrl,
+	useTimezone,
+	useUsers
+} from './hooks';
+export type {
+	AIForm,
+	AppActions,
+	EndpointForm,
+	ExternalAppActions,
+	GridActions,
+	LauncherInput,
+	ProviderInput,
+	TimezoneSetting,
+	UsersList
+} from './hooks';
 export { startGraphPoll, stopGraphPoll } from './effects/graphPoll';
 export { PHASE_ORDER } from './wire';
 export type { AppProgress, ComponentProgress, PhaseHistoryEntry } from './reducers/progress';

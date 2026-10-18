@@ -211,6 +211,14 @@ const CHECKS = [
     run: () => ({ script: 'check:no-component-writes', args: [] }),
   },
   {
+    // The other half of the write guard: a component may not reach the command
+    // module, only the action hook that owns its writes. Whole-tree, with an
+    // exception table that must stay empty and prints on every run.
+    id: 'check:no-component-commands',
+    tiers: ['commit', 'push'],
+    run: () => ({ script: 'check:no-component-commands', args: [] }),
+  },
+  {
     // Absolute rule with an empty exception table, so it costs a grep.
     id: 'check:no-legacy-store',
     tiers: ['commit', 'push'],

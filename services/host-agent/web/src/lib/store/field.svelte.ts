@@ -24,9 +24,15 @@
 import { draft } from './draft.svelte';
 import type { ResourceView } from './selectors';
 
-/** A value the operator can edit. */
+/**
+ * A value the operator can edit.
+ *
+ * `edit`, not `value`, because this is the form's own text and never the store's.
+ * A property that looked like the setting would invite a writer to believe it
+ * wrote one. A store write is a command, and a command is a method.
+ */
 export interface Field<T> {
-	value: T;
+	edit: T;
 	readonly dirty: boolean;
 	/** Drop the edit, so the live value shows again. */
 	reset(): void;
@@ -46,19 +52,19 @@ export interface FieldSource<T> {
 }
 
 export function field<T>(source: FieldSource<T>): Field<T> {
-	const edit = draft(source.live, source.same);
+	const local = draft(source.live, source.same);
 	return {
-		get value(): T {
-			return edit.value;
+		get edit(): T {
+			return local.value;
 		},
-		set value(next: T) {
-			edit.set(next);
+		set edit(next: T) {
+			local.set(next);
 		},
 		get dirty(): boolean {
-			return edit.dirty;
+			return local.dirty;
 		},
 		reset(): void {
-			edit.clear();
+			local.clear();
 		}
 	};
 }
@@ -99,17 +105,17 @@ export function readError<T>(view: ResourceView<T>): string {
 }
 
 export function setting<T>(source: SettingSource<T>): Setting<T> {
-	const edit = field(source);
+	const local = field(source);
 
 	return {
-		get value(): T {
-			return edit.value;
+		get edit(): T {
+			return local.edit;
 		},
-		set value(next: T) {
-			edit.value = next;
+		set edit(next: T) {
+			local.edit = next;
 		},
 		get dirty(): boolean {
-			return edit.dirty;
+			return local.dirty;
 		},
 		get confirmed(): T | null {
 			return source.view().confirmed;
@@ -127,11 +133,11 @@ export function setting<T>(source: SettingSource<T>): Setting<T> {
 			// The edit goes to the command and the field lets go of it. From here the
 			// claim is what shows, so the typed text stays, the stored value replaces
 			// it, and a rejected save falls back to the confirmed one.
-			source.save(edit.value);
-			edit.reset();
+			source.save(local.edit);
+			local.reset();
 		},
 		reset(): void {
-			edit.reset();
+			local.reset();
 		}
 	};
 }
@@ -153,14 +159,14 @@ export interface GuardedSetting extends Setting<string> {
 export function guarded(source: SettingSource<string>): GuardedSetting {
 	const base = setting(source);
 	let acknowledgedFor = $state<string | null>(null);
-	const consented = (): boolean => acknowledgedFor !== null && acknowledgedFor === base.value.trim();
+	const consented = (): boolean => acknowledgedFor !== null && acknowledgedFor === base.edit.trim();
 
 	return {
-		get value(): string {
-			return base.value;
+		get edit(): string {
+			return base.edit;
 		},
-		set value(next: string) {
-			base.value = next;
+		set edit(next: string) {
+			base.edit = next;
 		},
 		get dirty(): boolean {
 			return base.dirty;
@@ -181,7 +187,7 @@ export function guarded(source: SettingSource<string>): GuardedSetting {
 			return consented();
 		},
 		set acknowledged(on: boolean) {
-			acknowledgedFor = on ? base.value.trim() : null;
+			acknowledgedFor = on ? base.edit.trim() : null;
 		},
 		get blocked(): boolean {
 			return base.dirty && !consented();

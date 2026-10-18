@@ -4,7 +4,9 @@
 	import CloseButton from './CloseButton.svelte';
 	import Button from './Button.svelte';
 	import ExternalProviderForm from './ExternalProviderForm.svelte';
-	import { commands } from '$lib/store';
+	import { useExternalAppActions } from '$lib/store';
+
+	const externalActions = useExternalAppActions();
 
 	interface Props {
 		open: boolean;
@@ -48,7 +50,7 @@
 	 */
 	async function handleAdd() {
 		if (!name.trim() || !url.trim()) return;
-		const result = await commands.addLauncher({
+		const result = await externalActions.addLauncher({
 			name: name.trim(),
 			url: url.trim(),
 			icon: icon.trim()

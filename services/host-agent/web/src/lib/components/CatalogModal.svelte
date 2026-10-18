@@ -10,7 +10,7 @@
 	import Icon from './Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
 	import { installBrief, type BriefContext } from '$lib/utils/installBrief';
-	import { allApps, commands, select } from '$lib/store';
+	import { allApps, select, useAppActions } from '$lib/store';
 	import { fetchCatalog } from '$lib/clients/catalog';
 
 	/**
@@ -32,6 +32,8 @@
 	let { open = true, onclose }: Props = $props();
 
 	const installedApps = select(allApps);
+
+	const appActions = useAppActions();
 
 	let catalogApps = $state<CatalogApp[]>([]);
 	let catalogLoading = $state(true);
@@ -103,7 +105,7 @@
 	async function handleInstall(appName: string) {
 		// The command never throws: the outcome is the return value, and the store
 		// holds the record either way.
-		const result = await commands.installApp(appName);
+		const result = await appActions.install(appName);
 		if (!result.ok) console.error('Install failed:', result.error);
 	}
 

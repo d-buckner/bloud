@@ -61,16 +61,16 @@ describe('the edit', () => {
 	it('starts as the live value and is not dirty', () => {
 		const url = setting({ view: () => text('saved'), live: () => 'saved', save: () => undefined });
 
-		expect(url.value).toBe('saved');
+		expect(url.edit).toBe('saved');
 		expect(url.dirty).toBe(false);
 	});
 
 	it('becomes the edit and dirty when written', () => {
 		const url = setting({ view: () => text('saved'), live: () => 'saved', save: () => undefined });
 
-		url.value = 'typed';
+		url.edit = 'typed';
 
-		expect(url.value).toBe('typed');
+		expect(url.edit).toBe('typed');
 		expect(url.dirty).toBe(true);
 	});
 
@@ -78,10 +78,10 @@ describe('the edit', () => {
 		let store = text('first');
 		const url = setting({ view: () => store, live: () => store.value ?? '', save: () => undefined });
 
-		url.value = 'mine';
+		url.edit = 'mine';
 		store = text('second');
 
-		expect(url.value).toBe('mine');
+		expect(url.edit).toBe('mine');
 	});
 });
 
@@ -96,11 +96,11 @@ describe('save', () => {
 			save: (value) => submitted.push(value)
 		});
 
-		url.value = 'typed';
+		url.edit = 'typed';
 		url.save();
 
 		expect(submitted).toEqual(['typed']);
-		expect(url.value).toBe('saved');
+		expect(url.edit).toBe('saved');
 		expect(url.dirty).toBe(false);
 	});
 
@@ -112,11 +112,11 @@ describe('save', () => {
 			save: (value) => submitted.push(value)
 		});
 
-		url.value = 'typed';
+		url.edit = 'typed';
 		url.reset();
 
 		expect(submitted).toEqual([]);
-		expect(url.value).toBe('saved');
+		expect(url.edit).toBe('saved');
 	});
 
 	it('passes the resource facts through', () => {
@@ -146,7 +146,7 @@ describe('the consent gate', () => {
 	it('blocks Save once the value differs, until the current text is acknowledged', () => {
 		const url = guardedUrl();
 
-		url.value = 'typed';
+		url.edit = 'typed';
 		expect(url.blocked).toBe(true);
 
 		url.acknowledged = true;
@@ -157,9 +157,9 @@ describe('the consent gate', () => {
 	it('withdraws consent when the text changes after it', () => {
 		const url = guardedUrl();
 
-		url.value = 'first';
+		url.edit = 'first';
 		url.acknowledged = true;
-		url.value = 'second';
+		url.edit = 'second';
 
 		expect(url.acknowledged).toBe(false);
 		expect(url.blocked).toBe(true);
@@ -168,10 +168,10 @@ describe('the consent gate', () => {
 	it('restores consent when the text returns to the acknowledged one', () => {
 		const url = guardedUrl();
 
-		url.value = 'first';
+		url.edit = 'first';
 		url.acknowledged = true;
-		url.value = 'second';
-		url.value = 'first';
+		url.edit = 'second';
+		url.edit = 'first';
 
 		expect(url.acknowledged).toBe(true);
 		expect(url.blocked).toBe(false);
@@ -180,9 +180,9 @@ describe('the consent gate', () => {
 	it('ignores surrounding whitespace, because the API trims', () => {
 		const url = guardedUrl();
 
-		url.value = 'typed';
+		url.edit = 'typed';
 		url.acknowledged = true;
-		url.value = '  typed ';
+		url.edit = '  typed ';
 
 		expect(url.acknowledged).toBe(true);
 	});
@@ -190,7 +190,7 @@ describe('the consent gate', () => {
 	it('unchecking withdraws consent', () => {
 		const url = guardedUrl();
 
-		url.value = 'typed';
+		url.edit = 'typed';
 		url.acknowledged = true;
 		url.acknowledged = false;
 

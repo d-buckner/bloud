@@ -10,7 +10,7 @@
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import Toasts from '$lib/components/Toasts.svelte';
 	import { applyTheme, theme, watchSystemTheme } from '$lib/theme.svelte';
-	import { commands, select, stopTransport } from '$lib/store';
+	import { select, useDashboard } from '$lib/store';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -32,6 +32,10 @@
 	// session slice can be in: not asked yet, anonymous, needs setup, ready.
 	const session = select((s) => s.session);
 
+	// The platform owns what starting the dashboard means. The page only says
+	// when it lives.
+	useDashboard();
+
 	onMount(() => {
 		// The inline script in app.html already put the palette on the document.
 		// This says it again, so a page that got here without that script (a strict
@@ -39,11 +43,7 @@
 		// starts the listener that follows the operating system.
 		applyTheme(theme.resolved);
 		const stopWatchingSystem = watchSystemTheme();
-		commands.startDashboard();
-		return () => {
-			stopWatchingSystem();
-			stopTransport();
-		};
+		return stopWatchingSystem;
 	});
 </script>
 
